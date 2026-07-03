@@ -1,0 +1,8 @@
+task_id: fc-opc-next-ibot-2026-07-11-12-48-01-agent-02-agent-48-ai-ag
+source_type: user_request
+source_ref: conversation
+received_at: "2026-07-02T18:06:15Z"
+input_artifacts:
+  - path: input/requirement.md
+    type: markdown
+    role: raw_requirement
