@@ -18,7 +18,12 @@ function errorResponse(error: unknown) {
 
 export async function GET() {
   const slips = listSlips();
-  return Response.json({ slips, metrics: computeMetrics(slips) });
+  const publicSlips = slips.map((slip) => {
+    const publicSlip = { ...slip };
+    delete publicSlip.clientToken;
+    return publicSlip;
+  });
+  return Response.json({ slips: publicSlips, metrics: computeMetrics(slips) });
 }
 
 export async function POST(request: Request) {
@@ -75,6 +80,21 @@ export async function POST(request: Request) {
     }
     if (body.action !== "send" && body.action !== "deliver") {
       throw new Error("服务方无权执行该动作");
+    }
+    if (body.action === "send") {
+      updateSlip(body.id, {
+        title: typeof body.title === "string" ? body.title : undefined,
+        description:
+          typeof body.description === "string" ? body.description : undefined,
+        acceptanceCriteria:
+          typeof body.acceptanceCriteria === "string"
+            ? body.acceptanceCriteria
+            : undefined,
+        dueAt: typeof body.dueAt === "string" ? body.dueAt : undefined,
+        priority: priorities.has(body.priority as Priority)
+          ? (body.priority as Priority)
+          : undefined,
+      });
     }
     const slip = applyProviderAction(body.id, body.action);
     const clientUrl = slip.clientToken
