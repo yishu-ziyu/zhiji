@@ -1,5 +1,7 @@
 # Implementation Plan — OPC Delivery Ops Agent
 
+> **2026-07-13 override:** `plan/locked-override.md` supersedes the old four-state, provider-self-confirm, and period-ratio steps below. Dev must implement the bilateral token-link golden path.
+
 **Spec:** `plan/spec.md` (patched with peer D1–D3)  
 **TDD:** unit first for pure modules; E2E last per slice  
 **Do not** start Slice B UI until Slice A unit tests pass

@@ -1,5 +1,7 @@
 # Spec — OPC Delivery Ops Agent
 
+> **2026-07-13 override:** use `plan/locked-override.md` as the current acceptance contract. Its dual-role statuses, client token page, and cohort-safe metrics supersede conflicting sections below.
+
 **Task:** `opc-delivery-agent-20260712-0258`  
 **Branch:** `feature/ai-agent-platform`  
 **HEAD at design:** `f97c597cf723ff19ffc04dafa1bf2edfa56e3c15`  
