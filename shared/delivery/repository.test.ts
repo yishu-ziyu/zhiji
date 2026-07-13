@@ -5,6 +5,7 @@ import {
   createSlips,
   getSlipByToken,
   resetSlipStore,
+  updateSlip,
 } from "./repository";
 
 describe("commitment slip repository", () => {
@@ -52,5 +53,33 @@ describe("commitment slip repository", () => {
       "首屏标题需要更聚焦",
     );
     expect(changed.status).toBe("client_requested_changes");
+  });
+
+  it("preserves stored fields when a partial update omits them", () => {
+    const [draft] = createSlips([
+      {
+        title: "完整承诺",
+        description: "原描述",
+        acceptanceCriteria: "原验收标准",
+        dueAt: "2026-07-18",
+        priority: "高",
+      },
+    ]);
+
+    expect(
+      updateSlip(draft.id, {
+        title: "只更新标题",
+        description: undefined,
+        acceptanceCriteria: undefined,
+        dueAt: undefined,
+        priority: undefined,
+      }),
+    ).toMatchObject({
+      title: "只更新标题",
+      description: "原描述",
+      acceptanceCriteria: "原验收标准",
+      dueAt: "2026-07-18",
+      priority: "高",
+    });
   });
 });

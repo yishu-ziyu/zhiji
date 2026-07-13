@@ -95,9 +95,12 @@ export function updateSlip(
   }
   const title = patch.title?.trim() ?? slip.title;
   if (!title) throw new Error("承诺标题不能为空");
+  const definedPatch = Object.fromEntries(
+    Object.entries(patch).filter(([, value]) => value !== undefined),
+  ) as typeof patch;
   const updated = {
     ...slip,
-    ...patch,
+    ...definedPatch,
     title,
     updatedAt: new Date().toISOString(),
   };
