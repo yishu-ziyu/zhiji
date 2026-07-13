@@ -70,7 +70,7 @@ export function ClientActions({
     <div className="space-y-5">
       <div className="rounded-2xl border border-border bg-card p-5 shadow-2xl shadow-black/20">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs font-medium text-indigo-300">双方交付承诺单</span>
+          <span className="text-xs font-medium text-indigo-300">需要双方确认的交付内容</span>
           <span className="rounded-full border border-border bg-muted px-2.5 py-1 text-xs text-muted-foreground">
             {DELIVERY_STATUS_LABELS[slip.status]}
           </span>
@@ -133,7 +133,7 @@ export function ClientActions({
               disabled={loading}
               onClick={() => void act(awaitingConfirm ? "confirm" : "accept")}
             >
-              {awaitingConfirm ? "确认承诺" : "确认验收"}
+              {awaitingConfirm ? "确认交付内容" : "确认验收"}
             </Button>
           </div>
         </div>
@@ -143,7 +143,7 @@ export function ClientActions({
         <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-5 text-sm text-emerald-100">
           {slip.status === "client_confirmed" && "承诺已确认，等待服务方交付。"}
           {slip.status === "client_requested_changes" && "修改意见已发送，等待服务方更新后重发。"}
-          {slip.status === "client_accepted" && "验收完成，这张承诺单已闭环。"}
+          {slip.status === "client_accepted" && "验收完成，双方已经完成这次交付。"}
           {slip.status === "client_rejected" && "拒收说明已发送，等待服务方重新交付。"}
         </div>
       )}
