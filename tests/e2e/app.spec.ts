@@ -48,7 +48,10 @@ test("golden path keeps client confirmation and acceptance client-owned", async 
 
   await expect(clientPage.getByText("验收完成，这张承诺单已闭环。")).toBeVisible();
   await expect(providerCard.getByText("客户已验收")).toBeVisible({ timeout: 5000 });
-  await expect(page.getByText("50%").first()).toBeVisible();
+  const confirmationMetric = page
+    .getByText("7 日客户确认率 · 候选")
+    .locator("..");
+  await expect(confirmationMetric.getByText(/^[1-9]\d*%$/)).toBeVisible();
 });
 
 test("provider API cannot fake a client confirmation", async ({ request }) => {
