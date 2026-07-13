@@ -6,7 +6,7 @@ Demo-only contract for the bilateral commitment-slip flow. State is held in serv
 
 ### `GET /api/efficiency/slips`
 
-Returns `{ slips, metrics }`. `slips` never includes `clientToken`; the token is returned only once to the provider in a successful `send` response.
+Returns `{ slips, metrics }`. `slips` never includes `clientToken`; the token is returned to the provider only in successful `send` responses, including resend after client-requested changes.
 
 ### `POST /api/efficiency/slips`
 
