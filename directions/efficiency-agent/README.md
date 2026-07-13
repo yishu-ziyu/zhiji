@@ -1,35 +1,22 @@
 # Efficiency Agent Direction
 
-This folder is the workspace for the selected hackathon direction.
+本场只做一个楔子：把一次半正式客户对齐变成双方交付承诺单。
 
-The current competition focus is the one-person company efficiency agent.
+```text
+Web 粘贴 → AI 草稿 → 服务方发送 → 客户无登录确认
+→ 服务方交付 → 客户验收
+```
 
-The product should help a founder turn messy meeting text into clear tasks, visible progress, and next meeting preparation.
+客户确认和验收只能从 `/c/[token]` 完成，服务方不能代点。产品不声称已接入微信，也不以会议纪要、CRM 或全能 OPC OS 为主线。
 
-## Selected subtrack
+## Main routes
 
-Meeting minutes plus task tracking plus project delivery reminders.
+- 服务方：`app/track/efficiency/page.tsx`
+- 承诺提取：`POST /api/efficiency/commitments`
+- 承诺单动作：`GET|POST /api/efficiency/slips`
+- 客户页：`/c/[token]`
+- 客户动作：`POST /api/efficiency/client/[token]/action`
 
-## Why this direction
+## Demo evidence
 
-The current project already has a working minutes page and a Kanban board.
-
-This direction fits the hackathon scoring better because the judge can see the value quickly.
-
-It also fits the user's strength in product thinking, knowledge management, and Agent workflow design.
-
-## Main route
-
-- Page: `app/track/efficiency/page.tsx`
-- Minutes API: `app/api/efficiency/minutes/route.ts`
-- Shared chat renderer: `shared/components/chat/ChatInterface.tsx`
-
-## Demo promise
-
-Paste a meeting transcript.
-
-The Agent extracts decisions and action items.
-
-Action items become board cards.
-
-The board shows what to do next and what is blocked.
+演示必须让评委看到客户链接、客户确认、服务方交付、客户验收。指标只展示同 cohort 的候选指标，不使用“本期确认 / 本期新增”的混合口径。
