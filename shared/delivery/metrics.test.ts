@@ -1,63 +1,85 @@
 import { describe, expect, it } from "vitest";
-import { computeMetrics, formatClosedLoopRate, isOverdue } from "./metrics";
-import type { DeliveryTask } from "./types";
+import { computeMetrics, formatRate, isOverdue } from "./metrics";
+import type { CommitmentSlip } from "./types";
 
-function task(
-  partial: Partial<DeliveryTask> & Pick<DeliveryTask, "id" | "status">,
-): DeliveryTask {
+const NOW = new Date("2026-07-13T12:00:00Z");
+
+function slip(
+  partial: Partial<CommitmentSlip> & Pick<CommitmentSlip, "id" | "status">,
+): CommitmentSlip {
   return {
-    commitmentId: partial.commitmentId ?? `c-${partial.id}`,
     title: partial.title ?? partial.id,
     priority: partial.priority ?? "中",
-    createdAt: partial.createdAt ?? "2026-07-12T00:00:00Z",
-    updatedAt: partial.updatedAt ?? "2026-07-12T00:00:00Z",
-    deadline: partial.deadline,
-    isMock: partial.isMock,
+    createdAt: partial.createdAt ?? "2026-07-10T12:00:00Z",
+    updatedAt: partial.updatedAt ?? "2026-07-10T12:00:00Z",
+    history: partial.history ?? [],
     id: partial.id,
     status: partial.status,
+    dueAt: partial.dueAt,
   };
 }
 
 describe("computeMetrics", () => {
-  it("returns 0 rate when no period commitments", () => {
-    const m = computeMetrics([], 0);
-    expect(m.closedLoopRate).toBe(0);
-    expect(m.periodNewCommitments).toBe(0);
-    expect(m.confirmedCount).toBe(0);
+  it("returns an empty cohort without fake precision", () => {
+    expect(computeMetrics([], NOW)).toMatchObject({
+      cohortSize: 0,
+      confirmedWithinWindow: 0,
+      confirmationRate: 0,
+      medianConfirmHours: null,
+    });
   });
 
-  it("computes closed-loop rate as confirmed / period commitments", () => {
-    const tasks = [
-      task({ id: "1", status: "confirmed" }),
-      task({ id: "2", status: "in_progress" }),
-      task({ id: "3", status: "captured" }),
+  it("uses one created cohort for the 7-day client-confirmation rate", () => {
+    const slips = [
+      slip({
+        id: "confirmed-in-window",
+        status: "client_confirmed",
+        history: [
+          {
+            actor: "client",
+            action: "confirm",
+            at: "2026-07-12T12:00:00Z",
+          },
+        ],
+      }),
+      slip({ id: "pending", status: "pending_client_confirm" }),
+      slip({
+        id: "old-outside-cohort",
+        status: "client_confirmed",
+        createdAt: "2026-05-01T00:00:00Z",
+        history: [
+          {
+            actor: "client",
+            action: "confirm",
+            at: "2026-05-02T00:00:00Z",
+          },
+        ],
+      }),
     ];
-    const m = computeMetrics(tasks, 3);
-    expect(m.confirmedCount).toBe(1);
-    expect(m.periodNewCommitments).toBe(3);
-    expect(m.closedLoopRate).toBeCloseTo(1 / 3, 5);
-    expect(m.openCount).toBe(2);
+
+    expect(computeMetrics(slips, NOW)).toMatchObject({
+      cohortSize: 2,
+      confirmedWithinWindow: 1,
+      confirmationRate: 0.5,
+      medianConfirmHours: 48,
+    });
   });
 
-  it("counts overdue only for non-confirmed past deadlines", () => {
-    const now = new Date(2026, 6, 13); // 2026-07-13 local
-    const tasks = [
-      task({ id: "1", status: "in_progress", deadline: "2026-07-10" }),
-      task({ id: "2", status: "confirmed", deadline: "2026-07-10" }),
-      task({ id: "3", status: "captured", deadline: "2026-07-20" }),
-      task({ id: "4", status: "delivered" }), // no deadline
+  it("counts overdue until the client accepts", () => {
+    const slips = [
+      slip({ id: "open", status: "provider_delivered", dueAt: "2026-07-10" }),
+      slip({ id: "accepted", status: "client_accepted", dueAt: "2026-07-10" }),
     ];
-    const m = computeMetrics(tasks, 4, now);
-    expect(m.overdueCount).toBe(1);
-    expect(isOverdue(tasks[0], now)).toBe(true);
-    expect(isOverdue(tasks[1], now)).toBe(false);
+    expect(isOverdue(slips[0], NOW)).toBe(true);
+    expect(isOverdue(slips[1], NOW)).toBe(false);
+    expect(computeMetrics(slips, NOW).overdueCount).toBe(1);
   });
 });
 
-describe("formatClosedLoopRate", () => {
-  it("formats as percent", () => {
-    expect(formatClosedLoopRate(0)).toBe("0%");
-    expect(formatClosedLoopRate(1 / 3)).toBe("33%");
-    expect(formatClosedLoopRate(1)).toBe("100%");
+describe("formatRate", () => {
+  it("formats a candidate rate as a percentage", () => {
+    expect(formatRate(0)).toBe("0%");
+    expect(formatRate(1 / 3)).toBe("33%");
+    expect(formatRate(1)).toBe("100%");
   });
 });
