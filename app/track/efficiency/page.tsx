@@ -67,12 +67,54 @@ export default function EfficiencyPage() {
         });
         setProject(data.project as PublicChangeProject);
         setProposal(data.proposal as ProviderChangeProposal | null);
+        if (typeof data.clientUrl === "string") setClientUrl(data.clientUrl);
       } catch {
         // The next explicit action will show the error; polling stays quiet.
       }
     }, 1000);
     return () => window.clearInterval(timer);
   }, [projectId, providerSecret]);
+
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem("customer-change-provider");
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved) as {
+        projectId?: string;
+        providerSecret?: string;
+      };
+      if (!parsed.projectId || !parsed.providerSecret) return;
+      void postChange({
+        action: "get",
+        projectId: parsed.projectId,
+        providerSecret: parsed.providerSecret,
+      })
+        .then((data) => {
+          const restoredProject = data.project as PublicChangeProject;
+          const restoredProposal = data.proposal as ProviderChangeProposal | null;
+          setProject(restoredProject);
+          setProposal(restoredProposal);
+          setProviderSecret(parsed.providerSecret!);
+          setScope(restoredProposal?.newVersion?.scope ?? restoredProject.scope);
+          setDeliveryDate(
+            restoredProposal?.newVersion?.deliveryDate ??
+              restoredProject.deliveryMilestone.date,
+          );
+          setTotalPrice(
+            String(
+              (restoredProposal?.newVersion?.totalPriceMinor ??
+                restoredProject.totalPriceMinor) / 100,
+            ),
+          );
+          if (typeof data.clientUrl === "string") setClientUrl(data.clientUrl);
+        })
+        .catch(() => {
+          window.sessionStorage.removeItem("customer-change-provider");
+        });
+    } catch {
+      window.sessionStorage.removeItem("customer-change-provider");
+    }
+  }, []);
 
   async function seedProject() {
     setLoading(true);
@@ -82,6 +124,13 @@ export default function EfficiencyPage() {
       const nextProject = data.project as PublicChangeProject;
       setProject(nextProject);
       setProviderSecret(data.providerSecret as string);
+      window.sessionStorage.setItem(
+        "customer-change-provider",
+        JSON.stringify({
+          projectId: nextProject.id,
+          providerSecret: data.providerSecret,
+        }),
+      );
       setProposal(null);
       setSourceText("");
       setUseFixture(false);
@@ -332,7 +381,9 @@ export default function EfficiencyPage() {
                           <Send />
                           {proposal.status === "changes_requested"
                             ? "修改后再次发送"
-                            : "发送给客户确认"}
+                            : proposal.status === "pending_client"
+                              ? "修改并重新发送"
+                              : "发送给客户确认"}
                         </Button>
                       </div>
                     )}
