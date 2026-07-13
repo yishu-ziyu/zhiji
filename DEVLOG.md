@@ -149,8 +149,74 @@
 
 ---
 
+## 2026-07-06：赛事评分细则修正
+
+**来源**：用户提供赛事评分截图。
+
+### 新评分结构
+
+| 权重 | 来源 | 看什么 |
+|----|----|----|
+| 90% | 评委人工评分 | 场景价值、商业化潜力、创新、体验、路演与协作 |
+| 10% | AI 技术评分 | 连通性、稳定性和代码相关表现 |
+
+另有创客共鸣奖，基于选手互评总得分形成。
+
+### 对工程策略的影响
+
+- 主战场从旧假设的「完成度/应用价值/商业潜力/创新性/安全性」改为 **90% 人工评分体验**。
+- step-3.7-flash tool_use spike 仍做，但只是 10% 技术评分的一部分，不再绑架主线。
+- 小掌柜 UI、早报、4 动作链、180 秒路演、mock/录像兜底优先级上调为 P0。
+- 文档已落地到 `docs/score-rubric.md`，并同步更新 `docs/implementation/7-day-plan.md` 和 spec v2。
+
+---
+
 ## 待办
 
 - 录 4 段 demo 视频
 - 演练
 - 准备追问应对
+
+---
+
+## 2026-07-13：效率 OPC 交付闭环主线落地
+
+### 产品锁定
+- 赛道：效率 OPC（不做电商主叙事）
+- 北极星：闭环率
+- 主产品：交付运营助手（客户对话 → 承诺 → 看板 → 确认）
+
+### 工程
+- `shared/delivery/*` 状态机 + metrics + mock + storage
+- `POST /api/efficiency/commitments`（fixture-first）
+- `/track/efficiency` 工作台重写
+- vitest unit + Playwright E2E 全绿
+- 路演脚本重写：`docs/demo/DEMO_SCRIPT.md`
+- 商业模式一页对齐交付叙事
+
+### 时间
+- 交件 7/18 · 路演 7/19（台风改期）
+
+---
+
+## 2026-07-12：OPC 概念定义入档
+
+**来源**：用户提问 "OPC 到底指什么"，多源一手调研。
+
+### 关键结论
+
+- **OPC = One Person Company（一-人公司）**，不是 "One-Person Commerce"
+- 2026-07-03 浙江省发布《人工智能 OPC 术语》**团体标准**（2026-08-01 实施），由浙江省数字经济发展中心 + 阿里云等 14 家编制
+- 电商/跨境电商是 OPC 生态下的子方向
+- "FC-OPC Next iBot 2026" 是初芯 OPC 社区主办的标准 OPC 黑客松
+
+### 落地资料
+
+- 新增 `docs/research/opc-definition.md`：OPC 定义 + 一手 URL + 路演话术模板
+- 后续 `docs/research/opc-competitor-landscape.md` 和 `baili-platform.md` 待补（后台调研 agent 还在跑）
+
+### 对路演的影响
+
+- 开场可引用浙江省团体标准锚定 OPC 定义，**避免评委质疑概念**
+- "数字员工"是官方标准术语，可在描述 AI Agent 时使用
+- 话术模板见 `docs/research/opc-definition.md` 末段

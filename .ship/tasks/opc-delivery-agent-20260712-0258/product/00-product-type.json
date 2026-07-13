@@ -1,0 +1,29 @@
+{
+  "product_type": "C",
+  "primary_user": "一人公司创始人 / 独立开发者 / 超级个体（本人即老板+交付）",
+  "buyer_or_user": "same person (self-serve, 99/mo style SaaS narrative)",
+  "core_scene": "客户对话结束后，承诺被系统捕获并钉到交付确认",
+  "workflow_weight": {
+    "strategy": "required",
+    "research": "required",
+    "data_model": "required",
+    "permission": "N/A",
+    "report": "optional",
+    "analytics": "required"
+  },
+  "skip_rules": [
+    {
+      "checkpoint": "permission",
+      "reason": "单用户 OPC，无组织权限模型；黑客松不交付多租户"
+    },
+    {
+      "checkpoint": "growth_loop",
+      "reason": "赛后可选；本周期目标是 7/18 作品与 7/19 路演"
+    }
+  ],
+  "competition": {
+    "event": "FC-OPC Next iBot 杭州站",
+    "award_target": "全场最佳产品奖",
+    "scoring": "90% human (scene/business/innovation/UX/pitch) + 10% AI tech"
+  }
+}

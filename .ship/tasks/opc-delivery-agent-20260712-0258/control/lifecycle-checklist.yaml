@@ -1,0 +1,23 @@
+task_id: opc-delivery-agent-20260712-0258
+workflow: product-lifecycle-v2
+scope_mode: full
+checkpoints:
+  product_type: { status: done, when: pre_cycle }
+  scope_challenge: { status: done, when: pre_cycle }
+  strategy: { status: deferred_lite, when: pre_cycle, note: "consensus locked in idea+00b; full 01-strategy optional expand" }
+  research: { status: deferred_lite, when: pre_cycle, note: "session research + handbook; expand 02 if time" }
+  problem_solution: { status: done, when: pre_cycle }
+  blueprint: { status: pending, when: pre_cycle }
+  model_flow: { status: pending, when: pre_cycle }
+  experience: { status: pending, when: pre_cycle }
+  data_analytics: { status: pending, when: pre_cycle }
+  prd: { status: done, when: pre_cycle }
+  tech_plan: { status: done, when: pre_cycle }
+  design_handoff: { status: done, when: pre_cycle }
+  engineering_design: { status: pending, when: in_cycle, next: yishuship-design }
+  implementation: { status: pending, when: in_cycle }
+  e2e: { status: pending, when: in_cycle }
+  review: { status: pending, when: in_cycle }
+  qa: { status: pending, when: in_cycle }
+  permission: { status: N/A, reason: single-user OPC demo }
+  growth_loop: { status: N/A, reason: post-pitch optional }
