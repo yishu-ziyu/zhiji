@@ -1,9 +1,5 @@
 task_id: opc-delivery-agent-20260712-0258
-active: true
-current_phase: dev
-status: slices_a_b_c_d_core_complete
-north_star: closed_loop_rate
-deadline_submit: "2026-07-18"
-deadline_pitch: "2026-07-19"
-updated_at: "2026-07-13T02:43:03Z"
-notes: "A1-A2 B1-B2 C1-C3 D1-D2 core done; UI polish remaining"
+active: false
+current_phase: handoff
+status: complete
+updated_at: "2026-07-13T11:53:46Z"
