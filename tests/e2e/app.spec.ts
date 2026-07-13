@@ -19,13 +19,12 @@ test("golden path keeps client confirmation and acceptance client-owned", async 
   await expect(
     page.locator('input[value="输出落地页改版原型"]'),
   ).toBeVisible();
+  await page
+    .getByRole("textbox", { name: "验收标准" })
+    .first()
+    .fill("首屏转化路径清晰，并提供可分享预览链接");
 
-  await page.getByRole("button", { name: "生成承诺单" }).click();
-  const draftCard = page.locator("article").filter({
-    has: page.locator('input[value="输出落地页改版原型"]'),
-  });
-  await expect(draftCard).toBeVisible();
-  await draftCard.getByRole("button", { name: "发送给客户" }).click();
+  await page.getByRole("button", { name: "生成并发送给客户" }).click();
   const providerCard = page.locator("article").filter({
     hasText: "输出落地页改版原型",
   });
@@ -36,8 +35,17 @@ test("golden path keeps client confirmation and acceptance client-owned", async 
   expect(clientLink).toMatch(/\/c\/[a-f0-9-]{36}$/);
 
   const clientPage = await context.newPage();
+  await clientPage.setViewportSize({ width: 390, height: 844 });
   await clientPage.goto(clientLink!);
   await expect(clientPage.getByRole("heading", { name: "输出落地页改版原型" })).toBeVisible();
+  await expect(
+    clientPage.getByText("首屏转化路径清晰，并提供可分享预览链接"),
+  ).toBeVisible();
+  expect(
+    await clientPage.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
   await clientPage.getByRole("button", { name: "确认承诺" }).click();
   await expect(clientPage.getByText("承诺已确认，等待服务方交付。")).toBeVisible();
 
@@ -63,9 +71,27 @@ test("provider API cannot fake a client confirmation", async ({ request }) => {
   const id = createdBody.slips[0].id as string;
 
   const sent = await request.post(`${BASE_URL}/api/efficiency/slips`, {
-    data: { action: "send", id },
+    data: {
+      action: "send",
+      id,
+      title: "发送前已更新的权限边界测试承诺",
+      acceptanceCriteria: "客户必须看到这一版",
+    },
   });
   expect(sent.ok()).toBe(true);
+  const sentBody = await sent.json();
+  expect(sentBody.slip).toMatchObject({
+    title: "发送前已更新的权限边界测试承诺",
+    acceptanceCriteria: "客户必须看到这一版",
+  });
+  expect(sentBody.slip.clientToken).toMatch(/^[a-f0-9-]{36}$/);
+
+  const listed = await request.get(`${BASE_URL}/api/efficiency/slips`);
+  const listedBody = await listed.json();
+  const listedSlip = listedBody.slips.find(
+    (slip: { id: string }) => slip.id === id,
+  );
+  expect(listedSlip).not.toHaveProperty("clientToken");
 
   const forged = await request.post(`${BASE_URL}/api/efficiency/slips`, {
     data: { action: "confirm", id },

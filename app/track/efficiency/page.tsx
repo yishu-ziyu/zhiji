@@ -25,6 +25,7 @@ import {
 } from "@/shared/delivery/types";
 
 type DraftCommitment = Commitment & { acceptanceCriteria: string };
+const PROVIDER_TOKEN_KEY = "fc-opc-provider-client-tokens";
 
 function newId(): string {
   return crypto.randomUUID();
@@ -48,6 +49,22 @@ function clientUrl(slip: CommitmentSlip): string | null {
   return `${window.location.origin}/c/${slip.clientToken}`;
 }
 
+function loadProviderTokens(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(PROVIDER_TOKEN_KEY) ?? "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function rememberProviderToken(slip: CommitmentSlip): void {
+  if (!slip.clientToken) return;
+  localStorage.setItem(
+    PROVIDER_TOKEN_KEY,
+    JSON.stringify({ ...loadProviderTokens(), [slip.id]: slip.clientToken }),
+  );
+}
+
 function latestClientNote(slip: CommitmentSlip): string | null {
   return [...slip.history].reverse().find((entry) => entry.actor === "client" && entry.note)?.note ?? null;
 }
@@ -66,7 +83,12 @@ export default function EfficiencyPage() {
     const response = await fetch("/api/efficiency/slips", { cache: "no-store" });
     if (!response.ok) return;
     const data = (await response.json()) as { slips: CommitmentSlip[] };
-    setSlips(data.slips);
+    const tokens = loadProviderTokens();
+    setSlips(
+      data.slips.map((slip) =>
+        tokens[slip.id] ? { ...slip, clientToken: tokens[slip.id] } : slip,
+      ),
+    );
   }, []);
 
   useEffect(() => {
@@ -147,8 +169,36 @@ export default function EfficiencyPage() {
           })),
         }),
       });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(data.error || "生成承诺单失败");
+      const data = (await response.json()) as {
+        slips?: CommitmentSlip[];
+        error?: string;
+      };
+      if (!response.ok || !data.slips) throw new Error(data.error || "生成承诺单失败");
+      const sent = await Promise.all(
+        data.slips.map(async (slip) => {
+          const sentResponse = await fetch("/api/efficiency/slips", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "send",
+              id: slip.id,
+              title: slip.title,
+              acceptanceCriteria: slip.acceptanceCriteria,
+              dueAt: slip.dueAt,
+              priority: slip.priority,
+            }),
+          });
+          const sentData = (await sentResponse.json()) as {
+            slip?: CommitmentSlip;
+            error?: string;
+          };
+          if (!sentResponse.ok || !sentData.slip) {
+            throw new Error(sentData.error || "发送承诺单失败");
+          }
+          return sentData.slip;
+        }),
+      );
+      sent.forEach(rememberProviderToken);
       setCommitments([]);
       await refreshSlips();
     } catch (cause) {
@@ -178,8 +228,12 @@ export default function EfficiencyPage() {
             priority: slip.priority,
           }),
         });
-        const data = (await response.json()) as { error?: string };
+        const data = (await response.json()) as {
+          slip?: CommitmentSlip;
+          error?: string;
+        };
         if (!response.ok) throw new Error(data.error || "操作失败");
+        if (data.slip) rememberProviderToken(data.slip);
         await refreshSlips();
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "操作失败");
@@ -244,7 +298,7 @@ export default function EfficiencyPage() {
               <div className="rounded-2xl border border-border bg-card p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div><h2 className="text-sm font-semibold">2. 服务方审阅草稿</h2><p className="mt-1 text-xs text-muted-foreground">AI 缺失的日期与验收标准明确标为未知，由你补充。</p></div>
-                  <Button size="sm" onClick={() => void createDrafts()} disabled={loading || !commitments.some((item) => item.accepted)}>生成承诺单</Button>
+                  <Button size="sm" onClick={() => void createDrafts()} disabled={loading || !commitments.some((item) => item.accepted)}>生成并发送给客户</Button>
                 </div>
                 <div className="mt-4 space-y-3">
                   {commitments.map((item) => (
