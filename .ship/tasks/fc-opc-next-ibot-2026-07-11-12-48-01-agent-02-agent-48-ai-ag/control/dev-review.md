@@ -98,3 +98,7 @@ The implementation misses client visibility of the changed total price, cannot a
 - Finding 6 — FIXED: latest-proposal lookup uses an explicit per-project proposal id and has a same-millisecond regression test.
 
 **Verdict: PASS**
+
+## Malformed JSON fix recheck
+
+CLEAN
