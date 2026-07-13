@@ -1,269 +1,432 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  AlertTriangle,
+  ArrowRight,
   Check,
   Clipboard,
   ExternalLink,
+  FileText,
   RefreshCw,
   Send,
-  Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sidebar } from "@/shared/components/layout/Sidebar";
-import { getFixtureTranscript } from "@/shared/delivery/extract-mock";
-import { computeMetrics, formatRate, isOverdue } from "@/shared/delivery/metrics";
-import {
-  DELIVERY_STATUS_LABELS,
-  type Commitment,
-  type CommitmentSlip,
-  type ExtractCommitmentsResponse,
-  type ExtractedCommitment,
-  type Priority,
-} from "@/shared/delivery/types";
-import {
-  clientUrl,
-  type ProviderAction,
-  rememberProviderToken,
-  submitProviderAction,
-  useProviderSlips,
-} from "./use-provider-slips";
+import type {
+  ProviderChangeProposal,
+  PublicChangeProject,
+} from "@/shared/delivery/change";
 
-type DraftCommitment = Commitment & { acceptanceCriteria: string };
+const CHANGE_FIXTURE_TEXT =
+  "客户：再加一组 A/B 测试，还是周五上，价格先按之前的。";
 
-function newId(): string {
-  return crypto.randomUUID();
-}
+const money = new Intl.NumberFormat("zh-CN", {
+  style: "currency",
+  currency: "CNY",
+  maximumFractionDigits: 0,
+});
 
-function toCommitments(extracted: ExtractedCommitment[]): DraftCommitment[] {
-  return extracted.map((item) => ({
-    id: newId(),
-    text: item.text,
-    kind: item.kind,
-    sourceExcerpt: item.sourceExcerpt,
-    accepted: item.kind === "hard",
-    suggestedDeadline: item.suggestedDeadline,
-    suggestedPriority: item.suggestedPriority,
-    acceptanceCriteria: "",
-  }));
-}
-
-function latestClientNote(slip: CommitmentSlip): string | null {
-  return [...slip.history].reverse().find((entry) => entry.actor === "client" && entry.note)?.note ?? null;
+async function postChange(body: Record<string, unknown>) {
+  const response = await fetch("/api/efficiency/changes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await response.json()) as Record<string, unknown> & {
+    error?: string;
+  };
+  if (!response.ok) throw new Error(data.error || "操作失败");
+  return data;
 }
 
 export default function EfficiencyPage() {
-  const [transcript, setTranscript] = useState("");
-  const [commitments, setCommitments] = useState<DraftCommitment[]>([]);
-  const [risks, setRisks] = useState<string[]>([]);
-  const [summary, setSummary] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [providerSecret, setProviderSecret] = useState("");
+  const [project, setProject] = useState<PublicChangeProject | null>(null);
+  const [proposal, setProposal] = useState<ProviderChangeProposal | null>(null);
+  const [sourceText, setSourceText] = useState("");
+  const [useFixture, setUseFixture] = useState(false);
+  const [scope, setScope] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [totalPrice, setTotalPrice] = useState("");
+  const [clientUrl, setClientUrl] = useState("");
+  const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
-  const {
-    slips,
-    copiedId,
-    refreshSlips,
-    updateLocalSlip,
-    providerAction,
-    copyClientLink,
-  } = useProviderSlips(setError);
+  const [error, setError] = useState<string | null>(null);
 
-  const metrics = useMemo(() => computeMetrics(slips), [slips]);
+  const projectId = project?.id;
 
-  const applyExtraction = useCallback((data: ExtractCommitmentsResponse) => {
-    if (!data.commitments?.length) {
-      setError("没有提取到可执行承诺。请换一段对齐文本或使用演示剧本。");
-      setCommitments([]);
-      return;
-    }
-    setError(null);
-    setSummary(data.summary ?? null);
-    setRisks(data.risks ?? []);
-    setCommitments(toCommitments(data.commitments));
-  }, []);
-
-  const extract = useCallback(
-    async (fixture = false) => {
-      const text = fixture ? getFixtureTranscript("dialog-01") : transcript.trim();
-      if (!text) {
-        setError("请粘贴客户聊天或需求对齐文本");
-        return;
-      }
-      setTranscript(text);
-      setLoading(true);
-      setError(null);
+  useEffect(() => {
+    if (!projectId || !providerSecret) return;
+    const timer = window.setInterval(async () => {
       try {
-        const response = await fetch("/api/efficiency/commitments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(fixture ? { fixture: "dialog-01", transcript: text } : { transcript: text }),
+        const data = await postChange({
+          action: "get",
+          projectId,
+          providerSecret,
         });
-        const data = (await response.json()) as ExtractCommitmentsResponse & { error?: string };
-        if (!response.ok) throw new Error(data.error || "提取失败");
-        applyExtraction(data);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "提取失败");
-      } finally {
-        setLoading(false);
+        setProject(data.project as PublicChangeProject);
+        setProposal(data.proposal as ProviderChangeProposal | null);
+      } catch {
+        // The next explicit action will show the error; polling stays quiet.
       }
-    },
-    [applyExtraction, transcript],
-  );
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [projectId, providerSecret]);
 
-  const updateCommitment = useCallback(
-    (id: string, patch: Partial<DraftCommitment>) => {
-      setCommitments((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-    },
-    [],
-  );
-
-  const createDrafts = useCallback(async () => {
-    const selected = commitments.filter((item) => item.accepted);
-    if (!selected.length) return;
+  async function seedProject() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/efficiency/slips", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "create",
-          slips: selected.map((item) => ({
-            title: item.text,
-            acceptanceCriteria: item.acceptanceCriteria || undefined,
-            dueAt: item.suggestedDeadline || undefined,
-            priority: item.suggestedPriority || "中",
-            sourceExcerpt: item.sourceExcerpt,
-          })),
-        }),
-      });
-      const data = (await response.json()) as {
-        slips?: CommitmentSlip[];
-        error?: string;
-      };
-      if (!response.ok || !data.slips) throw new Error(data.error || "生成承诺单失败");
-      const sent = await Promise.all(
-        data.slips.map((slip) => submitProviderAction(slip, "send")),
-      );
-      sent.forEach(rememberProviderToken);
-      setCommitments([]);
-      await refreshSlips();
+      const data = await postChange({ action: "seed" });
+      const nextProject = data.project as PublicChangeProject;
+      setProject(nextProject);
+      setProviderSecret(data.providerSecret as string);
+      setProposal(null);
+      setSourceText("");
+      setUseFixture(false);
+      setScope(nextProject.scope);
+      setDeliveryDate(nextProject.deliveryMilestone.date);
+      setTotalPrice(String(nextProject.totalPriceMinor / 100));
+      setClientUrl("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "生成承诺单失败");
+      setError(cause instanceof Error ? cause.message : "载入失败");
     } finally {
       setLoading(false);
     }
-  }, [commitments, refreshSlips]);
+  }
+
+  async function analyze(fixture: boolean) {
+    if (!project) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await postChange({
+        action: "analyze",
+        projectId: project.id,
+        providerSecret,
+        sourceText,
+        fixture,
+      });
+      const next = data as unknown as ProviderChangeProposal;
+      setProposal(next);
+      const scopeSuggestion = next.impacts.find(
+        (impact) => impact.kind === "scope",
+      )?.proposedValue;
+      setScope(
+        typeof scopeSuggestion === "string"
+          ? `${project.scope}，${scopeSuggestion}`
+          : project.scope,
+      );
+      setDeliveryDate(project.deliveryMilestone.date);
+      setTotalPrice(String(project.totalPriceMinor / 100));
+      setClientUrl("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "分析失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function send() {
+    if (!project || !proposal) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await postChange({
+        action: "send",
+        projectId: project.id,
+        providerSecret,
+        proposalId: proposal.id,
+        scope,
+        deliveryDate,
+        totalPriceMinor: Math.round(Number(totalPrice) * 100),
+      });
+      setProposal(data.proposal as ProviderChangeProposal);
+      setClientUrl(data.clientUrl as string);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "发送失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function copyClientUrl() {
+    await navigator.clipboard.writeText(clientUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
 
   return (
     <div className="flex min-h-screen bg-background">
-      <div className="hidden lg:block"><Sidebar efficiencyMode="capture" /></div>
+      <div className="hidden lg:block">
+        <Sidebar efficiencyMode="capture" />
+      </div>
       <main className="min-w-0 flex-1">
-        <header className="border-b border-border bg-[radial-gradient(circle_at_top_left,#25215b_0%,#0a0a0f_42%)] px-4 py-6 md:px-8">
-          <div className="mx-auto max-w-7xl">
-            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-2xl font-semibold tracking-tight">双向交付承诺</h1>
-                  <Badge className="border-indigo-400/30 bg-indigo-400/10 text-indigo-200">效率 OPC · 演示主线</Badge>
-                </div>
-                <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                  粘贴一次客户对齐，变成双方都能确认、交付、验收的事实。
-                </p>
-              </div>
-              <Button variant="outline" onClick={() => void refreshSlips()}>
-                <RefreshCw />刷新客户状态
-              </Button>
+        <header className="border-b border-border bg-[radial-gradient(circle_at_top_left,#25215b_0%,#0a0a0f_45%)] px-4 py-7 md:px-8">
+          <div className="mx-auto flex max-w-7xl flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div>
+              <Badge className="border-indigo-400/30 bg-indigo-400/10 text-indigo-200">
+                客户变化处理
+              </Badge>
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+                客户提出变化后，哪些约定要改？
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                对照当前项目，先找出受影响的内容；价格和日期由服务方决定，确认后再更新。
+              </p>
             </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Metric label="7 日客户确认率" value={metrics.cohortSize === 0 ? "待成熟" : formatRate(metrics.confirmationRate)} detail={`近 30 日已满 7 天 cohort · ${metrics.confirmedWithinWindow}/${metrics.cohortSize}`} />
-              <Metric label="确认耗时中位数" value={metrics.medianConfirmHours === null ? "待积累" : `${Math.round(metrics.medianConfirmHours)}h`} detail="候选指标，不伪造精度" />
-              <Metric label="按期验收率" value={metrics.acceptedOnTimeRate === null ? "待积累" : formatRate(metrics.acceptedOnTimeRate)} detail="有计划日期的同 cohort" />
-              <Metric label="待处理 / 逾期" value={`${metrics.openCount} / ${metrics.overdueCount}`} detail="服务方当前动作队列" danger={metrics.overdueCount > 0} />
-            </div>
+            <Button onClick={() => void seedProject()} disabled={loading}>
+              <RefreshCw />载入演示项目
+            </Button>
           </div>
         </header>
 
-        <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 md:px-8 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <section className="space-y-4">
-            <div className="rounded-2xl border border-border bg-card p-5">
-              <div className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="text-indigo-300" />1. 提取承诺草稿</div>
-              <p className="mt-1 text-xs text-muted-foreground">Web 粘贴，不声称已接入微信。演示剧本完全离线可用。</p>
-              <textarea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="粘贴客户聊天 / 需求对齐文本…" className="mt-4 min-h-40 w-full rounded-xl border border-border bg-muted/20 p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50" />
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button onClick={() => void extract(false)} disabled={loading}>{loading ? "处理中…" : "提取承诺"}</Button>
-                <Button variant="outline" onClick={() => void extract(true)} disabled={loading}>载入演示对话</Button>
-              </div>
-              {summary && <p className="mt-3 text-xs text-muted-foreground">场景：{summary}</p>}
-              {error && <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 md:px-8">
+          {!project && (
+            <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-20 text-center">
+              <FileText className="mx-auto size-8 text-indigo-300" />
+              <p className="mt-4 text-sm text-muted-foreground">
+                先载入一个已有约定的演示项目。
+              </p>
             </div>
+          )}
 
-            {commitments.length > 0 && (
-              <div className="rounded-2xl border border-border bg-card p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div><h2 className="text-sm font-semibold">2. 服务方审阅草稿</h2><p className="mt-1 text-xs text-muted-foreground">AI 缺失的日期与验收标准明确标为未知，由你补充。</p></div>
-                  <Button size="sm" onClick={() => void createDrafts()} disabled={loading || !commitments.some((item) => item.accepted)}>生成并发送给客户</Button>
-                </div>
-                <div className="mt-4 space-y-3">
-                  {commitments.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-border bg-muted/15 p-3">
-                      <div className="flex gap-3">
-                        <input aria-label={`选择 ${item.text}`} type="checkbox" checked={item.accepted} onChange={() => updateCommitment(item.id, { accepted: !item.accepted })} />
-                        <div className="min-w-0 flex-1 space-y-2">
-                          <input aria-label="承诺标题" value={item.text} onChange={(event) => updateCommitment(item.id, { text: event.target.value })} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
-                          <input aria-label="验收标准" value={item.acceptanceCriteria} onChange={(event) => updateCommitment(item.id, { acceptanceCriteria: event.target.value })} placeholder="验收标准：未知（可补充）" className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
-                          <div className="grid grid-cols-2 gap-2">
-                            <input aria-label="计划日期" type="date" value={item.suggestedDeadline ?? ""} onChange={(event) => updateCommitment(item.id, { suggestedDeadline: event.target.value || undefined })} className="rounded-lg border border-border bg-background px-3 py-2 text-sm" />
-                            <select aria-label="优先级" value={item.suggestedPriority ?? "中"} onChange={(event) => updateCommitment(item.id, { suggestedPriority: event.target.value as Priority })} className="rounded-lg border border-border bg-background px-3 py-2 text-sm"><option>高</option><option>中</option><option>低</option></select>
-                          </div>
-                          {item.sourceExcerpt && <p className="text-xs text-muted-foreground">原文：{item.sourceExcerpt}</p>}
-                        </div>
-                      </div>
+          {project && (
+            <>
+              <section className="grid gap-4 lg:grid-cols-[1fr_1.35fr]">
+                <ProjectCard project={project} />
+                <div className="rounded-2xl border border-border bg-card p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="font-semibold">客户的新消息</h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        这里只提交与变化有关的内容，不读取微信历史。
+                      </p>
                     </div>
-                  ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setSourceText(CHANGE_FIXTURE_TEXT);
+                        setUseFixture(true);
+                      }}
+                    >
+                      载入演示消息
+                    </Button>
+                  </div>
+                  <textarea
+                    value={sourceText}
+                    onChange={(event) => {
+                      setSourceText(event.target.value);
+                      setUseFixture(false);
+                    }}
+                    aria-label="客户的新消息"
+                    placeholder="粘贴客户的新消息…"
+                    className="mt-4 min-h-32 w-full rounded-xl border border-border bg-muted/20 p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50"
+                  />
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      onClick={() => void analyze(useFixture)}
+                      disabled={loading || !sourceText.trim()}
+                    >
+                      分析这条消息<ArrowRight />
+                    </Button>
+                  </div>
                 </div>
-                {risks.length > 0 && <div className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-100"><div className="mb-1 flex items-center gap-1 font-medium"><AlertTriangle />待澄清</div>{risks.map((risk) => <p key={risk}>· {risk}</p>)}</div>}
-              </div>
-            )}
-          </section>
+              </section>
 
-          <section className="rounded-2xl border border-border bg-card p-5">
-            <div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold">3. 双方交付队列</h2><p className="mt-1 text-xs text-muted-foreground">客户确认与验收只能从客户链接完成。</p></div><span className="text-xs text-muted-foreground">{slips.length} 张</span></div>
-            <div className="mt-4 space-y-3">
-              {slips.map((slip) => <SlipCard key={slip.id} slip={slip} copied={copiedId === slip.id} onChange={updateLocalSlip} onAction={providerAction} onCopy={copyClientLink} />)}
-              {slips.length === 0 && <div className="rounded-xl border border-dashed border-border py-16 text-center text-sm text-muted-foreground">先载入演示对话，生成第一张承诺单。</div>}
+              {proposal && (
+                <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                  <div className="rounded-2xl border border-border bg-card p-5">
+                    <div>
+                      <h2 className="font-semibold">这条消息会影响什么</h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        每条判断都能回到客户原话；不确定的内容留给服务方决定。
+                      </p>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {proposal.impacts.map((impact) => (
+                        <article
+                          key={impact.kind}
+                          className="rounded-xl border border-border bg-muted/15 p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h3 className="text-sm font-medium">{impact.label}</h3>
+                            {impact.proposedValue === null && (
+                              <Badge variant="outline" className="text-amber-200">
+                                需要服务方决定
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="mt-2 text-sm text-foreground">
+                            {impact.proposedValue === null
+                              ? impact.explanation
+                              : String(impact.proposedValue)}
+                          </p>
+                          <p className="mt-3 border-l-2 border-indigo-500/50 pl-3 text-xs text-muted-foreground">
+                            原话：{impact.evidence.quote}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {proposal.status === "applied" ? (
+                      <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5">
+                        <h2 className="font-semibold text-emerald-100">客户已确认新方案</h2>
+                        <p className="mt-2 text-sm leading-6 text-emerald-100/80">
+                          项目已经更新为版本 v{project.version}。后续工作以当前版本为准。
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-border bg-card p-5">
+                        <h2 className="font-semibold">服务方提出新方案</h2>
+                        <div className="mt-4 space-y-3">
+                          <label className="block text-xs text-muted-foreground">
+                            新的工作范围
+                            <textarea
+                              aria-label="新的工作范围"
+                              value={scope}
+                              onChange={(event) => setScope(event.target.value)}
+                              className="mt-1.5 min-h-20 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                            />
+                          </label>
+                          <label className="block text-xs text-muted-foreground">
+                            新的交付日期
+                            <input
+                              aria-label="新的交付日期"
+                              type="date"
+                              value={deliveryDate}
+                              onChange={(event) => setDeliveryDate(event.target.value)}
+                              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                            />
+                          </label>
+                          <label className="block text-xs text-muted-foreground">
+                            新的总价（元）
+                            <input
+                              aria-label="新的总价（元）"
+                              type="number"
+                              min={project.paidMinor / 100}
+                              step="1"
+                              value={totalPrice}
+                              onChange={(event) => setTotalPrice(event.target.value)}
+                              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                            />
+                          </label>
+                          <div className="rounded-lg bg-muted/30 p-3 text-xs text-muted-foreground">
+                            已付款 {money.format(project.paidMinor / 100)}；新尾款 {money.format(Math.max(0, Number(totalPrice || 0) - project.paidMinor / 100))}
+                          </div>
+                        </div>
+                        {proposal.clientNote && (
+                          <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+                            客户要求修改：{proposal.clientNote}
+                          </div>
+                        )}
+                        <Button
+                          className="mt-4 w-full"
+                          onClick={() => void send()}
+                          disabled={loading}
+                        >
+                          <Send />
+                          {proposal.status === "changes_requested"
+                            ? "修改后再次发送"
+                            : "发送给客户确认"}
+                        </Button>
+                      </div>
+                    )}
+
+                    {clientUrl && proposal.status === "pending_client" && (
+                      <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/10 p-5">
+                        <h2 className="text-sm font-semibold">客户确认链接</h2>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          链接绑定当前项目版本；服务方再次修改后，旧链接失效。
+                        </p>
+                        <div className="mt-3 flex items-center gap-2 rounded-lg bg-black/20 p-2">
+                          <code
+                            data-testid="client-link"
+                            className="min-w-0 flex-1 truncate text-xs text-indigo-200"
+                          >
+                            {clientUrl}
+                          </code>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label="复制客户链接"
+                            onClick={() => void copyClientUrl()}
+                          >
+                            {copied ? <Check /> : <Clipboard />}
+                          </Button>
+                          <Button size="icon" variant="ghost" asChild>
+                            <a
+                              href={clientUrl}
+                              target="_blank"
+                              aria-label="打开客户链接"
+                            >
+                              <ExternalLink />
+                            </a>
+                          </Button>
+                        </div>
+                        <p className="mt-2 text-[11px] text-amber-200">
+                          这个链接不验证点击者身份，不等同于电子签名。
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
+          {project && project.version > 1 && (
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5 text-sm text-emerald-100">
+              <Check className="mr-2 inline size-4" />
+              交付日期和尾款已同时更新
             </div>
-          </section>
+          )}
+
+          {error && (
+            <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+              {error}
+            </div>
+          )}
         </div>
       </main>
     </div>
   );
 }
 
-function Metric({ label, value, detail, danger = false }: { label: string; value: string; detail: string; danger?: boolean }) {
-  return <div className={`rounded-2xl border p-4 ${danger ? "border-red-500/35 bg-red-500/10" : "border-white/10 bg-black/20"}`}><p className="text-xs text-muted-foreground">{label} · 候选</p><p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-[10px] text-muted-foreground">{detail}</p></div>;
+function ProjectCard({ project }: { project: PublicChangeProject }) {
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs text-muted-foreground">{project.clientName}</p>
+          <h2 className="mt-1 text-xl font-semibold">{project.title}</h2>
+        </div>
+        <Badge className="border-emerald-400/25 bg-emerald-400/10 text-emerald-200">
+          当前版本 v{project.version}
+        </Badge>
+      </div>
+      <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+        <Fact label="工作范围" value={project.scope} />
+        <Fact label="交付日期" value={project.deliveryMilestone.date} />
+        <Fact label="总价" value={money.format(project.totalPriceMinor / 100)} />
+        <Fact
+          label="付款"
+          value={`已付 ${money.format(project.paidMinor / 100)} · 尾款 ${money.format(project.paymentMilestone.amountMinor / 100)}`}
+        />
+      </dl>
+    </section>
+  );
 }
 
-function SlipCard({ slip, copied, onChange, onAction, onCopy }: { slip: CommitmentSlip; copied: boolean; onChange: (id: string, patch: Partial<CommitmentSlip>) => void; onAction: (slip: CommitmentSlip, action: ProviderAction) => Promise<void>; onCopy: (slip: CommitmentSlip) => Promise<void> }) {
-  const editable = slip.status === "draft" || slip.status === "client_requested_changes";
-  const url = clientUrl(slip);
-  const clientNote = latestClientNote(slip);
+function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <article data-slip-id={slip.id} className={`rounded-xl border p-4 ${isOverdue(slip) ? "border-red-500/40" : "border-border"}`}>
-      <div className="flex items-start justify-between gap-3"><Badge variant="outline">{DELIVERY_STATUS_LABELS[slip.status]}</Badge><span className="text-xs text-muted-foreground">{slip.dueAt || "日期未知"}</span></div>
-      {editable ? <div className="mt-3 space-y-2"><input aria-label="承诺单标题" value={slip.title} onChange={(event) => onChange(slip.id, { title: event.target.value })} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium" /><input aria-label="承诺单验收标准" value={slip.acceptanceCriteria ?? ""} onChange={(event) => onChange(slip.id, { acceptanceCriteria: event.target.value })} placeholder="验收标准：未知" className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" /></div> : <div className="mt-3"><h3 className="font-medium">{slip.title}</h3><p className="mt-1 text-xs text-muted-foreground">验收标准：{slip.acceptanceCriteria || "未知"}</p></div>}
-      {clientNote && <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 p-2 text-xs text-amber-100">客户说明：{clientNote}</div>}
-      {url && <div className="mt-3 flex items-center gap-2 rounded-lg bg-muted/30 p-2"><code className="min-w-0 flex-1 truncate text-xs text-indigo-200">{url}</code><Button size="icon" variant="ghost" aria-label="复制客户链接" onClick={() => void onCopy(slip)}>{copied ? <Check /> : <Clipboard />}</Button><Button size="icon" variant="ghost" asChild><a href={url} target="_blank" aria-label="打开客户链接"><ExternalLink /></a></Button></div>}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {editable && <><Button size="sm" variant="outline" onClick={() => void onAction(slip, "update")}>保存草稿</Button><Button size="sm" onClick={() => void onAction(slip, "send")}><Send />{slip.status === "draft" ? "发送给客户" : "更新并重发"}</Button></>}
-        {(slip.status === "client_confirmed" || slip.status === "client_rejected") && <Button size="sm" onClick={() => void onAction(slip, "deliver")}>标记已交付</Button>}
-        {slip.status === "pending_client_confirm" && <span className="self-center text-xs text-muted-foreground">等待客户确认，服务方不能代点。</span>}
-        {slip.status === "provider_delivered" && <span className="self-center text-xs text-muted-foreground">等待客户验收。</span>}
-        {slip.status === "client_accepted" && <span className="flex items-center gap-1 text-xs text-emerald-300"><Check />双方闭环</span>}
-      </div>
-    </article>
+    <div className="rounded-xl border border-border bg-muted/20 p-3">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-1 font-medium text-foreground">{value}</dd>
+    </div>
   );
 }

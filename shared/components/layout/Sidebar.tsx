@@ -10,7 +10,7 @@ interface SidebarProps {
 }
 
 const efficiencyItems = [
-  { id: "capture" as const, label: "交付闭环", icon: Target },
+  { id: "capture" as const, label: "客户变化处理", icon: Target },
 ];
 
 export function Sidebar({ efficiencyMode = "capture" }: SidebarProps) {
@@ -37,7 +37,7 @@ export function Sidebar({ efficiencyMode = "capture" }: SidebarProps) {
       <nav className="flex-1 px-3 py-3 overflow-y-auto">
         <div className="space-y-1">
           <div className="text-xs text-muted-foreground px-2 py-1.5 font-medium">
-            效率 OPC · 本场主线
+            当前功能
           </div>
           {efficiencyItems.map((item) => {
             const Icon = item.icon;
@@ -63,7 +63,7 @@ export function Sidebar({ efficiencyMode = "capture" }: SidebarProps) {
       </nav>
       <div className="p-3 border-t border-border">
         <div className="text-xs text-muted-foreground text-center">
-          效率赛道 · 双方确认事实
+          对照原约定，再更新项目
         </div>
       </div>
     </aside>

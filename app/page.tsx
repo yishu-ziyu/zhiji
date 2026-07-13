@@ -43,26 +43,25 @@ export default function HomePage() {
               FC-OPC Next iBot 2026 · 效率赛道
             </div>
             <h2 className="text-4xl md:text-5xl font-bold text-foreground mb-5 leading-[1.15] tracking-tight">
-              客户聊完之后，
+              客户改了要求，
               <br />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-violet-300 to-cyan-300">
-                谁钉交付？
+                哪些约定要跟着改？
               </span>
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8 leading-relaxed">
-              一人公司最稀缺的是注意力。本场只做效率 OPC：
+              系统对照已有项目，指出受影响的工作、日期和价格；
               <span className="text-foreground font-medium">
                 {" "}
-                承诺草稿 → 客户确认 → 交付验收{" "}
+                服务方决定新方案，客户确认后再更新。{" "}
               </span>
-              ，让客户拥有确认与验收动作。
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 mb-14">
               <Link
                 href="/track/efficiency"
                 className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 transition-colors"
               >
-                打开交付运营助手
+                打开客户变化处理
                 <ArrowRight className="w-4 h-4" />
               </Link>
             </div>
@@ -75,24 +74,24 @@ export default function HomePage() {
                       <Target className="w-6 h-6 text-indigo-300" />
                     </div>
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/15 border border-primary/25 px-2 py-1 rounded-full">
-                      唯一主线
+                      当前演示
                     </span>
                   </div>
                   <h3 className="text-lg font-semibold text-foreground mb-2 group-hover:text-primary transition-colors">
-                    交付运营助手
+                    客户变化处理
                   </h3>
                   <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
-                    客户对齐 → 双方承诺单 → 无登录客户确认 → 交付验收。电商赛道本场不做。
+                    客户提出变化 → 对照原约定 → 服务方提出新方案 → 更新交付日期和尾款。
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <span className="text-xs bg-muted/60 text-muted-foreground px-2 py-1 rounded flex items-center gap-1">
-                      <FileText className="w-3 h-3" /> 承诺提取
+                      <FileText className="w-3 h-3" /> 原文依据
                     </span>
                     <span className="text-xs bg-muted/60 text-muted-foreground px-2 py-1 rounded flex items-center gap-1">
-                      <KanbanSquare className="w-3 h-3" /> 交付确认
+                      <KanbanSquare className="w-3 h-3" /> 版本确认
                     </span>
                     <span className="text-xs bg-muted/60 text-muted-foreground px-2 py-1 rounded flex items-center gap-1">
-                      <Zap className="w-3 h-3" /> 候选指标
+                      <Zap className="w-3 h-3" /> 状态更新
                     </span>
                   </div>
                 </Card>
@@ -103,9 +102,9 @@ export default function HomePage() {
 
         <section className="border-t border-border/80">
           <div className="max-w-6xl mx-auto px-6 py-8 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs text-muted-foreground">
-            <span>赛道：效率 OPC only</span>
+            <span>参赛方向：提高工作效率</span>
             <span className="hidden sm:inline text-border">|</span>
-            <span>创新点：客户拥有确认 / 验收权</span>
+            <span>客户确认同一版本后，系统才更新</span>
             <span className="hidden sm:inline text-border">|</span>
             <span>交件 7/18 · 路演 7/19</span>
           </div>
