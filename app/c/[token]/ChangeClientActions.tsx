@@ -86,6 +86,11 @@ export function ChangeClientActions({
             newValue={change.newVersion.deliveryDate}
           />
           <Comparison
+            label="总价"
+            oldValue={money.format(change.oldVersion.totalPriceMinor / 100)}
+            newValue={money.format(change.newVersion.totalPriceMinor / 100)}
+          />
+          <Comparison
             label="尾款"
             oldValue={money.format(change.oldVersion.finalPaymentMinor / 100)}
             newValue={money.format(change.newVersion.finalPaymentMinor / 100)}

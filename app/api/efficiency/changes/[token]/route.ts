@@ -6,11 +6,11 @@ import {
 } from "@/shared/delivery/change";
 
 function errorResponse(error: unknown) {
-  const status = error instanceof ChangeError ? error.status : 400;
-  return Response.json(
-    { error: error instanceof Error ? error.message : "操作失败" },
-    { status },
-  );
+  if (error instanceof ChangeError) {
+    return Response.json({ error: error.message }, { status: error.status });
+  }
+  console.error("client change route failed", error);
+  return Response.json({ error: "服务暂时不可用，请稍后重试" }, { status: 500 });
 }
 
 export async function GET(
