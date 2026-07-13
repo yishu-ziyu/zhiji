@@ -46,12 +46,16 @@ test("golden path keeps client confirmation and acceptance client-owned", async 
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+  await clientPage.getByRole("button", { name: "要求修改" }).click();
+  await expect(clientPage.locator("#client-note-error")).toHaveText("请填写修改说明");
   await clientPage.getByRole("button", { name: "确认承诺" }).click();
   await expect(clientPage.getByText("承诺已确认，等待服务方交付。")).toBeVisible();
 
   await expect(providerCard.getByText("客户已确认")).toBeVisible({ timeout: 5000 });
   await providerCard.getByRole("button", { name: "标记已交付" }).click();
   await expect(clientPage.getByRole("button", { name: "确认验收" })).toBeVisible({ timeout: 5000 });
+  await clientPage.getByRole("button", { name: "拒收" }).click();
+  await expect(clientPage.locator("#client-note-error")).toHaveText("请填写拒收说明");
   await clientPage.getByRole("button", { name: "确认验收" }).click();
 
   await expect(clientPage.getByText("验收完成，这张承诺单已闭环。")).toBeVisible();

@@ -31,6 +31,10 @@ export function ClientActions({
   }, [refresh]);
 
   async function act(action: "confirm" | "request_changes" | "accept" | "reject") {
+    if ((action === "request_changes" || action === "reject") && !note.trim()) {
+      setError(action === "request_changes" ? "请填写修改说明" : "请填写拒收说明");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -98,10 +102,19 @@ export function ClientActions({
           <textarea
             id="client-note"
             value={note}
-            onChange={(event) => setNote(event.target.value)}
+            onChange={(event) => {
+              setNote(event.target.value);
+              setError(null);
+            }}
             className="mt-2 min-h-24 w-full rounded-xl border border-border bg-muted/30 p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50"
             placeholder="把需要调整的地方说清楚，双方少一次来回"
+            aria-describedby={error ? "client-note-error" : undefined}
           />
+          {error && (
+            <p id="client-note-error" role="alert" className="mt-2 text-sm text-red-300">
+              {error}
+            </p>
+          )}
           <div className="mt-4 grid grid-cols-2 gap-3">
             <Button
               variant="outline"
@@ -129,8 +142,8 @@ export function ClientActions({
         </div>
       )}
 
-      {error && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+      {error && !awaitingConfirm && !awaitingAcceptance && (
+        <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
           {error}
         </div>
       )}
