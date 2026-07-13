@@ -13,11 +13,11 @@ import {
 } from "@/shared/llm/prompts/change";
 
 function errorResponse(error: unknown) {
-  const status = error instanceof ChangeError ? error.status : 400;
-  return Response.json(
-    { error: error instanceof Error ? error.message : "操作失败" },
-    { status },
-  );
+  if (error instanceof ChangeError) {
+    return Response.json({ error: error.message }, { status: error.status });
+  }
+  console.error("customer change route failed", error);
+  return Response.json({ error: "服务暂时不可用，请稍后重试" }, { status: 500 });
 }
 
 function requiredString(body: Record<string, unknown>, key: string): string {
@@ -43,7 +43,14 @@ export async function POST(request: Request) {
     const providerSecret = requiredString(body, "providerSecret");
 
     if (body.action === "get") {
-      return Response.json(getProviderChange(projectId, providerSecret));
+      const state = getProviderChange(projectId, providerSecret);
+      return Response.json({
+        project: state.project,
+        proposal: state.proposal,
+        clientUrl: state.clientToken
+          ? `${new URL(request.url).origin}/c/${state.clientToken}`
+          : undefined,
+      });
     }
 
     if (body.action === "analyze") {
@@ -55,21 +62,34 @@ export async function POST(request: Request) {
       }
 
       const { project } = getProviderChange(projectId, providerSecret);
-      const text = await complete(
-        buildChangePrompt(project, sourceText),
-        CHANGE_SYSTEM,
-        { timeout: 12_000, maxRetries: 1 },
-      );
-      const parsed = extractJson(text);
+      let parsed: Record<string, unknown>;
+      try {
+        const text = await complete(
+          buildChangePrompt(project, sourceText),
+          CHANGE_SYSTEM,
+          { timeout: 12_000, maxRetries: 1 },
+        );
+        parsed = extractJson(text);
+      } catch (error) {
+        console.error("customer change analysis failed", error);
+        throw new ChangeError("AI 分析失败，请稍后重试", 502);
+      }
       for (const key of [
         "scopeChange",
         "scopeQuote",
         "deliveryQuote",
         "priceQuote",
       ]) {
-        if (typeof parsed[key] !== "string" || !parsed[key]) {
-          throw new ChangeError("AI 没有给出可核对的原文依据", 422);
+        if (typeof parsed[key] !== "string") {
+          throw new ChangeError("AI 返回的内容格式不完整", 422);
         }
+      }
+      if (
+        ![parsed.scopeQuote, parsed.deliveryQuote, parsed.priceQuote].some(
+          (value) => typeof value === "string" && value.trim(),
+        )
+      ) {
+        throw new ChangeError("AI 没有给出可核对的原文依据", 422);
       }
       return Response.json(
         createChangeDraft({

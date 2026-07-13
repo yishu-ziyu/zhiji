@@ -107,5 +107,7 @@ export async function complete(
   }
 
   console.error(`LLM all ${MAX_RETRIES} attempts failed:`, lastError);
-  throw new Error("AI 服务暂时不可用（已重试 3 次），请检查网络连接后重试。");
+  throw new Error(
+    `AI 服务暂时不可用（已尝试 ${MAX_RETRIES} 次），请检查网络连接后重试。`,
+  );
 }
