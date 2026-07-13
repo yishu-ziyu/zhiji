@@ -64,7 +64,7 @@ export function Sidebar({ efficiencyMode = "capture" }: SidebarProps) {
       </nav>
       <div className="p-3 border-t border-border">
         <div className="text-xs text-muted-foreground text-center">
-          效率赛道 · 闭环率北极星
+          效率赛道 · 双方确认事实
         </div>
       </div>
     </aside>

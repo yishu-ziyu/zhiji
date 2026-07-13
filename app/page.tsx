@@ -53,11 +53,9 @@ export default function HomePage() {
               一人公司最稀缺的是注意力。本场只做效率 OPC：
               <span className="text-foreground font-medium">
                 {" "}
-                承诺捕获 → 任务推进 → 客户确认{" "}
+                承诺草稿 → 客户确认 → 交付验收{" "}
               </span>
-              ，用
-              <span className="text-foreground font-medium"> 闭环率 </span>
-              评测说到做到。
+              ，让客户拥有确认与验收动作。
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 mb-14">
               <Link
@@ -84,7 +82,7 @@ export default function HomePage() {
                     交付运营助手
                   </h3>
                   <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
-                    客户对话 → 硬承诺 / 待澄清 → 交付看板 → 闭环率。电商赛道本场不做。
+                    客户对齐 → 双方承诺单 → 无登录客户确认 → 交付验收。电商赛道本场不做。
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <span className="text-xs bg-muted/60 text-muted-foreground px-2 py-1 rounded flex items-center gap-1">
@@ -94,7 +92,7 @@ export default function HomePage() {
                       <KanbanSquare className="w-3 h-3" /> 交付确认
                     </span>
                     <span className="text-xs bg-muted/60 text-muted-foreground px-2 py-1 rounded flex items-center gap-1">
-                      <Zap className="w-3 h-3" /> 闭环率
+                      <Zap className="w-3 h-3" /> 候选指标
                     </span>
                   </div>
                 </Card>
@@ -107,7 +105,7 @@ export default function HomePage() {
           <div className="max-w-6xl mx-auto px-6 py-8 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs text-muted-foreground">
             <span>赛道：效率 OPC only</span>
             <span className="hidden sm:inline text-border">|</span>
-            <span>北极星：闭环率</span>
+            <span>创新点：客户拥有确认 / 验收权</span>
             <span className="hidden sm:inline text-border">|</span>
             <span>交件 7/18 · 路演 7/19</span>
           </div>
