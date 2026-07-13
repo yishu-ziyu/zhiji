@@ -1,198 +1,483 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import {
+  ArrowRight,
+  Check,
+  Clipboard,
+  ExternalLink,
+  FileText,
+  RefreshCw,
+  Send,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Sidebar } from "@/shared/components/layout/Sidebar";
-import { ChatInterface } from "@/shared/components/chat/ChatInterface";
-import type { Message, EfficiencyMode } from "@/shared/types/common";
-import { useState, useCallback } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, KanbanSquare } from "lucide-react";
+import type {
+  ProviderChangeProposal,
+  PublicChangeProject,
+} from "@/shared/delivery/change";
 
-const MOCK_TASKS = [
-  { id: "1", title: "设计首页 UI 原型", status: "done" as const, priority: "高" },
-  { id: "2", title: "实现 LLM 调用层", status: "done" as const, priority: "高" },
-  { id: "3", title: "电商选品分析功能", status: "in-progress" as const, priority: "高" },
-  { id: "4", title: "短视频脚本生成", status: "todo" as const, priority: "中" },
-  { id: "5", title: "会议纪要功能", status: "todo" as const, priority: "中" },
-  { id: "6", title: "项目看板组件", status: "todo" as const, priority: "低" },
-];
+const CHANGE_FIXTURE_TEXT =
+  "客户：再加一组 A/B 测试，还是周五上，价格先按之前的。";
 
-function KanbanBoard() {
-  const [tasks, setTasks] = useState(MOCK_TASKS);
+const money = new Intl.NumberFormat("zh-CN", {
+  style: "currency",
+  currency: "CNY",
+  maximumFractionDigits: 0,
+});
 
-  const moveTask = (id: string, newStatus: "todo" | "in-progress" | "done") => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, status: newStatus } : t)),
-    );
+async function postChange(body: Record<string, unknown>) {
+  const response = await fetch("/api/efficiency/changes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await response.json()) as Record<string, unknown> & {
+    error?: string;
   };
-
-  const columns = [
-    { status: "todo" as const, label: "待办", color: "bg-muted" },
-    { status: "in-progress" as const, label: "进行中", color: "bg-primary/10" },
-    { status: "done" as const, label: "完成", color: "bg-green-500/10" },
-  ];
-
-  return (
-    <div className="flex gap-4 overflow-x-auto pb-4">
-      {columns.map((col) => (
-        <div key={col.status} className={`flex-1 min-w-[240px] rounded-xl border border-border ${col.color}`}>
-          <div className="px-3 py-2 border-b border-border">
-            <div className="text-xs font-medium text-muted-foreground">
-              {col.label}
-              <span className="ml-1.5 text-muted-foreground/60">
-                {tasks.filter((t) => t.status === col.status).length}
-              </span>
-            </div>
-          </div>
-          <div className="p-2 space-y-2">
-            {tasks
-              .filter((t) => t.status === col.status)
-              .map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  onStatusChange={(s) => moveTask(task.id, s)}
-                />
-              ))}
-            {tasks.filter((t) => t.status === col.status).length === 0 && (
-              <div className="text-xs text-muted-foreground text-center py-6 opacity-50">
-                暂无任务
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TaskCard({
-  task,
-  onStatusChange,
-}: {
-  task: { id: string; title: string; status: string; priority: string };
-  onStatusChange: (s: "todo" | "in-progress" | "done") => void;
-}) {
-  const priorityColor =
-    task.priority === "高"
-      ? "bg-red-500/20 text-red-400"
-      : task.priority === "中"
-        ? "bg-yellow-500/20 text-yellow-400"
-        : "bg-blue-500/20 text-blue-400";
-
-  return (
-    <div className="bg-card border border-border rounded-lg p-3 space-y-2">
-      <p className="text-sm text-foreground leading-snug">{task.title}</p>
-      <div className="flex items-center justify-between">
-        <span className={`text-xs px-1.5 py-0.5 rounded ${priorityColor}`}>
-          {task.priority}
-        </span>
-        <select
-          value={task.status}
-          onChange={(e) => onStatusChange(e.target.value as "todo" | "in-progress" | "done")}
-          className="text-xs bg-muted border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
-        >
-          <option value="todo">待办</option>
-          <option value="in-progress">进行中</option>
-          <option value="done">完成</option>
-        </select>
-      </div>
-    </div>
-  );
+  if (!response.ok) throw new Error(data.error || "操作失败");
+  return data;
 }
 
 export default function EfficiencyPage() {
-  const [mode, setMode] = useState<EfficiencyMode>("minutes");
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [providerSecret, setProviderSecret] = useState("");
+  const [project, setProject] = useState<PublicChangeProject | null>(null);
+  const [proposal, setProposal] = useState<ProviderChangeProposal | null>(null);
+  const [sourceText, setSourceText] = useState("");
+  const [useFixture, setUseFixture] = useState(false);
+  const [scope, setScope] = useState("");
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [totalPrice, setTotalPrice] = useState("");
+  const [clientUrl, setClientUrl] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSend = useCallback(async (content: string) => {
-    if (mode !== "minutes") return;
+  const projectId = project?.id;
 
-    const userMsg: Message = {
-      role: "user",
-      content,
-      timestamp: new Date(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    setIsLoading(true);
-
-    try {
-      const res = await fetch("/api/efficiency/minutes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: content }),
-      });
-
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || "请求失败");
+  useEffect(() => {
+    if (!projectId || !providerSecret) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const data = await postChange({
+          action: "get",
+          projectId,
+          providerSecret,
+        });
+        setProject(data.project as PublicChangeProject);
+        setProposal(data.proposal as ProviderChangeProposal | null);
+        if (typeof data.clientUrl === "string") setClientUrl(data.clientUrl);
+      } catch {
+        // The next explicit action will show the error; polling stays quiet.
       }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [projectId, providerSecret]);
 
-      const data = await res.json();
-      const aiMsg: Message = {
-        role: "assistant",
-        content: "",
-        timestamp: new Date(),
-        type: "minutes",
-        data,
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem("customer-change-provider");
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved) as {
+        projectId?: string;
+        providerSecret?: string;
       };
-      setMessages((prev) => [...prev, aiMsg]);
-    } catch (error) {
-      const errorMsg: Message = {
-        role: "assistant",
-        content: error instanceof Error ? error.message : "请求失败，请稍后重试。",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errorMsg]);
-    } finally {
-      setIsLoading(false);
+      if (!parsed.projectId || !parsed.providerSecret) return;
+      void postChange({
+        action: "get",
+        projectId: parsed.projectId,
+        providerSecret: parsed.providerSecret,
+      })
+        .then((data) => {
+          const restoredProject = data.project as PublicChangeProject;
+          const restoredProposal = data.proposal as ProviderChangeProposal | null;
+          setProject(restoredProject);
+          setProposal(restoredProposal);
+          setProviderSecret(parsed.providerSecret!);
+          setScope(restoredProposal?.newVersion?.scope ?? restoredProject.scope);
+          setDeliveryDate(
+            restoredProposal?.newVersion?.deliveryDate ??
+              restoredProject.deliveryMilestone.date,
+          );
+          setTotalPrice(
+            String(
+              (restoredProposal?.newVersion?.totalPriceMinor ??
+                restoredProject.totalPriceMinor) / 100,
+            ),
+          );
+          if (typeof data.clientUrl === "string") setClientUrl(data.clientUrl);
+        })
+        .catch(() => {
+          window.sessionStorage.removeItem("customer-change-provider");
+        });
+    } catch {
+      window.sessionStorage.removeItem("customer-change-provider");
     }
-  }, [mode]);
+  }, []);
+
+  async function seedProject() {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await postChange({ action: "seed" });
+      const nextProject = data.project as PublicChangeProject;
+      setProject(nextProject);
+      setProviderSecret(data.providerSecret as string);
+      window.sessionStorage.setItem(
+        "customer-change-provider",
+        JSON.stringify({
+          projectId: nextProject.id,
+          providerSecret: data.providerSecret,
+        }),
+      );
+      setProposal(null);
+      setSourceText("");
+      setUseFixture(false);
+      setScope(nextProject.scope);
+      setDeliveryDate(nextProject.deliveryMilestone.date);
+      setTotalPrice(String(nextProject.totalPriceMinor / 100));
+      setClientUrl("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "载入失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function analyze(fixture: boolean) {
+    if (!project) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await postChange({
+        action: "analyze",
+        projectId: project.id,
+        providerSecret,
+        sourceText,
+        fixture,
+      });
+      const next = data as unknown as ProviderChangeProposal;
+      setProposal(next);
+      const scopeSuggestion = next.impacts.find(
+        (impact) => impact.kind === "scope",
+      )?.proposedValue;
+      setScope(
+        typeof scopeSuggestion === "string"
+          ? `${project.scope}，${scopeSuggestion}`
+          : project.scope,
+      );
+      setDeliveryDate(project.deliveryMilestone.date);
+      setTotalPrice(String(project.totalPriceMinor / 100));
+      setClientUrl("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "分析失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function send() {
+    if (!project || !proposal) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await postChange({
+        action: "send",
+        projectId: project.id,
+        providerSecret,
+        proposalId: proposal.id,
+        scope,
+        deliveryDate,
+        totalPriceMinor: Math.round(Number(totalPrice) * 100),
+      });
+      setProposal(data.proposal as ProviderChangeProposal);
+      setClientUrl(data.clientUrl as string);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "发送失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function copyClientUrl() {
+    await navigator.clipboard.writeText(clientUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
 
   return (
-    <div className="flex h-screen">
-      <Sidebar
-        track="efficiency"
-        ecommerceMode="analyze"
-        efficiencyMode={mode}
-        onTrackChange={() => {}}
-      />
-      <main className="flex-1 flex flex-col min-w-0">
-        <div className="px-6 py-4 border-b border-border">
-          <h1 className="text-lg font-semibold text-foreground">效率 Agent</h1>
-          <p className="text-xs text-muted-foreground">AI 驱动的团队效率工具</p>
-        </div>
-        <Tabs
-          value={mode}
-          onValueChange={(v) => setMode(v as EfficiencyMode)}
-          className="flex-1 flex flex-col min-h-0"
-        >
-          <div className="px-6 pt-3">
-            <TabsList className="bg-muted/50">
-              <TabsTrigger value="minutes" className="gap-1.5 text-xs">
-                <FileText className="w-3.5 h-3.5" />
-                会议纪要
-              </TabsTrigger>
-              <TabsTrigger value="kanban" className="gap-1.5 text-xs">
-                <KanbanSquare className="w-3.5 h-3.5" />
-                项目看板
-              </TabsTrigger>
-            </TabsList>
+    <div className="flex min-h-screen bg-background">
+      <div className="hidden lg:block">
+        <Sidebar efficiencyMode="capture" />
+      </div>
+      <main className="min-w-0 flex-1">
+        <header className="border-b border-border bg-[radial-gradient(circle_at_top_left,#25215b_0%,#0a0a0f_45%)] px-4 py-7 md:px-8">
+          <div className="mx-auto flex max-w-7xl flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div>
+              <Badge className="border-indigo-400/30 bg-indigo-400/10 text-indigo-200">
+                客户变化处理
+              </Badge>
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+                客户提出变化后，哪些约定要改？
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                对照当前项目，先找出受影响的内容；价格和日期由服务方决定，确认后再更新。
+              </p>
+            </div>
+            <Button onClick={() => void seedProject()} disabled={loading}>
+              <RefreshCw />载入演示项目
+            </Button>
           </div>
-          <TabsContent value="minutes" className="flex-1 mt-0 min-h-0">
-            <ChatInterface
-              messages={messages}
-              onSend={handleSend}
-              isLoading={isLoading}
-              placeholder="粘贴会议记录，AI 自动整理结构化纪要..."
-              modeLabel="会议纪要"
-            />
-          </TabsContent>
-          <TabsContent value="kanban" className="flex-1 mt-0 min-h-0 overflow-auto p-6">
-            <KanbanBoard />
-          </TabsContent>
-        </Tabs>
+        </header>
+
+        <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 md:px-8">
+          {!project && (
+            <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-20 text-center">
+              <FileText className="mx-auto size-8 text-indigo-300" />
+              <p className="mt-4 text-sm text-muted-foreground">
+                先载入一个已有约定的演示项目。
+              </p>
+            </div>
+          )}
+
+          {project && (
+            <>
+              <section className="grid gap-4 lg:grid-cols-[1fr_1.35fr]">
+                <ProjectCard project={project} />
+                <div className="rounded-2xl border border-border bg-card p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="font-semibold">客户的新消息</h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        这里只提交与变化有关的内容，不读取微信历史。
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setSourceText(CHANGE_FIXTURE_TEXT);
+                        setUseFixture(true);
+                      }}
+                    >
+                      载入演示消息
+                    </Button>
+                  </div>
+                  <textarea
+                    value={sourceText}
+                    onChange={(event) => {
+                      setSourceText(event.target.value);
+                      setUseFixture(false);
+                    }}
+                    aria-label="客户的新消息"
+                    placeholder="粘贴客户的新消息…"
+                    className="mt-4 min-h-32 w-full rounded-xl border border-border bg-muted/20 p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50"
+                  />
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      onClick={() => void analyze(useFixture)}
+                      disabled={loading || !sourceText.trim()}
+                    >
+                      分析这条消息<ArrowRight />
+                    </Button>
+                  </div>
+                </div>
+              </section>
+
+              {proposal && (
+                <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                  <div className="rounded-2xl border border-border bg-card p-5">
+                    <div>
+                      <h2 className="font-semibold">这条消息会影响什么</h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        每条判断都能回到客户原话；不确定的内容留给服务方决定。
+                      </p>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {proposal.impacts.map((impact) => (
+                        <article
+                          key={impact.kind}
+                          className="rounded-xl border border-border bg-muted/15 p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h3 className="text-sm font-medium">{impact.label}</h3>
+                            {impact.proposedValue === null && (
+                              <Badge variant="outline" className="text-amber-200">
+                                需要服务方决定
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="mt-2 text-sm text-foreground">
+                            {impact.proposedValue === null
+                              ? impact.explanation
+                              : String(impact.proposedValue)}
+                          </p>
+                          <p className="mt-3 border-l-2 border-indigo-500/50 pl-3 text-xs text-muted-foreground">
+                            原话：{impact.evidence.quote}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {proposal.status === "applied" ? (
+                      <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5">
+                        <h2 className="font-semibold text-emerald-100">客户已确认新方案</h2>
+                        <p className="mt-2 text-sm leading-6 text-emerald-100/80">
+                          项目已经更新为版本 v{project.version}。后续工作以当前版本为准。
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-border bg-card p-5">
+                        <h2 className="font-semibold">服务方提出新方案</h2>
+                        <div className="mt-4 space-y-3">
+                          <label className="block text-xs text-muted-foreground">
+                            新的工作范围
+                            <textarea
+                              aria-label="新的工作范围"
+                              value={scope}
+                              onChange={(event) => setScope(event.target.value)}
+                              className="mt-1.5 min-h-20 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                            />
+                          </label>
+                          <label className="block text-xs text-muted-foreground">
+                            新的交付日期
+                            <input
+                              aria-label="新的交付日期"
+                              type="date"
+                              value={deliveryDate}
+                              onChange={(event) => setDeliveryDate(event.target.value)}
+                              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                            />
+                          </label>
+                          <label className="block text-xs text-muted-foreground">
+                            新的总价（元）
+                            <input
+                              aria-label="新的总价（元）"
+                              type="number"
+                              min={project.paidMinor / 100}
+                              step="1"
+                              value={totalPrice}
+                              onChange={(event) => setTotalPrice(event.target.value)}
+                              className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                            />
+                          </label>
+                          <div className="rounded-lg bg-muted/30 p-3 text-xs text-muted-foreground">
+                            已付款 {money.format(project.paidMinor / 100)}；新尾款 {money.format(Math.max(0, Number(totalPrice || 0) - project.paidMinor / 100))}
+                          </div>
+                        </div>
+                        {proposal.clientNote && (
+                          <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+                            客户要求修改：{proposal.clientNote}
+                          </div>
+                        )}
+                        <Button
+                          className="mt-4 w-full"
+                          onClick={() => void send()}
+                          disabled={loading}
+                        >
+                          <Send />
+                          {proposal.status === "changes_requested"
+                            ? "修改后再次发送"
+                            : proposal.status === "pending_client"
+                              ? "修改并重新发送"
+                              : "发送给客户确认"}
+                        </Button>
+                      </div>
+                    )}
+
+                    {clientUrl && proposal.status === "pending_client" && (
+                      <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/10 p-5">
+                        <h2 className="text-sm font-semibold">客户确认链接</h2>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          链接绑定当前项目版本；服务方再次修改后，旧链接失效。
+                        </p>
+                        <div className="mt-3 flex items-center gap-2 rounded-lg bg-black/20 p-2">
+                          <code
+                            data-testid="client-link"
+                            className="min-w-0 flex-1 truncate text-xs text-indigo-200"
+                          >
+                            {clientUrl}
+                          </code>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label="复制客户链接"
+                            onClick={() => void copyClientUrl()}
+                          >
+                            {copied ? <Check /> : <Clipboard />}
+                          </Button>
+                          <Button size="icon" variant="ghost" asChild>
+                            <a
+                              href={clientUrl}
+                              target="_blank"
+                              aria-label="打开客户链接"
+                            >
+                              <ExternalLink />
+                            </a>
+                          </Button>
+                        </div>
+                        <p className="mt-2 text-[11px] text-amber-200">
+                          这个链接不验证点击者身份，不等同于电子签名。
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
+          {project && project.version > 1 && (
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5 text-sm text-emerald-100">
+              <Check className="mr-2 inline size-4" />
+              交付日期和尾款已同时更新
+            </div>
+          )}
+
+          {error && (
+            <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+              {error}
+            </div>
+          )}
+        </div>
       </main>
+    </div>
+  );
+}
+
+function ProjectCard({ project }: { project: PublicChangeProject }) {
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs text-muted-foreground">{project.clientName}</p>
+          <h2 className="mt-1 text-xl font-semibold">{project.title}</h2>
+        </div>
+        <Badge className="border-emerald-400/25 bg-emerald-400/10 text-emerald-200">
+          当前版本 v{project.version}
+        </Badge>
+      </div>
+      <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+        <Fact label="工作范围" value={project.scope} />
+        <Fact label="交付日期" value={project.deliveryMilestone.date} />
+        <Fact label="总价" value={money.format(project.totalPriceMinor / 100)} />
+        <Fact
+          label="付款"
+          value={`已付 ${money.format(project.paidMinor / 100)} · 尾款 ${money.format(project.paymentMilestone.amountMinor / 100)}`}
+        />
+      </dl>
+    </section>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-muted/20 p-3">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-1 font-medium text-foreground">{value}</dd>
     </div>
   );
 }

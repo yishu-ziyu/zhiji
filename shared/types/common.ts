@@ -2,7 +2,7 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
-  type?: "text" | "analysis" | "script" | "minutes" | "kanban";
+  type?: "text" | "minutes" | "kanban" | "commitment";
   data?: Record<string, unknown>;
 }
 
@@ -13,14 +13,5 @@ export interface LLMConfig {
   timeout: number;
 }
 
-export interface ChatState {
-  messages: Message[];
-  isLoading: boolean;
-  currentTrack: "ecommerce" | "efficiency";
-  currentMode: string;
-}
-
-export type TrackType = "ecommerce" | "efficiency";
-
-export type EcommerceMode = "analyze" | "script";
-export type EfficiencyMode = "minutes" | "kanban";
+/** Efficiency workbench sections */
+export type EfficiencyMode = "capture" | "board";

@@ -1,0 +1,14 @@
+PASS | 01 Seed demo project v1
+PASS | 02 Provider authorization
+PASS | 03 Fixture analyze + exact evidence spans
+PASS | 04 Send proposal
+PASS | 05 Get client view
+PASS | 06 Blank request-change note + no mutation
+PASS | 07 Request changes
+PASS | 08 Resend invalidates old link and issues live new link
+PASS | 09 Confirm once atomically applies v2/date/final payment
+PASS | 10 Replay rejection + no duplicate mutation
+PASS | 11 Malformed JSON is 400 on provider and client routes
+PASS | 12 Wrong field type
+PASS | 13 Invalid provider/client actions + provider confirm forbidden
+TOTAL | passed=13 failed=0 port=3102

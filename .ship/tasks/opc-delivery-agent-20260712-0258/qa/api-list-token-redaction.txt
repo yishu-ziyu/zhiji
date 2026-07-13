@@ -1,0 +1,25 @@
+=== GET provider list: tokens must be absent ===
+* Uses proxy env variable no_proxy == '127.0.0.1,localhost'
+* Host localhost:3000 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+*   Trying [::1]:3000...
+* Connected to localhost (::1) port 3000
+> GET /api/efficiency/slips HTTP/1.1
+> Host: localhost:3000
+> User-Agent: curl/8.7.1
+> Accept: */*
+>
+* Request completely sent off
+< HTTP/1.1 200 OK
+< vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+< content-type: application/json
+< Date: Mon, 13 Jul 2026 11:23:00 GMT
+< Connection: keep-alive
+< Keep-Alive: timeout=5
+< Transfer-Encoding: chunked
+<
+{ [1735 bytes data]
+* Connection #0 to host localhost left intact
+{"slips":[{"title":"QA 改版原型 v4","acceptanceCriteria":"首屏路径 2 次点击内完成，附移动端截图（重发）","priority":"高","sourceExcerpt":"我们希望下周能先看到新落地页的改版原型，重点把首屏转化路径讲清楚。你：好的，改版原型我会输出","id":"dd534d09-1fad-467d-bf2d-8bca2e6c8bf8","status":"pending_client_confirm","history":[{"actor":"provider","action":"create","at":"2026-07-13T11:18:12.864Z"},{"actor":"provider","action":"send","at":"2026-07-13T11:18:12.888Z"},{"actor":"client","action":"request_changes","at":"2026-07-13T11:19:13.145Z","note":"请把验收标准改为 2 次点击，并补充移动端截图"},{"actor":"provider","action":"resend","at":"2026-07-13T11:20:10.793Z"}],"createdAt":"2026-07-13T11:18:12.864Z","updatedAt":"2026-07-13T11:20:10.793Z"},{"title":"QA 预览链接 v2","acceptanceCriteria":"链接可匿名打开并展示首屏","dueAt":"2026-07-17","priority":"高","sourceExcerpt":"请你本周五前给一个可分享的预览链接，方便内部同步。你：预览链接本周五前上线","id":"befa891a-5e4b-48b8-a253-509c51a37f19","status":"provider_delivered","history":[{"actor":"provider","action":"create","at":"2026-07-13T11:18:12.864Z"},{"actor":"provider","action":"send","at":"2026-07-13T11:18:12.892Z"},{"actor":"client","action":"confirm","at":"2026-07-13T11:20:31.598Z","note":""},{"actor":"provider","action":"deliver","at":"2026-07-13T11:20:32.371Z"}],"createdAt":"2026-07-13T11:18:12.864Z","updatedAt":"2026-07-13T11:20:32.371Z"}],"metrics":{"cohortSize":0,"confirmedWithinWindow":0,"confirmationRate":0,"medianConfirmHours":0.03853722222222222,"acceptedOnTimeRate":null,"overdueCount":0,"openCount":2}}
+STATUS=200

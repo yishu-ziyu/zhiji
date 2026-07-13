@@ -1,0 +1,3 @@
+{"kind":"scope","quote":"再加一组 A/B 测试","actual":"再加一组 A/B 测试","match":true,"proposedValue":"增加一组 A/B 测试"}
+{"kind":"delivery_date","quote":"还是周五上","actual":"还是周五上","match":true,"proposedValue":null}
+{"kind":"total_price","quote":"价格先按之前的","actual":"价格先按之前的","match":true,"proposedValue":null}

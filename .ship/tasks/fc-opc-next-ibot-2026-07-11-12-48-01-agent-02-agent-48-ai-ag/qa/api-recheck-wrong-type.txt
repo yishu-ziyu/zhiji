@@ -1,0 +1,28 @@
+COMMAND: curl -sv -X POST -H Content-Type:application/json http://127.0.0.1:3102/api/efficiency/changes
+REQUEST_BODY: {"action":"send","projectId":"<redacted-id>","proposalId":"<redacted-id>","providerSecret":"<redacted-id>","scope":"增加 A/B 测试","deliveryDate":"2026-07-20","totalPriceMinor":"1000000"}
+* Uses proxy env variable no_proxy == '127.0.0.1,localhost'
+*   Trying 127.0.0.1:3102...
+* Connected to 127.0.0.1 (127.0.0.1) port 3102
+> POST /api/efficiency/changes HTTP/1.1
+> Host: 127.0.0.1:3102
+> User-Agent: curl/8.7.1
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 260
+>
+} [260 bytes data]
+* upload completely sent off: 260 bytes
+< HTTP/1.1 400 Bad Request
+< vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+< content-type: application/json
+< Date: Mon, 13 Jul 2026 15:19:30 GMT
+< Connection: keep-alive
+< Keep-Alive: timeout=5
+< Transfer-Encoding: chunked
+<
+{ [41 bytes data]
+* Connection #0 to host 127.0.0.1 left intact
+
+HTTP_STATUS:400
+=== RESPONSE BODY ===
+{"error":"总价格式错误"}

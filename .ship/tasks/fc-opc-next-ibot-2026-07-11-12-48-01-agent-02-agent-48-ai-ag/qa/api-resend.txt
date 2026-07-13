@@ -1,0 +1,30 @@
+* Uses proxy env variable no_proxy == '127.0.0.1,localhost'
+* Host localhost:3101 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+*   Trying [::1]:3101...
+* Connected to localhost (::1) port 3101
+> POST /api/efficiency/changes HTTP/1.1
+> Host: localhost:3101
+> User-Agent: curl/8.7.1
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 279
+>
+} [279 bytes data]
+* upload completely sent off: 279 bytes
+< HTTP/1.1 200 OK
+< vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+< content-type: application/json
+< Date: Mon, 13 Jul 2026 15:08:04 GMT
+< Connection: keep-alive
+< Keep-Alive: timeout=5
+< Transfer-Encoding: chunked
+<
+{ [1496 bytes data]
+* Connection #0 to host localhost left intact
+
+=== RESPONSE BODY ===
+{"proposal":{"id":"<redacted-id>","projectId":"<redacted-id>","revision":2,"baseVersion":1,"status":"pending_client","sourceText":"再加一组 A/B 测试，还是周五上，价格先按之前的。","oldVersion":{"version":1,"scope":"单版本落地页","deliveryDate":"2026-07-17","totalPriceMinor":800000,"paidMinor":400000,"finalPaymentMinor":400000},"newVersion":{"version":2,"scope":"增加 A/B 测试（含两版验收）","deliveryDate":"2026-07-20","totalPriceMinor":1000000,"paidMinor":400000,"finalPaymentMinor":600000},"impacts":[{"kind":"scope","label":"工作范围","currentValue":"单版本落地页","proposedValue":"增加一组 A/B 测试","explanation":"客户提出了原约定以外的工作。","evidence":{"start":0,"end":11,"quote":"再加一组 A/B 测试"}},{"kind":"delivery_date","label":"交付日期","currentValue":"2026-07-17","proposedValue":null,"explanation":"客户提到了交付时间，需要服务方核对新的工作是否还能按时完成。","evidence":{"start":12,"end":17,"quote":"还是周五上"}},{"kind":"total_price","label":"总价和尾款","currentValue":800000,"proposedValue":null,"explanation":"客户提到了价格，但新总价仍需服务方明确。","evidence":{"start":18,"end":25,"quote":"价格先按之前的"}}],"createdAt":"2026-07-13T15:07:14.933Z","updatedAt":"2026-07-13T15:08:04.233Z"},"clientUrl":"http://localhost:3101/c/<redacted-id>"}
+=== CURL RESULT ===
+HTTP_STATUS:200
