@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Zap, KanbanSquare, Target } from "lucide-react";
+import { Zap, Target } from "lucide-react";
 import type { EfficiencyMode } from "@/shared/types/common";
 import { cn } from "@/lib/utils";
 
@@ -11,7 +11,6 @@ interface SidebarProps {
 
 const efficiencyItems = [
   { id: "capture" as const, label: "交付闭环", icon: Target },
-  { id: "board" as const, label: "交付看板", icon: KanbanSquare },
 ];
 
 export function Sidebar({ efficiencyMode = "capture" }: SidebarProps) {
