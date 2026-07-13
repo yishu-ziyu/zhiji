@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   analyzeFixtureChange,
   confirmClientChange,
+  createChangeDraft,
   createDemoProject,
   createEvidenceSpan,
   getClientChange,
@@ -100,6 +101,37 @@ describe("客户提出变化后的处理", () => {
     );
   });
 
+  it("服务方主动修改方案后生成新链接，旧链接立即失效", () => {
+    const created = createDemoProject();
+    const draft = analyzeFixtureChange(
+      created.project.id,
+      created.providerSecret,
+      sourceText,
+    );
+    const first = sendChangeToClient({
+      proposalId: draft.id,
+      providerSecret: created.providerSecret,
+      scope: "单版本落地页，增加一组 A/B 测试",
+      deliveryDate: "2026-07-20",
+      totalPriceMinor: 1_000_000,
+    });
+    const second = sendChangeToClient({
+      proposalId: draft.id,
+      providerSecret: created.providerSecret,
+      scope: "单版本落地页，增加一组 A/B 测试",
+      deliveryDate: "2026-07-21",
+      totalPriceMinor: 1_000_000,
+    });
+
+    expect(second.revision).toBe(2);
+    expect(() => getClientChange(first.clientToken)).toThrow(
+      "客户链接已使用或已失效",
+    );
+    expect(getClientChange(second.clientToken).newVersion.deliveryDate).toBe(
+      "2026-07-21",
+    );
+  });
+
   it("拒绝错误的服务方凭据和过期项目版本", () => {
     const first = createDemoProject();
     expect(() => getProviderChange(first.project.id, "wrong-secret")).toThrow(
@@ -132,8 +164,14 @@ describe("客户提出变化后的处理", () => {
     });
 
     confirmClientChange(sentB.clientToken);
+    expect(() => getClientChange(sentA.clientToken)).toThrow(
+      "客户链接已使用或已失效",
+    );
+    expect(() => requestClientChange(sentA.clientToken, "仍用方案 A")).toThrow(
+      "客户链接已使用或已失效",
+    );
     expect(() => confirmClientChange(sentA.clientToken)).toThrow(
-      "项目已有更新，请服务方重新发送",
+      "客户链接已使用或已失效",
     );
     expect(getProviderChange(first.project.id, first.providerSecret).project)
       .toMatchObject({
@@ -146,5 +184,52 @@ describe("客户提出变化后的处理", () => {
     expect(() => createEvidenceSpan(sourceText, "客户已经同意加价")).toThrow(
       "分析结果引用了原消息中不存在的文字",
     );
+  });
+
+  it("只返回客户原话确实涉及的变化", () => {
+    const created = createDemoProject();
+    const draft = createChangeDraft({
+      projectId: created.project.id,
+      providerSecret: created.providerSecret,
+      sourceText: "客户：请再增加一个英文版本。",
+      scopeChange: "增加一个英文版本",
+      scopeQuote: "增加一个英文版本",
+      deliveryQuote: "",
+      priceQuote: "",
+    });
+
+    expect(draft.impacts.map((impact) => impact.kind)).toEqual(["scope"]);
+  });
+
+  it("同一时刻创建多个方案时返回最后创建的方案", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-13T12:00:00.000Z"));
+    try {
+      const created = createDemoProject();
+      createChangeDraft({
+        projectId: created.project.id,
+        providerSecret: created.providerSecret,
+        sourceText: "客户：增加中文版本。",
+        scopeChange: "增加中文版本",
+        scopeQuote: "增加中文版本",
+        deliveryQuote: "",
+        priceQuote: "",
+      });
+      const latest = createChangeDraft({
+        projectId: created.project.id,
+        providerSecret: created.providerSecret,
+        sourceText: "客户：增加英文版本。",
+        scopeChange: "增加英文版本",
+        scopeQuote: "增加英文版本",
+        deliveryQuote: "",
+        priceQuote: "",
+      });
+
+      expect(
+        getProviderChange(created.project.id, created.providerSecret).proposal?.id,
+      ).toBe(latest.id);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

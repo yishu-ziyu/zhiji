@@ -112,6 +112,7 @@ const globalStore = globalThis as typeof globalThis & {
     projects: Map<string, ChangeProject>;
     proposals: Map<string, StoredProposal>;
     grants: Map<string, ClientGrant>;
+    latestProposalByProject: Map<string, string>;
   };
 };
 
@@ -121,6 +122,7 @@ const store =
     projects: new Map<string, ChangeProject>(),
     proposals: new Map<string, StoredProposal>(),
     grants: new Map<string, ClientGrant>(),
+    latestProposalByProject: new Map<string, string>(),
   });
 
 function fail(message: string, status = 400): never {
@@ -192,12 +194,35 @@ function activeGrant(token: string, allowConsumed = false): ClientGrant {
   return grant;
 }
 
-function revokeProposalGrants(proposalId: string, except?: string): void {
+function revokeProjectGrants(projectId: string, except?: string): void {
   const now = new Date().toISOString();
   for (const grant of store.grants.values()) {
-    if (grant.proposalId === proposalId && grant.token !== except && !grant.revokedAt) {
+    const proposal = store.proposals.get(grant.proposalId);
+    if (
+      proposal?.projectId === projectId &&
+      grant.token !== except &&
+      !grant.revokedAt
+    ) {
       grant.revokedAt = now;
     }
+  }
+}
+
+function requireCurrentGrant(
+  grant: ClientGrant,
+  proposal: StoredProposal,
+  project: ChangeProject,
+  allowApplied = false,
+): void {
+  const isAppliedVersion =
+    allowApplied &&
+    proposal.status === "applied" &&
+    proposal.newVersion?.version === project.version;
+  if (
+    proposal.baseVersion !== grant.baseVersion ||
+    (project.version !== grant.baseVersion && !isAppliedVersion)
+  ) {
+    fail("客户链接已使用或已失效", 409);
   }
 }
 
@@ -244,9 +269,9 @@ export function createChangeDraft(input: {
   providerSecret: string;
   sourceText: string;
   scopeChange: string;
-  scopeQuote: string;
-  deliveryQuote: string;
-  priceQuote: string;
+  scopeQuote?: string;
+  deliveryQuote?: string;
+  priceQuote?: string;
 }): ProviderChangeProposal {
   const project = requireProject(input.projectId);
   requireProvider(project, input.providerSecret);
@@ -254,6 +279,40 @@ export function createChangeDraft(input: {
   if (!sourceText) fail("请提供客户消息");
   const now = new Date().toISOString();
   const oldVersion = agreement(project);
+  const impacts: ChangeImpact[] = [];
+  if (input.scopeQuote?.trim()) {
+    impacts.push({
+      kind: "scope",
+      label: "工作范围",
+      currentValue: project.scope,
+      proposedValue: input.scopeChange.trim() || null,
+      explanation: "客户提出了原约定以外的工作。",
+      evidence: createEvidenceSpan(sourceText, input.scopeQuote),
+    });
+  }
+  if (input.deliveryQuote?.trim()) {
+    impacts.push({
+      kind: "delivery_date",
+      label: "交付日期",
+      currentValue: project.deliveryMilestone.date,
+      proposedValue: null,
+      explanation: "客户提到了交付时间，需要服务方核对新的工作是否还能按时完成。",
+      evidence: createEvidenceSpan(sourceText, input.deliveryQuote),
+    });
+  }
+  if (input.priceQuote?.trim()) {
+    impacts.push({
+      kind: "total_price",
+      label: "总价和尾款",
+      currentValue: project.totalPriceMinor,
+      proposedValue: null,
+      explanation: "客户提到了价格，但新总价仍需服务方明确。",
+      evidence: createEvidenceSpan(sourceText, input.priceQuote),
+    });
+  }
+  if (impacts.length === 0) {
+    fail("没有找到可由原消息核对的变化", 422);
+  }
   const proposal: StoredProposal = {
     id: randomUUID(),
     projectId: project.id,
@@ -263,36 +322,12 @@ export function createChangeDraft(input: {
     sourceText,
     oldVersion,
     newVersion: null,
-    impacts: [
-      {
-        kind: "scope",
-        label: "工作范围",
-        currentValue: project.scope,
-        proposedValue: input.scopeChange.trim() || null,
-        explanation: "客户提出了原约定以外的工作。",
-        evidence: createEvidenceSpan(sourceText, input.scopeQuote),
-      },
-      {
-        kind: "delivery_date",
-        label: "交付日期",
-        currentValue: project.deliveryMilestone.date,
-        proposedValue: null,
-        explanation: "工作增加，但客户仍要求原日期，需要服务方判断是否可行。",
-        evidence: createEvidenceSpan(sourceText, input.deliveryQuote),
-      },
-      {
-        kind: "total_price",
-        label: "总价和尾款",
-        currentValue: project.totalPriceMinor,
-        proposedValue: null,
-        explanation: "“按之前”无法确定是沿用单价还是总价，不能自动改价。",
-        evidence: createEvidenceSpan(sourceText, input.priceQuote),
-      },
-    ],
+    impacts,
     createdAt: now,
     updatedAt: now,
   };
   store.proposals.set(proposal.id, proposal);
+  store.latestProposalByProject.set(project.id, proposal.id);
   return publicProposal(proposal);
 }
 
@@ -322,8 +357,12 @@ export function sendChangeToClient(input: {
   const proposal = requireProposal(input.proposalId);
   const project = requireProject(proposal.projectId);
   requireProvider(project, input.providerSecret);
-  if (proposal.status !== "draft" && proposal.status !== "changes_requested") {
-    fail("只有草稿或客户要求修改的方案可以发送");
+  if (
+    proposal.status !== "draft" &&
+    proposal.status !== "changes_requested" &&
+    proposal.status !== "pending_client"
+  ) {
+    fail("这个方案不能再次发送");
   }
   const scope = input.scope.trim();
   if (!scope) fail("请填写新的工作范围");
@@ -338,9 +377,9 @@ export function sendChangeToClient(input: {
     fail("项目已有更新，请重新分析客户消息", 409);
   }
 
-  const revision = proposal.status === "changes_requested"
-    ? proposal.revision + 1
-    : proposal.revision;
+  const revision = proposal.status === "draft"
+    ? proposal.revision
+    : proposal.revision + 1;
   const token = randomUUID();
   const now = new Date().toISOString();
   const updated: StoredProposal = {
@@ -359,7 +398,7 @@ export function sendChangeToClient(input: {
     },
     updatedAt: now,
   };
-  revokeProposalGrants(proposal.id);
+  revokeProjectGrants(project.id);
   store.grants.set(token, {
     token,
     proposalId: proposal.id,
@@ -374,15 +413,22 @@ export function sendChangeToClient(input: {
 export function getProviderChange(
   projectId: string,
   providerSecret: string,
-): { project: PublicChangeProject; proposal: ProviderChangeProposal | null } {
+): {
+  project: PublicChangeProject;
+  proposal: ProviderChangeProposal | null;
+  clientToken?: string;
+} {
   const project = requireProject(projectId);
   requireProvider(project, providerSecret);
-  const proposal = [...store.proposals.values()]
-    .filter((item) => item.projectId === project.id)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const latestProposalId = store.latestProposalByProject.get(project.id);
+  const proposal = latestProposalId
+    ? store.proposals.get(latestProposalId)
+    : undefined;
   return {
     project: publicProject(project),
     proposal: proposal ? publicProposal(proposal) : null,
+    clientToken:
+      proposal?.status === "pending_client" ? proposal.clientToken : undefined,
   };
 }
 
@@ -390,6 +436,7 @@ export function getClientChange(token: string): ClientChangeView {
   const grant = activeGrant(token, true);
   const proposal = requireProposal(grant.proposalId);
   const project = requireProject(proposal.projectId);
+  requireCurrentGrant(grant, proposal, project, true);
   if (proposal.revision !== grant.revision || !proposal.newVersion) {
     fail("客户链接已使用或已失效", 409);
   }
@@ -416,6 +463,8 @@ export function requestClientChange(
   const cleanNote = note?.trim();
   if (!cleanNote) fail("请填写修改说明");
   const proposal = requireProposal(grant.proposalId);
+  const project = requireProject(proposal.projectId);
+  requireCurrentGrant(grant, proposal, project);
   if (proposal.status !== "pending_client" || proposal.revision !== grant.revision) {
     fail("客户链接已使用或已失效", 409);
   }
@@ -434,6 +483,7 @@ export function confirmClientChange(token: string): {
   const grant = activeGrant(token);
   const proposal = requireProposal(grant.proposalId);
   const project = requireProject(proposal.projectId);
+  requireCurrentGrant(grant, proposal, project);
   if (
     proposal.status !== "pending_client" ||
     proposal.revision !== grant.revision
@@ -480,7 +530,7 @@ export function confirmClientChange(token: string): {
   store.projects.set(project.id, nextProject);
   store.proposals.set(proposal.id, nextProposal);
   grant.consumedAt = now;
-  revokeProposalGrants(proposal.id, token);
+  revokeProjectGrants(project.id, token);
 
   return {
     project: publicProject(nextProject),
@@ -492,4 +542,5 @@ export function resetChangeStore(): void {
   store.projects.clear();
   store.proposals.clear();
   store.grants.clear();
+  store.latestProposalByProject.clear();
 }
