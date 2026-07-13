@@ -87,3 +87,14 @@ The implementation misses client visibility of the changed total price, cannot a
 1. **Fix findings** — `/yishuship:dev`
 2. **QA after fixes** — `/yishuship:qa`
 3. **Full workflow** — `/yishuship:auto`
+
+## Recheck
+
+- Finding 1 — FIXED: the client renders original/new total price and E2E asserts `¥8,000 → ¥10,000`.
+- Finding 2 — FIXED: analyzer quotes are optional by category, empty categories are omitted, and route/domain tests cover a scope-only change.
+- Finding 3 — FIXED: sending any replacement revokes all project grants, and GET/request/confirm enforce current grant and project version.
+- Finding 4 — FIXED: `pending_client` resend is accepted, increments the revision, revokes the old link, and is exercised through the provider E2E flow.
+- Finding 5 — FIXED: retry exhaustion now interpolates the configured attempt count, so `maxRetries: 1` reports one attempt.
+- Finding 6 — FIXED: latest-proposal lookup uses an explicit per-project proposal id and has a same-millisecond regression test.
+
+**Verdict: PASS**
