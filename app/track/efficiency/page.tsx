@@ -474,12 +474,7 @@ export default function EfficiencyPage() {
 
   return (
     <div className="flex h-screen">
-      <Sidebar
-        track="efficiency"
-        ecommerceMode="analyze"
-        efficiencyMode="capture"
-        onTrackChange={() => {}}
-      />
+      <Sidebar efficiencyMode="capture" />
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <div className="px-6 py-4 border-b border-border space-y-3 shrink-0">
           <div className="flex items-start justify-between gap-4">

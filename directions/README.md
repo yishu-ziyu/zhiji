@@ -1,18 +1,12 @@
 # Direction Workspaces
 
-This folder separates the two hackathon directions without moving the runnable Next.js app.
+This repo is focused on the **efficiency OPC** track for the iBot hackathon.
 
-`app/` remains the source of truth for routes.
+## Active
 
-`directions/` records product focus, subtracks, code maps, and development decisions.
+- `efficiency-agent/` — delivery ops assistant (commitments → board → closed-loop rate)
 
-## Folders
+## Not in this cycle
 
-- `ecommerce-agent/` keeps the ecommerce track stable as a candidate direction.
-- `efficiency-agent/` is the selected current development direction.
-
-## Current decision
-
-Focus development on the efficiency agent.
-
-Keep ecommerce working as a comparison and fallback demo.
+Ecommerce track code was removed from the runnable app (2026-07-13).
+It can be reintroduced later if needed; do not block efficiency work on it.

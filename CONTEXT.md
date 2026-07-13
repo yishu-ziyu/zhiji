@@ -15,7 +15,7 @@ Shared language for this delivery cycle (2026-07-12 → 7/19).
 
 ## Hard decisions
 
-1. Track = efficiency only (no ecommerce this round).
+1. Track = **efficiency only**. Ecommerce runtime code removed from the app (2026-07-13).
 2. North star = closed-loop rate.
 3. Quality process = yishuship full + TDD/design drill.
 4. Submit 7/18, pitch 7/19 (typhoon reschedule).
