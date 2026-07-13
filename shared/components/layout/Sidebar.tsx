@@ -1,9 +1,8 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ShoppingBag, Zap, TrendingUp, Video, MessageSquare, KanbanSquare, FileText, LayoutDashboard } from "lucide-react";
+import { ShoppingBag, Zap, TrendingUp, Video, KanbanSquare, Target, LayoutDashboard } from "lucide-react";
 import type { TrackType, EcommerceMode, EfficiencyMode } from "@/shared/types/common";
 import { cn } from "@/lib/utils";
 
@@ -19,11 +18,11 @@ const ecommerceItems = [
   { id: "script" as const, label: "脚本生成", icon: Video },
 ];
 const efficiencyItems = [
-  { id: "minutes" as const, label: "会议纪要", icon: FileText },
-  { id: "kanban" as const, label: "项目看板", icon: KanbanSquare },
+  { id: "capture" as const, label: "交付闭环", icon: Target },
+  { id: "board" as const, label: "交付看板", icon: KanbanSquare },
 ];
 
-export function Sidebar({ track, ecommerceMode, efficiencyMode, onTrackChange }: SidebarProps) {
+export function Sidebar({ track, ecommerceMode, efficiencyMode }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const goHome = () => router.push("/");
@@ -42,7 +41,7 @@ export function Sidebar({ track, ecommerceMode, efficiencyMode, onTrackChange }:
         </button>
       </div>
       <div className="p-3">
-        <Tabs value={track} onValueChange={(v) => onTrackChange(v as TrackType)} className="w-full">
+        <Tabs value={track} onValueChange={(v) => router.push("/track/" + v)} className="w-full">
           <TabsList className="w-full bg-muted/50 h-9">
             <TabsTrigger value="ecommerce" className="flex-1 text-xs gap-1 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <ShoppingBag className="w-3.5 h-3.5" /> 电商 Agent

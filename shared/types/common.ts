@@ -15,4 +15,4 @@ export interface LLMConfig {
 
 export type TrackType = "ecommerce" | "efficiency";
 export type EcommerceMode = "analyze" | "script";
-export type EfficiencyMode = "minutes" | "kanban";
+export type EfficiencyMode = "minutes" | "kanban" | "capture" | "board";

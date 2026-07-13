@@ -4,3 +4,9 @@ test-results/
 playwright-report/
 .DS_Store
 *.log
+.env
+.env.local
+.env.*.local
+tsconfig.tsbuildinfo
+.progress/
+ui-test.mjs

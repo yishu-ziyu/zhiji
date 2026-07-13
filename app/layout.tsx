@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AgentRuntime } from "@/shared/components/agent-runtime/AgentRuntime";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" className="h-full antialiased">
       <body className="min-h-screen bg-background text-foreground font-sans">
-        {children}
+        <AgentRuntime>{children}</AgentRuntime>
       </body>
     </html>
   );
