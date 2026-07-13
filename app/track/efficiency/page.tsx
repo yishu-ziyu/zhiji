@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -78,17 +78,31 @@ export default function EfficiencyPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const editingIds = useRef(new Set<string>());
 
   const refreshSlips = useCallback(async () => {
     const response = await fetch("/api/efficiency/slips", { cache: "no-store" });
     if (!response.ok) return;
     const data = (await response.json()) as { slips: CommitmentSlip[] };
     const tokens = loadProviderTokens();
-    setSlips(
-      data.slips.map((slip) =>
-        tokens[slip.id] ? { ...slip, clientToken: tokens[slip.id] } : slip,
-      ),
-    );
+    setSlips((current) => {
+      const local = new Map(current.map((slip) => [slip.id, slip]));
+      return data.slips.map((slip) => {
+        const withToken = tokens[slip.id]
+          ? { ...slip, clientToken: tokens[slip.id] }
+          : slip;
+        const editing = local.get(slip.id);
+        return editingIds.current.has(slip.id) && editing
+          ? {
+              ...withToken,
+              title: editing.title,
+              acceptanceCriteria: editing.acceptanceCriteria,
+              dueAt: editing.dueAt,
+              priority: editing.priority,
+            }
+          : withToken;
+      });
+    });
   }, []);
 
   useEffect(() => {
@@ -209,6 +223,7 @@ export default function EfficiencyPage() {
   }, [commitments, refreshSlips]);
 
   const updateLocalSlip = useCallback((id: string, patch: Partial<CommitmentSlip>) => {
+    editingIds.current.add(id);
     setSlips((current) => current.map((slip) => (slip.id === id ? { ...slip, ...patch } : slip)));
   }, []);
 
@@ -234,6 +249,7 @@ export default function EfficiencyPage() {
         };
         if (!response.ok) throw new Error(data.error || "操作失败");
         if (data.slip) rememberProviderToken(data.slip);
+        editingIds.current.delete(slip.id);
         await refreshSlips();
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "操作失败");
@@ -272,7 +288,7 @@ export default function EfficiencyPage() {
             </div>
 
             <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Metric label="7 日客户确认率" value={formatRate(metrics.confirmationRate)} detail={`近 30 日同 cohort · ${metrics.confirmedWithinWindow}/${metrics.cohortSize}`} />
+              <Metric label="7 日客户确认率" value={metrics.cohortSize === 0 ? "待成熟" : formatRate(metrics.confirmationRate)} detail={`近 30 日已满 7 天 cohort · ${metrics.confirmedWithinWindow}/${metrics.cohortSize}`} />
               <Metric label="确认耗时中位数" value={metrics.medianConfirmHours === null ? "待积累" : `${Math.round(metrics.medianConfirmHours)}h`} detail="候选指标，不伪造精度" />
               <Metric label="按期验收率" value={metrics.acceptedOnTimeRate === null ? "待积累" : formatRate(metrics.acceptedOnTimeRate)} detail="有计划日期的同 cohort" />
               <Metric label="待处理 / 逾期" value={`${metrics.openCount} / ${metrics.overdueCount}`} detail="服务方当前动作队列" danger={metrics.overdueCount > 0} />
@@ -345,7 +361,7 @@ function SlipCard({ slip, copied, onChange, onAction, onCopy }: { slip: Commitme
   const url = clientUrl(slip);
   const clientNote = latestClientNote(slip);
   return (
-    <article className={`rounded-xl border p-4 ${isOverdue(slip) ? "border-red-500/40" : "border-border"}`}>
+    <article data-slip-id={slip.id} className={`rounded-xl border p-4 ${isOverdue(slip) ? "border-red-500/40" : "border-border"}`}>
       <div className="flex items-start justify-between gap-3"><Badge variant="outline">{DELIVERY_STATUS_LABELS[slip.status]}</Badge><span className="text-xs text-muted-foreground">{slip.dueAt || "日期未知"}</span></div>
       {editable ? <div className="mt-3 space-y-2"><input aria-label="承诺单标题" value={slip.title} onChange={(event) => onChange(slip.id, { title: event.target.value })} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium" /><input aria-label="承诺单验收标准" value={slip.acceptanceCriteria ?? ""} onChange={(event) => onChange(slip.id, { acceptanceCriteria: event.target.value })} placeholder="验收标准：未知" className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" /></div> : <div className="mt-3"><h3 className="font-medium">{slip.title}</h3><p className="mt-1 text-xs text-muted-foreground">验收标准：{slip.acceptanceCriteria || "未知"}</p></div>}
       {clientNote && <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 p-2 text-xs text-amber-100">客户说明：{clientNote}</div>}

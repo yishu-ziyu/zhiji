@@ -57,9 +57,9 @@ test("golden path keeps client confirmation and acceptance client-owned", async 
   await expect(clientPage.getByText("验收完成，这张承诺单已闭环。")).toBeVisible();
   await expect(providerCard.getByText("客户已验收")).toBeVisible({ timeout: 5000 });
   const confirmationMetric = page
-    .getByText("7 日客户确认率 · 候选")
+    .getByText("确认耗时中位数 · 候选")
     .locator("..");
-  await expect(confirmationMetric.getByText(/^[1-9]\d*%$/)).toBeVisible();
+  await expect(confirmationMetric.getByText(/^\d+h$/)).toBeVisible();
 });
 
 test("provider API cannot fake a client confirmation", async ({ request }) => {
@@ -100,6 +100,50 @@ test("provider API cannot fake a client confirmation", async ({ request }) => {
   await expect(forged.json()).resolves.toMatchObject({
     error: "服务方无权执行该动作",
   });
+});
+
+test("correction edits survive polling and reach the client on resend", async ({
+  page,
+  context,
+  request,
+}) => {
+  const created = await request.post(`${BASE_URL}/api/efficiency/slips`, {
+    data: { action: "create", slips: [{ title: "轮询重发测试" }] },
+  });
+  const id = (await created.json()).slips[0].id as string;
+  const sent = await request.post(`${BASE_URL}/api/efficiency/slips`, {
+    data: { action: "send", id },
+  });
+  const sentBody = await sent.json();
+  const token = sentBody.slip.clientToken as string;
+
+  await page.addInitScript(
+    ({ slipId, clientToken }) => {
+      localStorage.setItem(
+        "fc-opc-provider-client-tokens",
+        JSON.stringify({ [slipId]: clientToken }),
+      );
+    },
+    { slipId: id, clientToken: token },
+  );
+  await page.goto(`${BASE_URL}/track/efficiency`);
+
+  const clientPage = await context.newPage();
+  await clientPage.goto(`${BASE_URL}/c/${token}`);
+  await clientPage.getByLabel("修改说明（要求修改时必填）").fill("标题需更具体");
+  await clientPage.getByRole("button", { name: "要求修改" }).click();
+
+  const providerCard = page.locator(`[data-slip-id="${id}"]`);
+  const title = providerCard.getByRole("textbox", { name: "承诺单标题" });
+  await expect(title).toBeVisible({ timeout: 5000 });
+  await title.fill("重发后的具体承诺");
+  await page.waitForTimeout(2200);
+  await expect(title).toHaveValue("重发后的具体承诺");
+  await providerCard.getByRole("button", { name: "更新并重发" }).click();
+
+  await expect(
+    clientPage.getByRole("heading", { name: "重发后的具体承诺" }),
+  ).toBeVisible({ timeout: 5000 });
 });
 
 test("commitments API validates input and has a deterministic fixture", async ({
