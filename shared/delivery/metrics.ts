@@ -36,24 +36,42 @@ export function computeMetrics(
   confirmWindowDays = 7,
 ): DeliveryMetrics {
   const cohortStart = now.getTime() - cohortDays * DAY_MS;
-  const cohort = slips.filter((slip) => {
+  const createdCohort = slips.filter((slip) => {
     const created = new Date(slip.createdAt).getTime();
     return created >= cohortStart && created <= now.getTime();
   });
 
-  const confirmHours = cohort.flatMap((slip) => {
-    const confirmedAt = slip.history.find(
+  const confirmedAt = (slip: CommitmentSlip) =>
+    slip.history.find(
       (entry) => entry.actor === "client" && entry.action === "confirm",
     )?.at;
-    if (!confirmedAt) return [];
-    const duration =
-      new Date(confirmedAt).getTime() - new Date(slip.createdAt).getTime();
-    return duration >= 0 && duration <= confirmWindowDays * DAY_MS
-      ? [duration / (60 * 60 * 1000)]
-      : [];
+  const eligibleCohort = createdCohort.filter((slip) => {
+    const age = now.getTime() - new Date(slip.createdAt).getTime();
+    return age >= confirmWindowDays * DAY_MS || Boolean(confirmedAt(slip));
   });
+  const allConfirmHours = createdCohort.flatMap((slip) => {
+    const at = confirmedAt(slip);
+    if (!at) return [];
+    const duration =
+      new Date(at).getTime() - new Date(slip.createdAt).getTime();
+    return duration >= 0 ? [duration / (60 * 60 * 1000)] : [];
+  });
+  const confirmedWithinWindow = eligibleCohort.filter((slip) => {
+    const at = confirmedAt(slip);
+    if (!at) return false;
+    const duration = new Date(at).getTime() - new Date(slip.createdAt).getTime();
+    return duration >= 0 && duration <= confirmWindowDays * DAY_MS;
+  }).length;
 
-  const dueSlips = cohort.filter((slip) => parseLocalDate(slip.dueAt ?? ""));
+  const dueSlips = createdCohort.filter((slip) => {
+    const due = parseLocalDate(slip.dueAt ?? "");
+    if (!due) return false;
+    due.setHours(23, 59, 59, 999);
+    const accepted = slip.history.some(
+      (entry) => entry.actor === "client" && entry.action === "accept",
+    );
+    return due.getTime() <= now.getTime() || accepted;
+  });
   const acceptedOnTime = dueSlips.filter((slip) => {
     const acceptedAt = slip.history.find(
       (entry) => entry.actor === "client" && entry.action === "accept",
@@ -65,11 +83,13 @@ export function computeMetrics(
   }).length;
 
   return {
-    cohortSize: cohort.length,
-    confirmedWithinWindow: confirmHours.length,
+    cohortSize: eligibleCohort.length,
+    confirmedWithinWindow,
     confirmationRate:
-      cohort.length === 0 ? 0 : confirmHours.length / cohort.length,
-    medianConfirmHours: median(confirmHours),
+      eligibleCohort.length === 0
+        ? 0
+        : confirmedWithinWindow / eligibleCohort.length,
+    medianConfirmHours: median(allConfirmHours),
     acceptedOnTimeRate:
       dueSlips.length === 0 ? null : acceptedOnTime / dueSlips.length,
     overdueCount: slips.filter((slip) => isOverdue(slip, now)).length,

@@ -42,7 +42,11 @@ describe("computeMetrics", () => {
           },
         ],
       }),
-      slip({ id: "pending", status: "pending_client_confirm" }),
+      slip({
+        id: "mature-pending",
+        status: "pending_client_confirm",
+        createdAt: "2026-07-01T12:00:00Z",
+      }),
       slip({
         id: "old-outside-cohort",
         status: "client_confirmed",
@@ -65,14 +69,54 @@ describe("computeMetrics", () => {
     });
   });
 
+  it("does not penalize an immature window and keeps late confirms in duration", () => {
+    const slips = [
+      slip({
+        id: "late-confirm",
+        status: "client_confirmed",
+        createdAt: "2026-07-01T12:00:00Z",
+        history: [
+          {
+            actor: "client",
+            action: "confirm",
+            at: "2026-07-12T12:00:00Z",
+          },
+        ],
+      }),
+      slip({
+        id: "immature-pending",
+        status: "pending_client_confirm",
+        createdAt: "2026-07-12T12:00:00Z",
+      }),
+    ];
+
+    expect(computeMetrics(slips, NOW)).toMatchObject({
+      cohortSize: 1,
+      confirmedWithinWindow: 0,
+      confirmationRate: 0,
+      medianConfirmHours: 264,
+    });
+  });
+
   it("counts overdue until the client accepts", () => {
     const slips = [
       slip({ id: "open", status: "provider_delivered", dueAt: "2026-07-10" }),
-      slip({ id: "accepted", status: "client_accepted", dueAt: "2026-07-10" }),
+      slip({
+        id: "accepted",
+        status: "client_accepted",
+        dueAt: "2026-07-10",
+        history: [
+          { actor: "client", action: "accept", at: "2026-07-10T10:00:00Z" },
+        ],
+      }),
+      slip({ id: "future", status: "provider_delivered", dueAt: "2026-07-20" }),
     ];
     expect(isOverdue(slips[0], NOW)).toBe(true);
     expect(isOverdue(slips[1], NOW)).toBe(false);
-    expect(computeMetrics(slips, NOW).overdueCount).toBe(1);
+    expect(computeMetrics(slips, NOW)).toMatchObject({
+      overdueCount: 1,
+      acceptedOnTimeRate: 0.5,
+    });
   });
 });
 
