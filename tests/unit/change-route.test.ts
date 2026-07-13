@@ -28,6 +28,38 @@ function post(body: Record<string, unknown>) {
 describe("客户变化接口", () => {
   beforeEach(resetChangeStore);
 
+  it("把不合法的 JSON 作为请求错误返回", async () => {
+    const request = new Request(
+      "http://localhost:3000/api/efficiency/changes",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{",
+      },
+    );
+
+    const providerResponse = await POST(request);
+    expect(providerResponse.status).toBe(400);
+    await expect(providerResponse.json()).resolves.toEqual({
+      error: "请求内容不是合法的 JSON",
+    });
+  });
+
+  it("拒绝非对象 JSON", async () => {
+    const response = await POST(
+      new Request("http://localhost:3000/api/efficiency/changes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "null",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "请求内容必须是 JSON 对象",
+    });
+  });
+
   it("普通消息只返回有原文依据的变化", async () => {
     const seeded = await post({ action: "seed" });
     const seed = (await seeded.json()) as {

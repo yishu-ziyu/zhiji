@@ -28,9 +28,22 @@ function requiredString(body: Record<string, unknown>, key: string): string {
   return value;
 }
 
+async function parseJsonObject(request: Request): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    throw new ChangeError("请求内容不是合法的 JSON", 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ChangeError("请求内容必须是 JSON 对象", 400);
+  }
+  return body as Record<string, unknown>;
+}
+
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = await parseJsonObject(request);
     if (body.action === "seed") {
       return Response.json(createDemoProject(), { status: 201 });
     }
