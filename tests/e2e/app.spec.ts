@@ -32,8 +32,29 @@ test("客户变化从原消息变成新的交付日期和尾款", async ({
   await page.getByLabel("新的总价（元）").fill("10000");
   await page.getByRole("button", { name: "发送给客户确认" }).click();
 
+  const firstClientLink = await page.getByTestId("client-link").textContent();
+  await page.reload();
+  await expect(page.getByText("当前版本 v1")).toBeVisible();
+  await expect(page.getByTestId("client-link")).toHaveText(firstClientLink!);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.getByLabel("新的交付日期").fill("2026-07-20");
+  await page.getByRole("button", { name: "修改并重新发送" }).click();
+  await expect(page.getByTestId("client-link")).not.toHaveText(
+    firstClientLink!,
+  );
+
   const clientLink = await page.getByTestId("client-link").textContent();
   expect(clientLink).toMatch(/\/c\/[a-f0-9-]{36}$/);
+  expect(clientLink).not.toBe(firstClientLink);
+  const oldToken = firstClientLink!.split("/").at(-1)!;
+  const oldLinkResponse = await request.get(
+    `${BASE_URL}/api/efficiency/changes/${oldToken}`,
+  );
+  expect(oldLinkResponse.status()).toBe(409);
 
   const clientPage = await context.newPage();
   await clientPage.setViewportSize({ width: 390, height: 844 });
@@ -43,6 +64,7 @@ test("客户变化从原消息变成新的交付日期和尾款", async ({
   ).toBeVisible();
   await expect(clientPage.getByText("身份未验证")).toBeVisible();
   await expect(clientPage.getByText("2026-07-17 → 2026-07-20")).toBeVisible();
+  await expect(clientPage.getByText("¥8,000 → ¥10,000")).toBeVisible();
   await expect(clientPage.getByText("¥4,000 → ¥6,000")).toBeVisible();
   expect(
     await clientPage.evaluate(
@@ -63,6 +85,83 @@ test("客户变化从原消息变成新的交付日期和尾款", async ({
     { data: { action: "confirm" } },
   );
   expect(replay.status()).toBe(409);
+});
+
+test("客户要求修改后，服务方收到说明并生成新链接", async ({
+  page,
+  request,
+}) => {
+  const seeded = await request.post(`${BASE_URL}/api/efficiency/changes`, {
+    data: { action: "seed" },
+  });
+  const seed = await seeded.json();
+  const analyzed = await request.post(`${BASE_URL}/api/efficiency/changes`, {
+    data: {
+      action: "analyze",
+      projectId: seed.project.id,
+      providerSecret: seed.providerSecret,
+      sourceText: "客户：再加一组 A/B 测试，还是周五上，价格先按之前的。",
+      fixture: true,
+    },
+  });
+  const proposal = await analyzed.json();
+  const sent = await request.post(`${BASE_URL}/api/efficiency/changes`, {
+    data: {
+      action: "send",
+      projectId: seed.project.id,
+      providerSecret: seed.providerSecret,
+      proposalId: proposal.id,
+      scope: "单版本落地页，增加一组 A/B 测试",
+      deliveryDate: "2026-07-20",
+      totalPriceMinor: 1_000_000,
+    },
+  });
+  const first = await sent.json();
+
+  await page.goto(first.clientUrl);
+  await page.getByRole("button", { name: "要求修改" }).click();
+  await expect(
+    page.getByText("请填写需要修改的内容", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("需要修改的内容（要求修改时必填）")
+    .fill("交付日期改成 7 月 21 日");
+  await page.getByRole("button", { name: "要求修改" }).click();
+  await expect(page.getByText("修改意见已发送")).toBeVisible();
+
+  const provider = await request.post(`${BASE_URL}/api/efficiency/changes`, {
+    data: {
+      action: "get",
+      projectId: seed.project.id,
+      providerSecret: seed.providerSecret,
+    },
+  });
+  await expect(provider.json()).resolves.toMatchObject({
+    proposal: {
+      status: "changes_requested",
+      clientNote: "交付日期改成 7 月 21 日",
+    },
+  });
+
+  const resent = await request.post(`${BASE_URL}/api/efficiency/changes`, {
+    data: {
+      action: "send",
+      projectId: seed.project.id,
+      providerSecret: seed.providerSecret,
+      proposalId: proposal.id,
+      scope: "单版本落地页，增加一组 A/B 测试",
+      deliveryDate: "2026-07-21",
+      totalPriceMinor: 1_000_000,
+    },
+  });
+  const second = await resent.json();
+  expect(second.clientUrl).not.toBe(first.clientUrl);
+  const oldToken = first.clientUrl.split("/").at(-1)!;
+  expect(
+    (
+      await request.get(`${BASE_URL}/api/efficiency/changes/${oldToken}`)
+    ).status(),
+  ).toBe(409);
 });
 
 test("服务方接口不能执行客户确认", async ({ request }) => {
