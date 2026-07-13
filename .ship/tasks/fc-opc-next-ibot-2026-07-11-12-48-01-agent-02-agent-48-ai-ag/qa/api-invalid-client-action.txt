@@ -1,0 +1,30 @@
+* Uses proxy env variable no_proxy == '127.0.0.1,localhost'
+* Host localhost:3101 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+*   Trying [::1]:3101...
+* Connected to localhost (::1) port 3101
+> POST /api/efficiency/changes/<redacted-id> HTTP/1.1
+> Host: localhost:3101
+> User-Agent: curl/8.7.1
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 20
+>
+} [20 bytes data]
+* upload completely sent off: 20 bytes
+< HTTP/1.1 400 Bad Request
+< vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+< content-type: application/json
+< Date: Mon, 13 Jul 2026 15:08:27 GMT
+< Connection: keep-alive
+< Keep-Alive: timeout=5
+< Transfer-Encoding: chunked
+<
+{ [41 bytes data]
+* Connection #0 to host localhost left intact
+
+=== RESPONSE BODY ===
+{"error":"客户操作无效"}
+=== CURL RESULT ===
+HTTP_STATUS:400
