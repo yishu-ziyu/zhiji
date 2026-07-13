@@ -11,7 +11,7 @@
 > Accept: */*
 > Content-Type: application/json
 > Content-Length: 65
-> 
+>
 } [65 bytes data]
 * upload completely sent off: 65 bytes
 < HTTP/1.1 200 OK
@@ -21,7 +21,7 @@
 < Connection: keep-alive
 < Keep-Alive: timeout=5
 < Transfer-Encoding: chunked
-< 
+<
 { [847 bytes data]
 * Connection #0 to host localhost left intact
 {"slip":{"title":"QA 预览链接 v2","acceptanceCriteria":"链接可匿名打开并展示首屏","dueAt":"2026-07-17","priority":"高","sourceExcerpt":"请你本周五前给一个可分享的预览链接，方便内部同步。你：预览链接本周五前上线","id":"befa891a-5e4b-48b8-a253-509c51a37f19","status":"client_rejected","history":[{"actor":"provider","action":"create","at":"2026-07-13T11:18:12.864Z"},{"actor":"provider","action":"send","at":"2026-07-13T11:18:12.892Z"},{"actor":"client","action":"confirm","at":"2026-07-13T11:20:31.598Z","note":""},{"actor":"provider","action":"deliver","at":"2026-07-13T11:20:32.371Z"},{"actor":"client","action":"reject","at":"2026-07-13T11:23:00.877Z","note":"移动端截图缺失，暂不验收"}],"createdAt":"2026-07-13T11:18:12.864Z","updatedAt":"2026-07-13T11:23:00.877Z"}}
@@ -37,7 +37,7 @@ STATUS=200
 > Host: localhost:3000
 > User-Agent: curl/8.7.1
 > Accept: */*
-> 
+>
 * Request completely sent off
 < HTTP/1.1 200 OK
 < vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
@@ -46,7 +46,7 @@ STATUS=200
 < Connection: keep-alive
 < Keep-Alive: timeout=5
 < Transfer-Encoding: chunked
-< 
+<
 { [847 bytes data]
 * Connection #0 to host localhost left intact
 {"slip":{"title":"QA 预览链接 v2","acceptanceCriteria":"链接可匿名打开并展示首屏","dueAt":"2026-07-17","priority":"高","sourceExcerpt":"请你本周五前给一个可分享的预览链接，方便内部同步。你：预览链接本周五前上线","id":"befa891a-5e4b-48b8-a253-509c51a37f19","status":"client_rejected","history":[{"actor":"provider","action":"create","at":"2026-07-13T11:18:12.864Z"},{"actor":"provider","action":"send","at":"2026-07-13T11:18:12.892Z"},{"actor":"client","action":"confirm","at":"2026-07-13T11:20:31.598Z","note":""},{"actor":"provider","action":"deliver","at":"2026-07-13T11:20:32.371Z"},{"actor":"client","action":"reject","at":"2026-07-13T11:23:00.877Z","note":"移动端截图缺失，暂不验收"}],"createdAt":"2026-07-13T11:18:12.864Z","updatedAt":"2026-07-13T11:23:00.877Z"}}

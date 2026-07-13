@@ -11,7 +11,7 @@
 > Accept: */*
 > Content-Type: application/json
 > Content-Length: 20
-> 
+>
 } [20 bytes data]
 * upload completely sent off: 20 bytes
 < HTTP/1.1 404 Not Found
@@ -21,7 +21,7 @@
 < Connection: keep-alive
 < Keep-Alive: timeout=5
 < Transfer-Encoding: chunked
-< 
+<
 { [53 bytes data]
 * Connection #0 to host localhost left intact
 {"error":"客户链接无效或已失效"}
@@ -39,7 +39,7 @@ STATUS=404
 > Accept: */*
 > Content-Type: application/json
 > Content-Length: 41
-> 
+>
 } [41 bytes data]
 * upload completely sent off: 41 bytes
 < HTTP/1.1 400 Bad Request
@@ -49,7 +49,7 @@ STATUS=404
 < Connection: keep-alive
 < Keep-Alive: timeout=5
 < Transfer-Encoding: chunked
-< 
+<
 { [44 bytes data]
 * Connection #0 to host localhost left intact
 {"error":"请填写修改说明"}
@@ -67,7 +67,7 @@ STATUS=400
 > Accept: */*
 > Content-Type: application/json
 > Content-Length: 29
-> 
+>
 } [29 bytes data]
 * upload completely sent off: 29 bytes
 < HTTP/1.1 400 Bad Request
@@ -77,7 +77,7 @@ STATUS=400
 < Connection: keep-alive
 < Keep-Alive: timeout=5
 < Transfer-Encoding: chunked
-< 
+<
 { [44 bytes data]
 * Connection #0 to host localhost left intact
 {"error":"请填写拒收说明"}
@@ -95,7 +95,7 @@ STATUS=400
 > Accept: */*
 > Content-Type: application/json
 > Content-Length: 20
-> 
+>
 } [20 bytes data]
 * upload completely sent off: 20 bytes
 < HTTP/1.1 404 Not Found
@@ -105,7 +105,7 @@ STATUS=400
 < Connection: keep-alive
 < Keep-Alive: timeout=5
 < Transfer-Encoding: chunked
-< 
+<
 { [41 bytes data]
 * Connection #0 to host localhost left intact
 {"error":"客户动作无效"}
