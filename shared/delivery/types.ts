@@ -1,11 +1,32 @@
 export type DeliveryStatus =
-  | "captured"
-  | "in_progress"
-  | "delivered"
-  | "confirmed";
+  | "draft"
+  | "pending_client_confirm"
+  | "client_confirmed"
+  | "client_requested_changes"
+  | "provider_delivered"
+  | "client_accepted"
+  | "client_rejected";
+
+export type DeliveryActor = "provider" | "client";
+
+export type DeliveryAction =
+  | "create"
+  | "send"
+  | "confirm"
+  | "request_changes"
+  | "deliver"
+  | "accept"
+  | "reject"
+  | "resend";
+
+export interface DeliveryHistoryEntry {
+  actor: DeliveryActor;
+  action: DeliveryAction;
+  at: string;
+  note?: string;
+}
 
 export type CommitmentKind = "hard" | "soft" | "clarification";
-
 export type Priority = "高" | "中" | "低";
 
 export interface Commitment {
@@ -18,22 +39,29 @@ export interface Commitment {
   suggestedPriority?: Priority;
 }
 
-export interface DeliveryTask {
+export interface CommitmentSlip {
   id: string;
-  commitmentId: string;
   title: string;
-  status: DeliveryStatus;
-  deadline?: string;
+  description?: string;
+  acceptanceCriteria?: string;
+  dueAt?: string;
   priority: Priority;
-  isMock?: boolean;
+  sourceExcerpt?: string;
+  status: DeliveryStatus;
+  clientToken?: string;
+  history: DeliveryHistoryEntry[];
   createdAt: string;
   updatedAt: string;
 }
 
+export type DeliveryTask = CommitmentSlip;
+
 export interface DeliveryMetrics {
-  periodNewCommitments: number;
-  confirmedCount: number;
-  closedLoopRate: number;
+  cohortSize: number;
+  confirmedWithinWindow: number;
+  confirmationRate: number;
+  medianConfirmHours: number | null;
+  acceptedOnTimeRate: number | null;
   overdueCount: number;
   openCount: number;
 }
@@ -54,15 +82,21 @@ export interface ExtractCommitmentsResponse {
 }
 
 export const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
-  captured: "已捕获",
-  in_progress: "进行中",
-  delivered: "已交付",
-  confirmed: "已确认",
+  draft: "待发送",
+  pending_client_confirm: "待客户确认",
+  client_confirmed: "客户已确认",
+  client_requested_changes: "客户要求修改",
+  provider_delivered: "已交付待验收",
+  client_accepted: "客户已验收",
+  client_rejected: "客户拒收",
 };
 
 export const DELIVERY_COLUMNS: DeliveryStatus[] = [
-  "captured",
-  "in_progress",
-  "delivered",
-  "confirmed",
+  "draft",
+  "pending_client_confirm",
+  "client_confirmed",
+  "client_requested_changes",
+  "provider_delivered",
+  "client_accepted",
+  "client_rejected",
 ];

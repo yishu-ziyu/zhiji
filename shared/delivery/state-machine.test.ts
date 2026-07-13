@@ -1,47 +1,70 @@
 import { describe, expect, it } from "vitest";
 import { canTransition, isTerminal, transition } from "./state-machine";
 
-describe("delivery state machine", () => {
-  it("allows captured → in_progress", () => {
-    expect(canTransition("captured", "in_progress")).toBe(true);
-    expect(transition("captured", "in_progress")).toEqual({
+describe("bilateral commitment slip state machine", () => {
+  it("lets the provider send a draft and mark confirmed work delivered", () => {
+    expect(transition("draft", "pending_client_confirm", "provider")).toEqual({
       ok: true,
-      next: "in_progress",
+      next: "pending_client_confirm",
     });
+    expect(
+      transition("client_confirmed", "provider_delivered", "provider"),
+    ).toEqual({ ok: true, next: "provider_delivered" });
   });
 
-  it("allows in_progress → delivered", () => {
-    expect(transition("in_progress", "delivered").ok).toBe(true);
+  it("lets the client confirm, request changes, accept, or reject at its seams", () => {
+    expect(
+      canTransition("pending_client_confirm", "client_confirmed", "client"),
+    ).toBe(true);
+    expect(
+      canTransition(
+        "pending_client_confirm",
+        "client_requested_changes",
+        "client",
+      ),
+    ).toBe(true);
+    expect(
+      canTransition("provider_delivered", "client_accepted", "client"),
+    ).toBe(true);
+    expect(
+      canTransition("provider_delivered", "client_rejected", "client"),
+    ).toBe(true);
   });
 
-  it("allows delivered → confirmed", () => {
-    expect(transition("delivered", "confirmed").ok).toBe(true);
+  it("prevents the provider from faking client-owned states", () => {
+    expect(
+      transition("pending_client_confirm", "client_confirmed", "provider"),
+    ).toMatchObject({ ok: false, next: "pending_client_confirm" });
+    expect(
+      transition("provider_delivered", "client_accepted", "provider"),
+    ).toMatchObject({ ok: false, next: "provider_delivered" });
   });
 
-  it("allows delivered → in_progress rework", () => {
-    expect(transition("delivered", "in_progress")).toEqual({
-      ok: true,
-      next: "in_progress",
-    });
+  it("supports correction loops without skipping role ownership", () => {
+    expect(
+      canTransition(
+        "client_requested_changes",
+        "pending_client_confirm",
+        "provider",
+      ),
+    ).toBe(true);
+    expect(
+      canTransition("client_rejected", "provider_delivered", "provider"),
+    ).toBe(true);
   });
 
-  it("forbids skipping captured → confirmed", () => {
-    const result = transition("captured", "confirmed");
-    expect(result.ok).toBe(false);
-    expect(result.next).toBe("captured");
+  it("rejects same-state and invalid-order transitions", () => {
+    expect(canTransition("draft", "draft", "provider")).toBe(false);
+    expect(canTransition("draft", "provider_delivered", "provider")).toBe(
+      false,
+    );
+    expect(
+      canTransition("pending_client_confirm", "client_accepted", "client"),
+    ).toBe(false);
   });
 
-  it("forbids confirmed → anything", () => {
-    expect(canTransition("confirmed", "delivered")).toBe(false);
-    expect(canTransition("confirmed", "in_progress")).toBe(false);
-  });
-
-  it("forbids same-status transition", () => {
-    expect(canTransition("captured", "captured")).toBe(false);
-  });
-
-  it("marks confirmed as terminal", () => {
-    expect(isTerminal("confirmed")).toBe(true);
-    expect(isTerminal("delivered")).toBe(false);
+  it("only treats client acceptance as terminal", () => {
+    expect(isTerminal("client_accepted")).toBe(true);
+    expect(isTerminal("client_rejected")).toBe(false);
   });
 });
