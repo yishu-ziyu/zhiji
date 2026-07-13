@@ -54,8 +54,6 @@ export interface CommitmentSlip {
   updatedAt: string;
 }
 
-export type DeliveryTask = CommitmentSlip;
-
 export interface DeliveryMetrics {
   cohortSize: number;
   confirmedWithinWindow: number;
@@ -90,13 +88,3 @@ export const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
   client_accepted: "客户已验收",
   client_rejected: "客户拒收",
 };
-
-export const DELIVERY_COLUMNS: DeliveryStatus[] = [
-  "draft",
-  "pending_client_confirm",
-  "client_confirmed",
-  "client_requested_changes",
-  "provider_delivered",
-  "client_accepted",
-  "client_rejected",
-];

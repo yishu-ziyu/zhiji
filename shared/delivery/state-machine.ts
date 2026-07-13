@@ -46,7 +46,3 @@ export function transition(
   }
   return { ok: true, next: to };
 }
-
-export function isTerminal(status: DeliveryStatus): boolean {
-  return status === "client_accepted";
-}

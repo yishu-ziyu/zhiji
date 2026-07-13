@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canTransition, isTerminal, transition } from "./state-machine";
+import { canTransition, transition } from "./state-machine";
 
 describe("bilateral commitment slip state machine", () => {
   it("lets the provider send a draft and mark confirmed work delivered", () => {
@@ -63,8 +63,4 @@ describe("bilateral commitment slip state machine", () => {
     ).toBe(false);
   });
 
-  it("only treats client acceptance as terminal", () => {
-    expect(isTerminal("client_accepted")).toBe(true);
-    expect(isTerminal("client_rejected")).toBe(false);
-  });
 });

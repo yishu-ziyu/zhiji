@@ -5,6 +5,7 @@ import {
   updateSlip,
 } from "@/shared/delivery/repository";
 import { computeMetrics } from "@/shared/delivery/metrics";
+import { toPublicSlip } from "@/shared/delivery/public-slip";
 import type { Priority } from "@/shared/delivery/types";
 
 const priorities = new Set<Priority>(["高", "中", "低"]);
@@ -18,12 +19,22 @@ function errorResponse(error: unknown) {
 
 export async function GET() {
   const slips = listSlips();
-  const publicSlips = slips.map((slip) => {
-    const publicSlip = { ...slip };
-    delete publicSlip.clientToken;
-    return publicSlip;
-  });
-  return Response.json({ slips: publicSlips, metrics: computeMetrics(slips) });
+  return Response.json({ slips: slips.map(toPublicSlip), metrics: computeMetrics(slips) });
+}
+
+function editablePatch(body: Record<string, unknown>) {
+  return {
+    title: typeof body.title === "string" ? body.title : undefined,
+    description: typeof body.description === "string" ? body.description : undefined,
+    acceptanceCriteria:
+      typeof body.acceptanceCriteria === "string"
+        ? body.acceptanceCriteria
+        : undefined,
+    dueAt: typeof body.dueAt === "string" ? body.dueAt : undefined,
+    priority: priorities.has(body.priority as Priority)
+      ? (body.priority as Priority)
+      : undefined,
+  };
 }
 
 export async function POST(request: Request) {
@@ -63,38 +74,14 @@ export async function POST(request: Request) {
     if (typeof body.id !== "string") throw new Error("缺少承诺单 ID");
     if (body.action === "update") {
       return Response.json({
-        slip: updateSlip(body.id, {
-          title: typeof body.title === "string" ? body.title : undefined,
-          description:
-            typeof body.description === "string" ? body.description : undefined,
-          acceptanceCriteria:
-            typeof body.acceptanceCriteria === "string"
-              ? body.acceptanceCriteria
-              : undefined,
-          dueAt: typeof body.dueAt === "string" ? body.dueAt : undefined,
-          priority: priorities.has(body.priority as Priority)
-            ? (body.priority as Priority)
-            : undefined,
-        }),
+        slip: updateSlip(body.id, editablePatch(body)),
       });
     }
     if (body.action !== "send" && body.action !== "deliver") {
       throw new Error("服务方无权执行该动作");
     }
     if (body.action === "send") {
-      updateSlip(body.id, {
-        title: typeof body.title === "string" ? body.title : undefined,
-        description:
-          typeof body.description === "string" ? body.description : undefined,
-        acceptanceCriteria:
-          typeof body.acceptanceCriteria === "string"
-            ? body.acceptanceCriteria
-            : undefined,
-        dueAt: typeof body.dueAt === "string" ? body.dueAt : undefined,
-        priority: priorities.has(body.priority as Priority)
-          ? (body.priority as Priority)
-          : undefined,
-      });
+      updateSlip(body.id, editablePatch(body));
     }
     const slip = applyProviderAction(body.id, body.action);
     const clientUrl = slip.clientToken

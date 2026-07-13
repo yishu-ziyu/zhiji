@@ -1,4 +1,5 @@
 import { getSlipByToken } from "@/shared/delivery/repository";
+import { toPublicSlip } from "@/shared/delivery/public-slip";
 import { notFound } from "next/navigation";
 import { ClientActions } from "./ClientActions";
 
@@ -20,7 +21,7 @@ export default async function ClientCommitmentPage({
           <p className="text-sm font-semibold tracking-wide text-indigo-300">iBot · 交付确认</p>
           <p className="mt-1 text-xs text-muted-foreground">无需登录 · 由你确认事实</p>
         </div>
-        <ClientActions token={token} initialSlip={slip} />
+        <ClientActions token={token} initialSlip={toPublicSlip(slip)} />
         <p className="mt-6 text-center text-xs text-muted-foreground">
           本页面记录协作确认，不替代法律合同或电子签名。
         </p>

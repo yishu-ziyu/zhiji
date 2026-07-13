@@ -1,7 +1,9 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { DELIVERY_STATUS_LABELS, type CommitmentSlip } from "@/shared/delivery/types";
+import { Textarea } from "@/components/ui/textarea";
+import type { PublicCommitmentSlip } from "@/shared/delivery/public-slip";
+import { DELIVERY_STATUS_LABELS } from "@/shared/delivery/types";
 import { useCallback, useEffect, useState } from "react";
 
 export function ClientActions({
@@ -9,7 +11,7 @@ export function ClientActions({
   initialSlip,
 }: {
   token: string;
-  initialSlip: CommitmentSlip;
+  initialSlip: PublicCommitmentSlip;
 }) {
   const [slip, setSlip] = useState(initialSlip);
   const [note, setNote] = useState("");
@@ -21,8 +23,12 @@ export function ClientActions({
       cache: "no-store",
     });
     if (!response.ok) return;
-    const data = (await response.json()) as { slip: CommitmentSlip };
-    setSlip(data.slip);
+    const data = (await response.json()) as { slip: PublicCommitmentSlip };
+    setSlip((current) =>
+      JSON.stringify(current) === JSON.stringify(data.slip)
+        ? current
+        : data.slip,
+    );
   }, [token]);
 
   useEffect(() => {
@@ -44,7 +50,7 @@ export function ClientActions({
         body: JSON.stringify({ action, note }),
       });
       const data = (await response.json()) as {
-        slip?: CommitmentSlip;
+        slip?: PublicCommitmentSlip;
         error?: string;
       };
       if (!response.ok || !data.slip) throw new Error(data.error || "操作失败");
@@ -99,14 +105,14 @@ export function ClientActions({
           <label className="text-xs text-muted-foreground" htmlFor="client-note">
             {awaitingConfirm ? "修改说明（要求修改时必填）" : "拒收说明（拒收时必填）"}
           </label>
-          <textarea
+          <Textarea
             id="client-note"
             value={note}
             onChange={(event) => {
               setNote(event.target.value);
               setError(null);
             }}
-            className="mt-2 min-h-24 w-full rounded-xl border border-border bg-muted/30 p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50"
+            className="mt-2 min-h-24 rounded-xl bg-muted/30 text-sm resize-y"
             placeholder="把需要调整的地方说清楚，双方少一次来回"
             aria-describedby={error ? "client-note-error" : undefined}
           />

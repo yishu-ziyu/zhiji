@@ -1,4 +1,5 @@
 import { applyClientAction } from "@/shared/delivery/repository";
+import { toPublicSlip } from "@/shared/delivery/public-slip";
 
 const actions = new Set(["confirm", "request_changes", "accept", "reject"]);
 
@@ -17,9 +18,7 @@ export async function POST(
       body.action as "confirm" | "request_changes" | "accept" | "reject",
       typeof body.note === "string" ? body.note : undefined,
     );
-    const publicSlip = { ...slip };
-    delete publicSlip.clientToken;
-    return Response.json({ slip: publicSlip });
+    return Response.json({ slip: toPublicSlip(slip) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "客户操作失败";
     return Response.json(

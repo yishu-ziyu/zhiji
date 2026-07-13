@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -23,9 +23,15 @@ import {
   type ExtractedCommitment,
   type Priority,
 } from "@/shared/delivery/types";
+import {
+  clientUrl,
+  type ProviderAction,
+  rememberProviderToken,
+  submitProviderAction,
+  useProviderSlips,
+} from "./use-provider-slips";
 
 type DraftCommitment = Commitment & { acceptanceCriteria: string };
-const PROVIDER_TOKEN_KEY = "fc-opc-provider-client-tokens";
 
 function newId(): string {
   return crypto.randomUUID();
@@ -44,27 +50,6 @@ function toCommitments(extracted: ExtractedCommitment[]): DraftCommitment[] {
   }));
 }
 
-function clientUrl(slip: CommitmentSlip): string | null {
-  if (!slip.clientToken || typeof window === "undefined") return null;
-  return `${window.location.origin}/c/${slip.clientToken}`;
-}
-
-function loadProviderTokens(): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem(PROVIDER_TOKEN_KEY) ?? "{}") as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
-function rememberProviderToken(slip: CommitmentSlip): void {
-  if (!slip.clientToken) return;
-  localStorage.setItem(
-    PROVIDER_TOKEN_KEY,
-    JSON.stringify({ ...loadProviderTokens(), [slip.id]: slip.clientToken }),
-  );
-}
-
 function latestClientNote(slip: CommitmentSlip): string | null {
   return [...slip.history].reverse().find((entry) => entry.actor === "client" && entry.note)?.note ?? null;
 }
@@ -73,46 +58,17 @@ export default function EfficiencyPage() {
   const [transcript, setTranscript] = useState("");
   const [commitments, setCommitments] = useState<DraftCommitment[]>([]);
   const [risks, setRisks] = useState<string[]>([]);
-  const [slips, setSlips] = useState<CommitmentSlip[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const editingIds = useRef(new Set<string>());
-
-  const refreshSlips = useCallback(async () => {
-    const response = await fetch("/api/efficiency/slips", { cache: "no-store" });
-    if (!response.ok) return;
-    const data = (await response.json()) as { slips: CommitmentSlip[] };
-    const tokens = loadProviderTokens();
-    setSlips((current) => {
-      const local = new Map(current.map((slip) => [slip.id, slip]));
-      return data.slips.map((slip) => {
-        const withToken = tokens[slip.id]
-          ? { ...slip, clientToken: tokens[slip.id] }
-          : slip;
-        const editing = local.get(slip.id);
-        return editingIds.current.has(slip.id) && editing
-          ? {
-              ...withToken,
-              title: editing.title,
-              acceptanceCriteria: editing.acceptanceCriteria,
-              dueAt: editing.dueAt,
-              priority: editing.priority,
-            }
-          : withToken;
-      });
-    });
-  }, []);
-
-  useEffect(() => {
-    const initial = window.setTimeout(() => void refreshSlips(), 0);
-    const timer = window.setInterval(() => void refreshSlips(), 1500);
-    return () => {
-      window.clearTimeout(initial);
-      window.clearInterval(timer);
-    };
-  }, [refreshSlips]);
+  const {
+    slips,
+    copiedId,
+    refreshSlips,
+    updateLocalSlip,
+    providerAction,
+    copyClientLink,
+  } = useProviderSlips(setError);
 
   const metrics = useMemo(() => computeMetrics(slips), [slips]);
 
@@ -189,28 +145,7 @@ export default function EfficiencyPage() {
       };
       if (!response.ok || !data.slips) throw new Error(data.error || "生成承诺单失败");
       const sent = await Promise.all(
-        data.slips.map(async (slip) => {
-          const sentResponse = await fetch("/api/efficiency/slips", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "send",
-              id: slip.id,
-              title: slip.title,
-              acceptanceCriteria: slip.acceptanceCriteria,
-              dueAt: slip.dueAt,
-              priority: slip.priority,
-            }),
-          });
-          const sentData = (await sentResponse.json()) as {
-            slip?: CommitmentSlip;
-            error?: string;
-          };
-          if (!sentResponse.ok || !sentData.slip) {
-            throw new Error(sentData.error || "发送承诺单失败");
-          }
-          return sentData.slip;
-        }),
+        data.slips.map((slip) => submitProviderAction(slip, "send")),
       );
       sent.forEach(rememberProviderToken);
       setCommitments([]);
@@ -221,50 +156,6 @@ export default function EfficiencyPage() {
       setLoading(false);
     }
   }, [commitments, refreshSlips]);
-
-  const updateLocalSlip = useCallback((id: string, patch: Partial<CommitmentSlip>) => {
-    editingIds.current.add(id);
-    setSlips((current) => current.map((slip) => (slip.id === id ? { ...slip, ...patch } : slip)));
-  }, []);
-
-  const providerAction = useCallback(
-    async (slip: CommitmentSlip, action: "update" | "send" | "deliver") => {
-      setError(null);
-      try {
-        const response = await fetch("/api/efficiency/slips", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action,
-            id: slip.id,
-            title: slip.title,
-            acceptanceCriteria: slip.acceptanceCriteria,
-            dueAt: slip.dueAt,
-            priority: slip.priority,
-          }),
-        });
-        const data = (await response.json()) as {
-          slip?: CommitmentSlip;
-          error?: string;
-        };
-        if (!response.ok) throw new Error(data.error || "操作失败");
-        if (data.slip) rememberProviderToken(data.slip);
-        editingIds.current.delete(slip.id);
-        await refreshSlips();
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "操作失败");
-      }
-    },
-    [refreshSlips],
-  );
-
-  const copyClientLink = useCallback(async (slip: CommitmentSlip) => {
-    const url = clientUrl(slip);
-    if (!url) return;
-    await navigator.clipboard.writeText(url);
-    setCopiedId(slip.id);
-    window.setTimeout(() => setCopiedId(null), 1500);
-  }, []);
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -356,7 +247,7 @@ function Metric({ label, value, detail, danger = false }: { label: string; value
   return <div className={`rounded-2xl border p-4 ${danger ? "border-red-500/35 bg-red-500/10" : "border-white/10 bg-black/20"}`}><p className="text-xs text-muted-foreground">{label} · 候选</p><p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-[10px] text-muted-foreground">{detail}</p></div>;
 }
 
-function SlipCard({ slip, copied, onChange, onAction, onCopy }: { slip: CommitmentSlip; copied: boolean; onChange: (id: string, patch: Partial<CommitmentSlip>) => void; onAction: (slip: CommitmentSlip, action: "update" | "send" | "deliver") => Promise<void>; onCopy: (slip: CommitmentSlip) => Promise<void> }) {
+function SlipCard({ slip, copied, onChange, onAction, onCopy }: { slip: CommitmentSlip; copied: boolean; onChange: (id: string, patch: Partial<CommitmentSlip>) => void; onAction: (slip: CommitmentSlip, action: ProviderAction) => Promise<void>; onCopy: (slip: CommitmentSlip) => Promise<void> }) {
   const editable = slip.status === "draft" || slip.status === "client_requested_changes";
   const url = clientUrl(slip);
   const clientNote = latestClientNote(slip);
