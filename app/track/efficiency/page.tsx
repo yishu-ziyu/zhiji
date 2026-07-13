@@ -1,355 +1,89 @@
 "use client";
 
-import { Sidebar } from "@/shared/components/layout/Sidebar";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  Clipboard,
+  ExternalLink,
+  RefreshCw,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Sidebar } from "@/shared/components/layout/Sidebar";
+import { getFixtureTranscript } from "@/shared/delivery/extract-mock";
+import { computeMetrics, formatRate, isOverdue } from "@/shared/delivery/metrics";
 import {
-  DELIVERY_COLUMNS,
   DELIVERY_STATUS_LABELS,
   type Commitment,
-  type DeliveryStatus,
-  type DeliveryTask,
+  type CommitmentSlip,
   type ExtractCommitmentsResponse,
   type ExtractedCommitment,
   type Priority,
 } from "@/shared/delivery/types";
-import { canTransition } from "@/shared/delivery/state-machine";
-import {
-  computeMetrics,
-  formatClosedLoopRate,
-  isOverdue,
-} from "@/shared/delivery/metrics";
-import {
-  emptyStore,
-  loadDeliveryStore,
-  saveDeliveryStore,
-} from "@/shared/delivery/storage";
-import { getFixtureTranscript } from "@/shared/delivery/extract-mock";
-import { AlertTriangle, CheckCircle2, Target } from "lucide-react";
 
-function newId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+type DraftCommitment = Commitment & { acceptanceCriteria: string };
+
+function newId(): string {
+  return crypto.randomUUID();
 }
 
-function toCommitments(extracted: ExtractedCommitment[]): Commitment[] {
+function toCommitments(extracted: ExtractedCommitment[]): DraftCommitment[] {
   return extracted.map((item) => ({
-    id: newId("cm"),
+    id: newId(),
     text: item.text,
     kind: item.kind,
     sourceExcerpt: item.sourceExcerpt,
     accepted: item.kind === "hard",
     suggestedDeadline: item.suggestedDeadline,
     suggestedPriority: item.suggestedPriority,
+    acceptanceCriteria: "",
   }));
 }
 
-function MetricsStrip({
-  rateLabel,
-  overdue,
-  open,
-  confirmed,
-  period,
-}: {
-  rateLabel: string;
-  overdue: number;
-  open: number;
-  confirmed: number;
-  period: number;
-}) {
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 text-xs">
-      <div className="rounded-xl border border-primary/35 bg-gradient-to-br from-primary/15 to-primary/5 px-3.5 py-3 shadow-sm shadow-primary/10">
-        <div className="text-primary/80 font-medium tracking-wide">闭环率</div>
-        <div className="mt-1 text-2xl font-bold text-foreground tabular-nums tracking-tight">
-          {rateLabel}
-        </div>
-        <div className="text-[10px] text-muted-foreground mt-1">
-          {confirmed}/{period} 已确认交付
-        </div>
-      </div>
-      <div className="rounded-xl border border-border bg-card/80 px-3.5 py-3">
-        <div className="text-muted-foreground">未确认</div>
-        <div className="mt-1 text-2xl font-semibold text-foreground tabular-nums">
-          {open}
-        </div>
-        <div className="text-[10px] text-muted-foreground mt-1">仍在管道中</div>
-      </div>
-      <div
-        className={cn(
-          "rounded-xl border px-3.5 py-3",
-          overdue > 0
-            ? "border-red-500/45 bg-red-500/10"
-            : "border-border bg-card/80",
-        )}
-      >
-        <div className={overdue > 0 ? "text-red-300/90" : "text-muted-foreground"}>
-          逾期
-        </div>
-        <div
-          className={cn(
-            "mt-1 text-2xl font-semibold tabular-nums",
-            overdue > 0 ? "text-red-400" : "text-foreground",
-          )}
-        >
-          {overdue}
-        </div>
-        <div className="text-[10px] text-muted-foreground mt-1">须今日处理</div>
-      </div>
-      <div className="rounded-xl border border-border bg-card/80 px-3.5 py-3">
-        <div className="text-muted-foreground">北极星定义</div>
-        <div className="mt-1.5 text-[11px] font-medium text-foreground leading-snug">
-          客户确认 ÷ 本期新增承诺
-        </div>
-        <div className="text-[10px] text-muted-foreground mt-1">可复盘、可比较</div>
-      </div>
-    </div>
-  );
+function clientUrl(slip: CommitmentSlip): string | null {
+  if (!slip.clientToken || typeof window === "undefined") return null;
+  return `${window.location.origin}/c/${slip.clientToken}`;
 }
 
-function CommitmentReview({
-  commitments,
-  risks,
-  onToggle,
-  onAccept,
-  disabled,
-}: {
-  commitments: Commitment[];
-  risks: string[];
-  onToggle: (id: string) => void;
-  onAccept: () => void;
-  disabled: boolean;
-}) {
-  if (commitments.length === 0) return null;
-  const acceptedCount = commitments.filter((c) => c.accepted).length;
-
-  return (
-    <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">承诺审阅</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            勾选可执行承诺后生成任务。散文总结不算成功。
-          </p>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          onClick={onAccept}
-          disabled={disabled || acceptedCount === 0}
-        >
-          采纳并生成任务 ({acceptedCount})
-        </Button>
-      </div>
-      <ul className="space-y-2">
-        {commitments.map((c) => (
-          <li
-            key={c.id}
-            className="flex items-start gap-3 rounded-lg border border-border bg-muted/20 px-3 py-2"
-          >
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={c.accepted}
-              onChange={() => onToggle(c.id)}
-              aria-label={`采纳 ${c.text}`}
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-sm text-foreground">{c.text}</span>
-                <Badge
-                  className={cn(
-                    "text-[10px]",
-                    c.kind === "hard" &&
-                      "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-                    c.kind === "soft" &&
-                      "bg-yellow-500/15 text-yellow-300 border-yellow-500/30",
-                    c.kind === "clarification" &&
-                      "bg-orange-500/15 text-orange-300 border-orange-500/30",
-                  )}
-                >
-                  {c.kind === "hard"
-                    ? "硬承诺"
-                    : c.kind === "soft"
-                      ? "软偏好"
-                      : "待澄清"}
-                </Badge>
-              </div>
-              {c.sourceExcerpt && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  原文：{c.sourceExcerpt}
-                </p>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
-      {risks.length > 0 && (
-        <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-xs text-orange-100/90 space-y-1">
-          <div className="flex items-center gap-1.5 font-medium">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            风险 / 待澄清
-          </div>
-          {risks.map((r) => (
-            <div key={r}>· {r}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DeliveryBoard({
-  tasks,
-  onStatusChange,
-}: {
-  tasks: DeliveryTask[];
-  onStatusChange: (id: string, status: DeliveryStatus) => void;
-}) {
-  const now = useMemo(() => new Date(), []);
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-foreground">交付看板</h2>
-        <span className="text-xs text-muted-foreground">
-          {tasks.length} 个任务
-        </span>
-      </div>
-      <div className="flex gap-4 overflow-x-auto pb-4">
-        {DELIVERY_COLUMNS.map((status) => {
-          const colTasks = tasks.filter((t) => t.status === status);
-          return (
-            <div
-              key={status}
-              className="flex-1 min-w-[220px] rounded-xl border border-border bg-muted/20"
-            >
-              <div className="px-3 py-2 border-b border-border">
-                <div className="text-xs font-medium text-muted-foreground">
-                  {DELIVERY_STATUS_LABELS[status]}
-                  <span className="ml-1.5 text-muted-foreground/60">
-                    {colTasks.length}
-                  </span>
-                </div>
-              </div>
-              <div className="p-2 space-y-2">
-                {colTasks.map((task) => {
-                  const overdue = isOverdue(task, now);
-                  return (
-                    <div
-                      key={task.id}
-                      className={cn(
-                        "bg-card border rounded-lg p-3 space-y-2",
-                        overdue
-                          ? "border-red-500/40"
-                          : "border-border",
-                      )}
-                    >
-                      <p className="text-sm text-foreground leading-snug">
-                        {task.title}
-                      </p>
-                      <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-                        {task.deadline && (
-                          <span className={overdue ? "text-red-400" : undefined}>
-                            截止：{task.deadline}
-                            {overdue ? " · 逾期" : ""}
-                          </span>
-                        )}
-                        <span>优先级：{task.priority}</span>
-                      </div>
-                      <select
-                        value={task.status}
-                        onChange={(e) =>
-                          onStatusChange(
-                            task.id,
-                            e.target.value as DeliveryStatus,
-                          )
-                        }
-                        className="w-full text-xs bg-muted border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-                      >
-                        {DELIVERY_COLUMNS.map((s) => (
-                          <option
-                            key={s}
-                            value={s}
-                            disabled={
-                              s !== task.status &&
-                              !canTransition(task.status, s)
-                            }
-                          >
-                            {DELIVERY_STATUS_LABELS[s]}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  );
-                })}
-                {colTasks.length === 0 && (
-                  <div className="text-xs text-muted-foreground text-center py-6 opacity-50">
-                    暂无任务
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+function latestClientNote(slip: CommitmentSlip): string | null {
+  return [...slip.history].reverse().find((entry) => entry.actor === "client" && entry.note)?.note ?? null;
 }
 
 export default function EfficiencyPage() {
   const [transcript, setTranscript] = useState("");
-  const [commitments, setCommitments] = useState<Commitment[]>([]);
+  const [commitments, setCommitments] = useState<DraftCommitment[]>([]);
   const [risks, setRisks] = useState<string[]>([]);
-  const [tasks, setTasks] = useState<DeliveryTask[]>([]);
-  const [periodNew, setPeriodNew] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [slips, setSlips] = useState<CommitmentSlip[]>([]);
   const [summary, setSummary] = useState<string | null>(null);
-  const [hydrated, setHydrated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const store = loadDeliveryStore();
-    setCommitments(store.commitments);
-    setTasks(store.tasks);
-    setPeriodNew(store.periodNewCommitments);
-    setHydrated(true);
+  const refreshSlips = useCallback(async () => {
+    const response = await fetch("/api/efficiency/slips", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = (await response.json()) as { slips: CommitmentSlip[] };
+    setSlips(data.slips);
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
-    saveDeliveryStore({
-      version: 1,
-      commitments,
-      tasks,
-      periodNewCommitments: periodNew,
-    });
-  }, [commitments, tasks, periodNew, hydrated]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    (
-      window as unknown as {
-        __setEfficiencyMode?: (m: string) => void;
-        __runDeliveryDemo?: () => void;
-      }
-    ).__setEfficiencyMode = () => {
-      /* workbench is single-page; hook kept for e2e compatibility */
+    const initial = window.setTimeout(() => void refreshSlips(), 0);
+    const timer = window.setInterval(() => void refreshSlips(), 1500);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
     };
-  }, []);
+  }, [refreshSlips]);
 
-  const metrics = useMemo(
-    () => computeMetrics(tasks, periodNew),
-    [tasks, periodNew],
-  );
+  const metrics = useMemo(() => computeMetrics(slips), [slips]);
 
   const applyExtraction = useCallback((data: ExtractCommitmentsResponse) => {
-    if (!data.commitments || data.commitments.length === 0) {
-      setError("未提取到可执行承诺。散文总结不算成功，请换一段对话或用剧本。");
+    if (!data.commitments?.length) {
+      setError("没有提取到可执行承诺。请换一段对齐文本或使用演示剧本。");
       setCommitments([]);
-      setRisks(data.risks ?? []);
-      setSummary(data.summary ?? null);
       return;
     }
     setError(null);
@@ -358,213 +92,217 @@ export default function EfficiencyPage() {
     setCommitments(toCommitments(data.commitments));
   }, []);
 
-  const runFixtureDemo = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const text = getFixtureTranscript("dialog-01");
+  const extract = useCallback(
+    async (fixture = false) => {
+      const text = fixture ? getFixtureTranscript("dialog-01") : transcript.trim();
+      if (!text) {
+        setError("请粘贴客户聊天或需求对齐文本");
+        return;
+      }
       setTranscript(text);
-      const res = await fetch("/api/efficiency/commitments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fixture: "dialog-01", transcript: text }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error || "剧本加载失败",
-        );
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch("/api/efficiency/commitments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(fixture ? { fixture: "dialog-01", transcript: text } : { transcript: text }),
+        });
+        const data = (await response.json()) as ExtractCommitmentsResponse & { error?: string };
+        if (!response.ok) throw new Error(data.error || "提取失败");
+        applyExtraction(data);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "提取失败");
+      } finally {
+        setLoading(false);
       }
-      const data = (await res.json()) as ExtractCommitmentsResponse;
-      applyExtraction(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "剧本加载失败");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [applyExtraction]);
+    },
+    [applyExtraction, transcript],
+  );
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    (
-      window as unknown as { __runDeliveryDemo?: () => void }
-    ).__runDeliveryDemo = () => {
-      void runFixtureDemo();
-    };
-  }, [runFixtureDemo]);
+  const updateCommitment = useCallback(
+    (id: string, patch: Partial<DraftCommitment>) => {
+      setCommitments((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    },
+    [],
+  );
 
-  const extractFromTranscript = useCallback(async () => {
-    const text = transcript.trim();
-    if (!text) {
-      setError("请粘贴客户对话，或使用客户对话剧本");
-      return;
-    }
-    setIsLoading(true);
+  const createDrafts = useCallback(async () => {
+    const selected = commitments.filter((item) => item.accepted);
+    if (!selected.length) return;
+    setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/efficiency/commitments", {
+      const response = await fetch("/api/efficiency/slips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: text }),
+        body: JSON.stringify({
+          action: "create",
+          slips: selected.map((item) => ({
+            title: item.text,
+            acceptanceCriteria: item.acceptanceCriteria || undefined,
+            dueAt: item.suggestedDeadline || undefined,
+            priority: item.suggestedPriority || "中",
+            sourceExcerpt: item.sourceExcerpt,
+          })),
+        }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(
-          (err as { error?: string }).error || "提取失败",
-        );
-      }
-      const data = (await res.json()) as ExtractCommitmentsResponse;
-      applyExtraction(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "提取失败");
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "生成承诺单失败");
+      setCommitments([]);
+      await refreshSlips();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "生成承诺单失败");
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
-  }, [transcript, applyExtraction]);
+  }, [commitments, refreshSlips]);
 
-  const toggleCommitment = useCallback((id: string) => {
-    setCommitments((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, accepted: !c.accepted } : c)),
-    );
+  const updateLocalSlip = useCallback((id: string, patch: Partial<CommitmentSlip>) => {
+    setSlips((current) => current.map((slip) => (slip.id === id ? { ...slip, ...patch } : slip)));
   }, []);
 
-  const acceptCommitments = useCallback(() => {
-    const accepted = commitments.filter((c) => c.accepted);
-    if (accepted.length === 0) return;
-    const nowIso = new Date().toISOString();
-    const newTasks: DeliveryTask[] = accepted.map((c) => ({
-      id: newId("task"),
-      commitmentId: c.id,
-      title: c.text,
-      status: "captured" as const,
-      deadline: c.suggestedDeadline,
-      priority: (c.suggestedPriority ?? "中") as Priority,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    }));
-    setTasks((prev) => [...newTasks, ...prev]);
-    setPeriodNew((n) => n + accepted.length);
-    setCommitments((prev) => prev.filter((c) => !c.accepted));
-  }, [commitments]);
+  const providerAction = useCallback(
+    async (slip: CommitmentSlip, action: "update" | "send" | "deliver") => {
+      setError(null);
+      try {
+        const response = await fetch("/api/efficiency/slips", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            id: slip.id,
+            title: slip.title,
+            acceptanceCriteria: slip.acceptanceCriteria,
+            dueAt: slip.dueAt,
+            priority: slip.priority,
+          }),
+        });
+        const data = (await response.json()) as { error?: string };
+        if (!response.ok) throw new Error(data.error || "操作失败");
+        await refreshSlips();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "操作失败");
+      }
+    },
+    [refreshSlips],
+  );
 
-  const moveTask = useCallback((id: string, next: DeliveryStatus) => {
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
-        if (!canTransition(t.status, next) && t.status !== next) return t;
-        return {
-          ...t,
-          status: next,
-          updatedAt: new Date().toISOString(),
-        };
-      }),
-    );
-  }, []);
-
-  const resetAll = useCallback(() => {
-    const empty = emptyStore();
-    setCommitments(empty.commitments);
-    setTasks(empty.tasks);
-    setPeriodNew(0);
-    setRisks([]);
-    setSummary(null);
-    setError(null);
-    setTranscript("");
+  const copyClientLink = useCallback(async (slip: CommitmentSlip) => {
+    const url = clientUrl(slip);
+    if (!url) return;
+    await navigator.clipboard.writeText(url);
+    setCopiedId(slip.id);
+    window.setTimeout(() => setCopiedId(null), 1500);
   }, []);
 
   return (
-    <div className="flex h-screen">
-      <Sidebar efficiencyMode="capture" />
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <div className="px-6 py-4 border-b border-border space-y-3 shrink-0">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-lg font-semibold text-foreground">
-                  交付运营助手
-                </h1>
-                <Badge className="bg-blue-500/15 text-blue-300 border-blue-500/30 hover:bg-blue-500/20">
-                  参赛主线 · 效率 OPC
-                </Badge>
+    <div className="flex min-h-screen bg-background">
+      <div className="hidden lg:block"><Sidebar efficiencyMode="capture" /></div>
+      <main className="min-w-0 flex-1">
+        <header className="border-b border-border bg-[radial-gradient(circle_at_top_left,#25215b_0%,#0a0a0f_42%)] px-4 py-6 md:px-8">
+          <div className="mx-auto max-w-7xl">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-2xl font-semibold tracking-tight">双向交付承诺</h1>
+                  <Badge className="border-indigo-400/30 bg-indigo-400/10 text-indigo-200">效率 OPC · 演示主线</Badge>
+                </div>
+                <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+                  粘贴一次客户对齐，变成双方都能确认、交付、验收的事实。
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                客户对话 → 承诺捕获 → 交付确认。北极星：闭环率。
-              </p>
+              <Button variant="outline" onClick={() => void refreshSlips()}>
+                <RefreshCw />刷新客户状态
+              </Button>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={resetAll}
-              >
-                清空
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={runFixtureDemo}
-                disabled={isLoading}
-              >
-                <Target className="w-3.5 h-3.5 mr-1" />
-                使用客户对话剧本
-              </Button>
+
+            <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Metric label="7 日客户确认率" value={formatRate(metrics.confirmationRate)} detail={`近 30 日同 cohort · ${metrics.confirmedWithinWindow}/${metrics.cohortSize}`} />
+              <Metric label="确认耗时中位数" value={metrics.medianConfirmHours === null ? "待积累" : `${Math.round(metrics.medianConfirmHours)}h`} detail="候选指标，不伪造精度" />
+              <Metric label="按期验收率" value={metrics.acceptedOnTimeRate === null ? "待积累" : formatRate(metrics.acceptedOnTimeRate)} detail="有计划日期的同 cohort" />
+              <Metric label="待处理 / 逾期" value={`${metrics.openCount} / ${metrics.overdueCount}`} detail="服务方当前动作队列" danger={metrics.overdueCount > 0} />
             </div>
           </div>
-          <MetricsStrip
-            rateLabel={formatClosedLoopRate(metrics.closedLoopRate)}
-            overdue={metrics.overdueCount}
-            open={metrics.openCount}
-            confirmed={metrics.confirmedCount}
-            period={metrics.periodNewCommitments}
-          />
-        </div>
+        </header>
 
-        <div className="flex-1 overflow-auto p-6 space-y-6">
-          <section className="rounded-xl border border-border bg-card p-4 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <CheckCircle2 className="w-4 h-4 text-primary" />
-              捕获客户承诺
+        <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 md:px-8 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <section className="space-y-4">
+            <div className="rounded-2xl border border-border bg-card p-5">
+              <div className="flex items-center gap-2 text-sm font-semibold"><Sparkles className="text-indigo-300" />1. 提取承诺草稿</div>
+              <p className="mt-1 text-xs text-muted-foreground">Web 粘贴，不声称已接入微信。演示剧本完全离线可用。</p>
+              <textarea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="粘贴客户聊天 / 需求对齐文本…" className="mt-4 min-h-40 w-full rounded-xl border border-border bg-muted/20 p-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/50" />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button onClick={() => void extract(false)} disabled={loading}>{loading ? "处理中…" : "提取承诺"}</Button>
+                <Button variant="outline" onClick={() => void extract(true)} disabled={loading}>载入演示对话</Button>
+              </div>
+              {summary && <p className="mt-3 text-xs text-muted-foreground">场景：{summary}</p>}
+              {error && <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
             </div>
-            {summary && (
-              <p className="text-xs text-muted-foreground">场景：{summary}</p>
-            )}
-            <textarea
-              value={transcript}
-              onChange={(e) => setTranscript(e.target.value)}
-              placeholder="粘贴客户微信/会议对齐文本……或点上方「使用客户对话剧本」"
-              className="w-full min-h-[120px] rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                onClick={extractFromTranscript}
-                disabled={isLoading}
-              >
-                {isLoading ? "提取中…" : "提取承诺"}
-              </Button>
-              <p className="text-xs text-muted-foreground self-center">
-                剧本路径不依赖外网；粘贴文本可走 LLM，失败自动 mock。
-              </p>
-            </div>
-            {error && (
-              <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                {error}
+
+            {commitments.length > 0 && (
+              <div className="rounded-2xl border border-border bg-card p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div><h2 className="text-sm font-semibold">2. 服务方审阅草稿</h2><p className="mt-1 text-xs text-muted-foreground">AI 缺失的日期与验收标准明确标为未知，由你补充。</p></div>
+                  <Button size="sm" onClick={() => void createDrafts()} disabled={loading || !commitments.some((item) => item.accepted)}>生成承诺单</Button>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {commitments.map((item) => (
+                    <div key={item.id} className="rounded-xl border border-border bg-muted/15 p-3">
+                      <div className="flex gap-3">
+                        <input aria-label={`选择 ${item.text}`} type="checkbox" checked={item.accepted} onChange={() => updateCommitment(item.id, { accepted: !item.accepted })} />
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <input aria-label="承诺标题" value={item.text} onChange={(event) => updateCommitment(item.id, { text: event.target.value })} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+                          <input aria-label="验收标准" value={item.acceptanceCriteria} onChange={(event) => updateCommitment(item.id, { acceptanceCriteria: event.target.value })} placeholder="验收标准：未知（可补充）" className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+                          <div className="grid grid-cols-2 gap-2">
+                            <input aria-label="计划日期" type="date" value={item.suggestedDeadline ?? ""} onChange={(event) => updateCommitment(item.id, { suggestedDeadline: event.target.value || undefined })} className="rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+                            <select aria-label="优先级" value={item.suggestedPriority ?? "中"} onChange={(event) => updateCommitment(item.id, { suggestedPriority: event.target.value as Priority })} className="rounded-lg border border-border bg-background px-3 py-2 text-sm"><option>高</option><option>中</option><option>低</option></select>
+                          </div>
+                          {item.sourceExcerpt && <p className="text-xs text-muted-foreground">原文：{item.sourceExcerpt}</p>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {risks.length > 0 && <div className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-100"><div className="mb-1 flex items-center gap-1 font-medium"><AlertTriangle />待澄清</div>{risks.map((risk) => <p key={risk}>· {risk}</p>)}</div>}
               </div>
             )}
           </section>
 
-          <CommitmentReview
-            commitments={commitments}
-            risks={risks}
-            onToggle={toggleCommitment}
-            onAccept={acceptCommitments}
-            disabled={isLoading}
-          />
-
-          <DeliveryBoard tasks={tasks} onStatusChange={moveTask} />
+          <section className="rounded-2xl border border-border bg-card p-5">
+            <div className="flex items-center justify-between"><div><h2 className="text-sm font-semibold">3. 双方交付队列</h2><p className="mt-1 text-xs text-muted-foreground">客户确认与验收只能从客户链接完成。</p></div><span className="text-xs text-muted-foreground">{slips.length} 张</span></div>
+            <div className="mt-4 space-y-3">
+              {slips.map((slip) => <SlipCard key={slip.id} slip={slip} copied={copiedId === slip.id} onChange={updateLocalSlip} onAction={providerAction} onCopy={copyClientLink} />)}
+              {slips.length === 0 && <div className="rounded-xl border border-dashed border-border py-16 text-center text-sm text-muted-foreground">先载入演示对话，生成第一张承诺单。</div>}
+            </div>
+          </section>
         </div>
       </main>
     </div>
+  );
+}
+
+function Metric({ label, value, detail, danger = false }: { label: string; value: string; detail: string; danger?: boolean }) {
+  return <div className={`rounded-2xl border p-4 ${danger ? "border-red-500/35 bg-red-500/10" : "border-white/10 bg-black/20"}`}><p className="text-xs text-muted-foreground">{label} · 候选</p><p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p><p className="mt-1 text-[10px] text-muted-foreground">{detail}</p></div>;
+}
+
+function SlipCard({ slip, copied, onChange, onAction, onCopy }: { slip: CommitmentSlip; copied: boolean; onChange: (id: string, patch: Partial<CommitmentSlip>) => void; onAction: (slip: CommitmentSlip, action: "update" | "send" | "deliver") => Promise<void>; onCopy: (slip: CommitmentSlip) => Promise<void> }) {
+  const editable = slip.status === "draft" || slip.status === "client_requested_changes";
+  const url = clientUrl(slip);
+  const clientNote = latestClientNote(slip);
+  return (
+    <article className={`rounded-xl border p-4 ${isOverdue(slip) ? "border-red-500/40" : "border-border"}`}>
+      <div className="flex items-start justify-between gap-3"><Badge variant="outline">{DELIVERY_STATUS_LABELS[slip.status]}</Badge><span className="text-xs text-muted-foreground">{slip.dueAt || "日期未知"}</span></div>
+      {editable ? <div className="mt-3 space-y-2"><input aria-label="承诺单标题" value={slip.title} onChange={(event) => onChange(slip.id, { title: event.target.value })} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium" /><input aria-label="承诺单验收标准" value={slip.acceptanceCriteria ?? ""} onChange={(event) => onChange(slip.id, { acceptanceCriteria: event.target.value })} placeholder="验收标准：未知" className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" /></div> : <div className="mt-3"><h3 className="font-medium">{slip.title}</h3><p className="mt-1 text-xs text-muted-foreground">验收标准：{slip.acceptanceCriteria || "未知"}</p></div>}
+      {clientNote && <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 p-2 text-xs text-amber-100">客户说明：{clientNote}</div>}
+      {url && <div className="mt-3 flex items-center gap-2 rounded-lg bg-muted/30 p-2"><code className="min-w-0 flex-1 truncate text-xs text-indigo-200">{url}</code><Button size="icon" variant="ghost" aria-label="复制客户链接" onClick={() => void onCopy(slip)}>{copied ? <Check /> : <Clipboard />}</Button><Button size="icon" variant="ghost" asChild><a href={url} target="_blank" aria-label="打开客户链接"><ExternalLink /></a></Button></div>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {editable && <><Button size="sm" variant="outline" onClick={() => void onAction(slip, "update")}>保存草稿</Button><Button size="sm" onClick={() => void onAction(slip, "send")}><Send />{slip.status === "draft" ? "发送给客户" : "更新并重发"}</Button></>}
+        {(slip.status === "client_confirmed" || slip.status === "client_rejected") && <Button size="sm" onClick={() => void onAction(slip, "deliver")}>标记已交付</Button>}
+        {slip.status === "pending_client_confirm" && <span className="self-center text-xs text-muted-foreground">等待客户确认，服务方不能代点。</span>}
+        {slip.status === "provider_delivered" && <span className="self-center text-xs text-muted-foreground">等待客户验收。</span>}
+        {slip.status === "client_accepted" && <span className="flex items-center gap-1 text-xs text-emerald-300"><Check />双方闭环</span>}
+      </div>
+    </article>
   );
 }
