@@ -33,16 +33,23 @@ export function extractJson(text: string): Record<string, unknown> {
   return JSON.parse(jsonStr);
 }
 
-export async function complete(prompt: string, systemPrompt?: string): Promise<string> {
+export async function complete(
+  prompt: string,
+  systemPrompt?: string,
+  options?: { timeout?: number; maxRetries?: number },
+): Promise<string> {
   const config = getLLMConfig();
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = options?.maxRetries ?? 3;
   const RETRY_DELAY_MS = 500;
 
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), config.timeout);
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      options?.timeout ?? config.timeout,
+    );
 
     try {
       const body: Record<string, unknown> = {
