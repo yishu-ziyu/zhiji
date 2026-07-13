@@ -2,6 +2,14 @@
 
 Shared language for this delivery cycle (2026-07-12 → 7/19).
 
+## Communication rules
+
+1. Speak in direct, ordinary Chinese. Do not use industry shorthand or invented labels.
+2. Never say “比赛第一刀”, “楔子”, “侧车” or “建账”.
+3. State the conclusion, then the evidence, then the consequence. Keep the causal link explicit.
+4. If a technical term is unavoidable, explain it in plain Chinese before using the code name.
+5. No slogans, filler, vague claims or a question without explaining why the decision matters.
+
 ## Domain terms
 
 | Term | Canonical meaning | Avoid saying |
@@ -17,7 +25,7 @@ Shared language for this delivery cycle (2026-07-12 → 7/19).
 ## Hard decisions
 
 1. Track = **efficiency only**. Ecommerce runtime code removed from the app (2026-07-13).
-2. Client-owned confirm / accept actions are the visible product wedge; cohort-safe metrics are candidates, not validated north stars.
+2. Current product hypothesis: when a customer changes an agreement, show what existing project and payment states would change, let the responsible people decide, then update the approved version. See `.ship/tasks/fc-opc-next-ibot-2026-07-11-12-48-01-agent-02-agent-48-ai-ag/product/02b-china-product-map.md`.
 3. Quality process = yishuship full + TDD/design drill.
 4. Submit 7/18, pitch 7/19 (typhoon reschedule).
 5. Multi-end: API core later; Web shell now.

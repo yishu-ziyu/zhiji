@@ -1,71 +1,60 @@
-# Dev Context - FC-OPC iBot 2026
+# Dev Context
 
-> Generated after Stories 0-7 implementation
-> Task: fc-opc-next-ibot-2026-07-11-12-48-01-agent-02-agent-48-ai-ag
+## Current Spec
 
-## TEST_CMD
+`.ship/tasks/fc-opc-next-ibot-2026-07-11-12-48-01-agent-02-agent-48-ai-ag/plan/customer-change-spec.md`
+
+## Test Command
 
 ```bash
-npx next build   # TypeScript + build validation
+npm run test:unit
+npm run test:e2e
+npm run lint
+npm run build
 ```
 
-## CODE_CONDUCT
+## Test Seams
 
-- No hardcoded secrets; LLM keys read from env vars
-- All API routes return proper HTTP status codes and error messages
-- Client components use `"use client"` directive
-- Shared components in `shared/` directory, imported via `@/` alias
+- Public domain functions in `shared/delivery/change.ts`: version checks, token expiry, replay protection, evidence position validation and all-or-nothing project update.
+- HTTP routes under `/api/efficiency/changes`: request validation and role separation.
+- User-visible pages: `/track/efficiency` and `/c/[token]` through Playwright.
 
-## Per-Story Patterns
+The user confirmed the full visible path on 2026-07-13.
 
-### Story 0: Project Scaffolding
-- Next.js 16 + React 19 + TypeScript 5
-- shadcn/ui with base-nova style
-- Dark theme via CSS variables in globals.css
-- No external font dependencies (Google Fonts blocked)
+## Code Conduct
 
-### Story 1: LLMAdapter
-- File: `shared/llm/adapter.ts`
-- Pattern: single `complete()` function, env-driven config
-- Error handling: AbortSignal timeout + friendly error messages
-- Provider: Anthropic Messages API (`/v1/messages`)
+- Direct ordinary Chinese in all user-visible text; no industry shorthand or invented labels.
+- Reuse the current Next.js route, in-memory repository, client-page and deterministic-fixture patterns.
+- Do not add dependencies.
+- Validate all request bodies and evidence positions on the server.
+- Explicit fixture only; never silently replace a failed model call with fixture data.
+- Keep unrelated dirty-tree changes untouched.
 
-### Stories 2-6: Frontend + API
-- Route handlers: `app/api/<track>/<feature>/route.ts`
-- Pattern: validate input → call LLMAdapter → parse JSON → return Response.json
-- JSON parsing: `lastIndexOf("{")` to handle LLM thinking blocks
-- Frontend: Client components with `"use client"`, shadcn/ui components
+## Pattern References
 
-### Prompt Template Pattern
-- File: `shared/llm/prompts/<feature>.ts`
-- Export: `SYSTEM` constant + `build<Feature>Prompt()` function
-- System prompt defines output format and constraints
-- End with "只返回 JSON，不要额外文字"
+- `shared/delivery/repository.ts`
+  - Why analogous: current in-memory store, immutable copies and guarded state changes.
+  - Mirror: global development store, `structuredClone`, synchronous guarded updates.
+  - Deviation: new link is bound to project and proposal versions and becomes single-use.
+- `app/api/efficiency/slips/route.ts`
+  - Why analogous: current provider API validation and error responses.
+  - Mirror: validate at the route, keep domain changes in the shared module.
+  - Deviation: new API requires a project-scoped provider secret.
+- `app/c/[token]/ClientActions.tsx`
+  - Why analogous: mobile client action page and request-change validation.
+  - Mirror: responsive card, polling and accessible error text.
+  - Deviation: compare old and new versions; explicitly state that the guest link does not verify identity.
+- `tests/e2e/app.spec.ts`
+  - Why analogous: second browser context, mobile viewport and role-specific full flow.
+  - Mirror: assert visible business outcomes through pages and public HTTP routes.
 
-## Environment Variables
+No root `DESIGN.md` exists. Reuse `app/globals.css`, existing cards, buttons and spacing.
 
-```
-LLM_BASE_URL=http://127.0.0.1:15721
-LLM_API_KEY=<from ANTHROPIC_AUTH_TOKEN>
-LLM_MODEL=step-3.7-flash
-```
+## Story And Dependency
 
-## Verified Routes
+One sequential story: current project → analyze customer message → service provider edits → customer acts → project and payment state update. All touched UI, API and domain files share this path, so parallel implementation would create file conflicts.
 
-| Route | Method | Status |
-|-------|--------|--------|
-| / | GET | Static |
-| /track/ecommerce | GET | Static |
-| /track/efficiency | GET | Static |
-| /api/llm/health | GET | Dynamic |
-| /api/llm/completions | POST | Dynamic |
-| /api/ecommerce/analyze | POST | Dynamic |
-| /api/ecommerce/script | POST | Dynamic |
-| /api/efficiency/minutes | POST | Dynamic |
+## Matt Upstream Read
 
-## Known Limitations
-
-1. Script API returns raw JSON (not structured) due to LLM thinking block
-2. Only 1 LLM provider active (Anthropic proxy); StepFun quota exhausted
-3. No database; all state in-memory
-4. No multi-turn context; each request is stateless
+- `/Users/mahaoxuan/Developer/yishuship/vendor/mattpocock-skills/skills/engineering/implement/SKILL.md`
+- `/Users/mahaoxuan/Developer/yishuship/vendor/mattpocock-skills/skills/engineering/tdd/SKILL.md`
