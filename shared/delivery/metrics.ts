@@ -47,7 +47,7 @@ export function computeMetrics(
     )?.at;
   const eligibleCohort = createdCohort.filter((slip) => {
     const age = now.getTime() - new Date(slip.createdAt).getTime();
-    return age >= confirmWindowDays * DAY_MS || Boolean(confirmedAt(slip));
+    return age >= confirmWindowDays * DAY_MS;
   });
   const allConfirmHours = createdCohort.flatMap((slip) => {
     const at = confirmedAt(slip);

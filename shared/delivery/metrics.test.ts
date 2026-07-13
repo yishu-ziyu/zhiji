@@ -34,11 +34,12 @@ describe("computeMetrics", () => {
       slip({
         id: "confirmed-in-window",
         status: "client_confirmed",
+        createdAt: "2026-07-01T12:00:00Z",
         history: [
           {
             actor: "client",
             action: "confirm",
-            at: "2026-07-12T12:00:00Z",
+            at: "2026-07-03T12:00:00Z",
           },
         ],
       }),
