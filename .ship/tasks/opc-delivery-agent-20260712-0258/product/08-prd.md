@@ -1,5 +1,7 @@
 # PRD — OPC Delivery Ops Agent
 
+> **2026-07-13 override:** `../plan/locked-override.md` is the locked product decision. The old four-state model and `Confirmed / 本期新增` metric below are historical and must not be used for acceptance.
+
 ## Product Requirements
 
 ### P0
