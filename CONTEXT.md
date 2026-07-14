@@ -40,8 +40,9 @@ Shared language for this delivery cycle (freeze 2026-07-14 → submit ~7/18).
 4. 不主打个人微信私聊深度对接。
 5. Agent = 理解/拆解候选；系统 = 保存事实；人 = 推进状态。
 6. Visual: DESIGN.md（真黑 + 蜡笔红 + 暖纸 + 手写/mono）。
-7. Quality: yishuship lite freeze + unit tests；E2E 金路径为下一刀。
+7. Quality: yishuship lite freeze + unit tests；E2E 金路径覆盖知识主流程。
 8. Submit ~7/18，pitch ~7/19。
+9. **2026-07-14 已从运行时删除**客户变更整线与电商入口；仓库只保留知识闭环可执行代码。
 
 ## Active task
 

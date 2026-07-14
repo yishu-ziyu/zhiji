@@ -232,7 +232,7 @@ export default function KnowledgePage() {
 
   return (
     <div className="flex min-h-screen bg-background">
-      <Sidebar efficiencyMode="board" />
+      <Sidebar />
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto px-4 md:px-6 py-6 md:py-8 space-y-6">
           <KnowledgeSearch
