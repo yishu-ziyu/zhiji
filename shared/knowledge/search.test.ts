@@ -7,6 +7,7 @@ describe("searchKnowledge", () => {
   let tmpDir: string;
   let previousDataDir: string | undefined;
   let addCard: typeof import("./repository").addCard;
+  let addProject: typeof import("./repository").addProject;
   let resetKnowledgeStoreForTests: typeof import("./repository").resetKnowledgeStoreForTests;
   let searchKnowledge: typeof import("./search").searchKnowledge;
 
@@ -17,6 +18,7 @@ describe("searchKnowledge", () => {
     const repo = await import("./repository");
     const search = await import("./search");
     addCard = repo.addCard;
+    addProject = repo.addProject;
     resetKnowledgeStoreForTests = repo.resetKnowledgeStoreForTests;
     searchKnowledge = search.searchKnowledge;
     resetKnowledgeStoreForTests();
@@ -52,5 +54,20 @@ describe("searchKnowledge", () => {
   it("returns soft fallback when no token match", () => {
     const hits = searchKnowledge("完全不存在的火星词汇xyz123");
     expect(hits.length).toBeGreaterThan(0);
+  });
+
+  it("keeps search and fallback inside the selected project", () => {
+    const other = addProject({ name: "搜索隔离" });
+    addCard({
+      content: "另一个项目的唯一词 北斗七号",
+      projectId: other.id,
+    });
+
+    const matched = searchKnowledge("北斗七号", { projectId: other.id });
+    const fallback = searchKnowledge("完全不存在", { projectId: other.id });
+    expect(matched.length).toBeGreaterThan(0);
+    expect(matched.every((hit) => hit.projectId === other.id)).toBe(true);
+    expect(fallback.length).toBeGreaterThan(0);
+    expect(fallback.every((hit) => hit.projectId === other.id)).toBe(true);
   });
 });
