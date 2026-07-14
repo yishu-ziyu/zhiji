@@ -31,7 +31,7 @@ export function KnowledgeSearch({
   onQueryChange,
   onSourceFilterChange,
   onSearch,
-  exampleQueries = ["检索 来源", "协作 状态", "会议", "主路径"],
+  exampleQueries = ["检索 来源", "协作 状态", "会议", "验收"],
 }: Props) {
   return (
     <div className="space-y-5 animate-rise">

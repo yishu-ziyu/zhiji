@@ -9,23 +9,25 @@ export default function HomePage() {
           <div className="font-hand text-[28px] leading-none text-foreground">
             FC-OPC
           </div>
-          <p className="mono-label mt-1">Knowledge Loop</p>
+          <p className="mono-label mt-1">Knowledge work</p>
         </div>
       </header>
 
       <main className="flex-1">
         <section className="relative overflow-hidden">
           <div className="relative max-w-6xl mx-auto px-6 pt-16 pb-16 text-center">
-            <p className="mono-label mb-4">Efficiency Track · Knowledge Loop</p>
+            <p className="mono-label mb-4">
+              Efficiency · Search · Notes · Tasks
+            </p>
             <h1 className="font-hand text-[44px] md:text-[56px] text-foreground mb-5 leading-[1.05]">
               找得到，收成卡，
               <br />
-              <span className="text-primary">变成可勾选的下一步</span>
+              <span className="text-primary">下一步能勾掉</span>
             </h1>
             <p className="font-serif-cn text-lg text-muted-foreground max-w-2xl mx-auto mb-8 leading-relaxed">
-              资料检索 · 知识管理 · 协作工作流。
+              资料检索、知识卡片、待办行动。
               <span className="text-foreground font-medium">
-                不卖编辑器，卖闭环。
+                不卖编辑器。
               </span>
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 mb-14">
@@ -33,7 +35,7 @@ export default function HomePage() {
                 href="/track/knowledge"
                 className="inline-flex items-center gap-2 rounded-[60px] bg-primary px-6 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors"
               >
-                打开知识库工作台
+                打开知识工作台
                 <ArrowRight className="w-4 h-4" />
               </Link>
             </div>
@@ -45,13 +47,13 @@ export default function HomePage() {
                     <div className="w-12 h-12 rounded-[12px] bg-[#1a1a1a] flex items-center justify-center">
                       <BookOpen className="w-6 h-6 text-paper" />
                     </div>
-                    <span className="mono-label text-[#1a1a1a]/70">Only path</span>
+                    <span className="mono-label text-[#1a1a1a]/70">Product</span>
                   </div>
                   <h2 className="font-hand text-[28px] leading-none text-[#1a1a1a] mb-2">
-                    知识闭环
+                    知识工作台
                   </h2>
                   <p className="font-serif-cn text-sm text-[#1a1a1a]/80 leading-relaxed">
-                    搜得到带来源的卡片，收进库，把行动推进到完成。面向知识工作者。
+                    搜到带来源的卡片，存进库，把待办推到完成。面向知识工作者。
                   </p>
                 </div>
               </Link>
@@ -61,11 +63,11 @@ export default function HomePage() {
 
         <section className="border-t border-border">
           <div className="max-w-6xl mx-auto px-6 py-8 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 mono-label">
-            <span>Search · Card · Action</span>
+            <span>Search · Card · Task</span>
             <span className="hidden sm:inline text-border">|</span>
-            <span>No delivery track</span>
+            <span>No CRM</span>
             <span className="hidden sm:inline text-border">|</span>
-            <span>No ecommerce track</span>
+            <span>No shop bot</span>
           </div>
         </section>
       </main>

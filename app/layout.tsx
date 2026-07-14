@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FC-OPC · 知识闭环",
-  description: "知识工作者效率 Agent · 检索 · 沉淀 · 行动",
+  title: "FC-OPC · 知识工作台",
+  description: "检索、知识卡片、待办行动",
 };
 
 export default function RootLayout({
