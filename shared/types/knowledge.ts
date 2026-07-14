@@ -1,4 +1,4 @@
-/** Knowledge-worker loop: retrieve → store → act → track status. */
+/** Knowledge workbench: evidence cards + work items + timeline events. */
 
 export type KnowledgeSource = "meeting" | "email" | "chat" | "doc" | "manual";
 
@@ -13,18 +13,61 @@ export type KnowledgeCard = {
   title?: string;
 };
 
-export type ActionStatus = "todo" | "doing" | "confirmed" | "done";
+/** Global status dictionary (shared language). */
+export type ActionStatus =
+  | "todo"
+  | "doing"
+  | "blocked"
+  | "confirmed"
+  | "done"
+  | "cancelled";
 
+/**
+ * Work item (primary object for situation visibility).
+ * Kept as ActionItem name for existing API/MCP compatibility.
+ */
 export type ActionItem = {
   id: string;
+  /** Short title; defaults from description */
+  title: string;
   description: string;
   assignee: string;
   deadline: string;
   status: ActionStatus;
   verificationCriteria: string;
-  /** Optional link back to a knowledge card */
+  /** Primary linked card (legacy single link) */
   cardId?: string;
+  /** Linked evidence card IDs */
+  evidenceIds: string[];
+  /** One-sentence next action; required when not done/cancelled */
+  nextStep: string;
+  blockedReason?: string;
+  createdAt: string;
   updatedAt: string;
+};
+
+/** @deprecated alias — prefer ActionItem as work item */
+export type WorkItem = ActionItem;
+
+export type WorkEventType =
+  | "comment"
+  | "decision"
+  | "status_change"
+  | "assign"
+  | "next_step_change"
+  | "block"
+  | "unblock"
+  | "result"
+  | "evidence_link";
+
+export type WorkEvent = {
+  id: string;
+  workItemId: string;
+  type: WorkEventType;
+  actor: string;
+  body: string;
+  meta?: Record<string, unknown>;
+  createdAt: string;
 };
 
 export type KnowledgeSearchFilters = {
@@ -67,9 +110,41 @@ export type ActionSuggestion = {
 export const ACTION_STATUSES: ActionStatus[] = [
   "todo",
   "doing",
+  "blocked",
   "confirmed",
   "done",
+  "cancelled",
 ];
+
+export const OPEN_STATUSES: ActionStatus[] = [
+  "todo",
+  "doing",
+  "blocked",
+  "confirmed",
+];
+
+export const TERMINAL_STATUSES: ActionStatus[] = ["done", "cancelled"];
+
+export const WORK_EVENT_TYPES: WorkEventType[] = [
+  "comment",
+  "decision",
+  "status_change",
+  "assign",
+  "next_step_change",
+  "block",
+  "unblock",
+  "result",
+  "evidence_link",
+];
+
+export const STATUS_LABELS: Record<ActionStatus, string> = {
+  todo: "待开始",
+  doing: "进行中",
+  blocked: "阻塞",
+  confirmed: "待确认",
+  done: "完成",
+  cancelled: "取消",
+};
 
 export const KNOWLEDGE_SOURCES: KnowledgeSource[] = [
   "meeting",
@@ -78,3 +153,5 @@ export const KNOWLEDGE_SOURCES: KnowledgeSource[] = [
   "doc",
   "manual",
 ];
+
+export const DEFAULT_ACTOR = "自己";

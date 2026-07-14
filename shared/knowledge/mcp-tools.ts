@@ -113,16 +113,17 @@ function offlineDissect(goal: string): ActionItem[] {
           "执行并更新协作状态",
         ];
 
-  return steps.map((description, index) =>
+  return steps.map((description) =>
     addAction({
       description: description.startsWith("动词")
         ? description
         : description.match(/^(澄清|收集|列出|执行|整理|检索|确认)/)
           ? description
           : `完成：${description}`,
-      assignee: "待定",
+      assignee: "自己",
       deadline: "待确认",
-      status: index === 0 ? "todo" : "todo",
+      status: "todo",
+      nextStep: `推进：${description.slice(0, 40)}`,
       verificationCriteria: `子任务「${description.slice(0, 40)}」可核对完成`,
     }),
   );
