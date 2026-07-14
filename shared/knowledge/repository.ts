@@ -588,6 +588,35 @@ function appendEvent(
   return event;
 }
 
+function assertCardRefsBelongToProject(
+  projectId: string,
+  cardIds: Array<string | undefined>,
+): void {
+  const cards = workingCards();
+  for (const cardId of new Set(cardIds.filter((id): id is string => Boolean(id)))) {
+    const card = cards.get(cardId);
+    if (!card) throw new Error("依据卡不存在");
+    if (card.projectId !== projectId) {
+      throw new Error("依据卡和工作项必须属于同一项目");
+    }
+  }
+}
+
+function eventEvidenceIds(meta?: Record<string, unknown>): string[] {
+  if (!meta) return [];
+  const review =
+    meta.review && typeof meta.review === "object"
+      ? (meta.review as Record<string, unknown>)
+      : undefined;
+  return [
+    ...(typeof meta.cardId === "string" ? [meta.cardId] : []),
+    ...(Array.isArray(meta.evidenceIds) ? meta.evidenceIds.map(String) : []),
+    ...(Array.isArray(review?.evidenceIds)
+      ? review.evidenceIds.map(String)
+      : []),
+  ];
+}
+
 export function listProjects(): Project[] {
   return [...workingProjects().values()]
     .map(copyProject)
@@ -647,9 +676,13 @@ export function addProjectCheckpoint(
 export function getLatestProjectCheckpoint(
   projectId: string,
 ): ProjectCheckpoint | null {
-  const checkpoint = [...loadProjectCheckpoints().values()]
-    .filter((entry) => entry.projectId === projectId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  let checkpoint: ProjectCheckpoint | undefined;
+  for (const entry of loadProjectCheckpoints().values()) {
+    if (entry.projectId !== projectId) continue;
+    if (!checkpoint || entry.createdAt >= checkpoint.createdAt) {
+      checkpoint = entry;
+    }
+  }
   return checkpoint ? copyProjectCheckpoint(checkpoint) : null;
 }
 
@@ -793,6 +826,10 @@ export function addAction(input: NewActionInput): ActionItem {
   if (!description) throw new Error("工作项描述不能为空");
   const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
   if (!getProject(projectId)) throw new Error("项目不存在");
+  assertCardRefsBelongToProject(projectId, [
+    input.cardId,
+    ...(input.evidenceIds ?? []),
+  ]);
 
   const now = new Date().toISOString();
   const item = normalizeAction({
@@ -856,6 +893,9 @@ export function patchWorkItem(
   const events = workingEvents();
   const item = actions.get(id);
   if (!item) throw new Error("工作项不存在");
+  if (patch.cardId) {
+    assertCardRefsBelongToProject(item.projectId, [patch.cardId]);
+  }
 
   const next: ActionItem = {
     ...item,
@@ -956,7 +996,9 @@ export function addWorkEvent(
   input: NewEventInput,
 ): WorkEvent {
   const actions = workingActions();
-  if (!actions.has(workItemId)) throw new Error("工作项不存在");
+  const action = actions.get(workItemId);
+  if (!action) throw new Error("工作项不存在");
+  assertCardRefsBelongToProject(action.projectId, eventEvidenceIds(input.meta));
 
   if (
     input.type === "block" &&
