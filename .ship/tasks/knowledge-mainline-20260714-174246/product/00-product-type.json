@@ -1,0 +1,37 @@
+{
+  "product_type": "C",
+  "primary_user": "solo knowledge worker (founder himself first)",
+  "buyer_or_user": "same person; no separate B-side buyer for hackathon",
+  "core_scene": "user has scattered notes/meeting text/open questions; needs source-backed retrieval, durable cards, and actionable next steps with status",
+  "secondary_users": [
+    "OPC / micro-team knowledge workers in the same efficiency track"
+  ],
+  "workflow_weight": {
+    "strategy": "required",
+    "research": "required",
+    "data_model": "required",
+    "permission": "N/A",
+    "report": "N/A",
+    "analytics": "optional"
+  },
+  "skip_rules": [
+    {
+      "checkpoint": "customer_change_main_demo",
+      "reason": "User froze mainline to knowledge loop on 2026-07-14; customer-change remains legacy code only"
+    },
+    {
+      "checkpoint": "wechat_private_chat_sync",
+      "reason": "No clean official API; not the entry for this mainline"
+    },
+    {
+      "checkpoint": "permission_model",
+      "reason": "Single-user demo; multi-tenant later"
+    },
+    {
+      "checkpoint": "growth_loop",
+      "reason": "Post-hackathon"
+    }
+  ],
+  "frozen_at": "2026-07-14",
+  "task_id": "knowledge-mainline-20260714-174246"
+}

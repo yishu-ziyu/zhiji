@@ -1,0 +1,8 @@
+task_id: knowledge-mainline-20260714-174246
+active: true
+current_phase: handoff
+status: running
+workflow: product-lifecycle-v2
+mainline: knowledge
+updated_at: "2026-07-14T09:42:00Z"
+notes: "User froze mainline to knowledge; customer-change demoted to legacy"
