@@ -67,10 +67,13 @@
 | **状态** | 字典里的枚举 | 每人自定义一套词 |
 | **知识工作台** | 本产品页面总称 `/track/knowledge` | 知识经、知识闭环（产品名） |
 | **知识足迹** | 依据卡在库图上的触达点亮（检索/挂接等） | mindwalk 代码地图；无校验的特效 |
+| **关系 / 边** | 两张依据之间带类型、带来源句的显式连接 | 无句 id 互链；把「用过」当成「有关」 |
+| **来源句** | 边上可指回的一句依据 | 空相关、不可验收的感觉 |
 
 完整字段与验收见：  
 `docs/SPEC-work-item-shared-situation.md`（工作项）  
-`docs/SPEC-knowledge-footprint.md`（知识足迹；先规格后实现）
+`docs/SPEC-knowledge-footprint.md`（知识足迹）  
+`docs/SPEC-knowledge-relations.md`（知识关系；先规格后实现）
 
 ### 3.3 工程产物位置
 
