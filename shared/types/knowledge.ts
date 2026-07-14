@@ -15,6 +15,116 @@ export type Project = {
   updatedAt: string;
 };
 
+export type CanvasNodeKind = "project" | "card" | "work_item" | "event";
+
+export type CanvasNodeRef = {
+  kind: CanvasNodeKind;
+  id: string;
+};
+
+export type ProjectCheckpoint = {
+  id: string;
+  projectId: string;
+  goal: string;
+  completed: string[];
+  unresolved: string[];
+  nextStep: string;
+  confirmedBy: string;
+  createdAt: string;
+};
+
+export type PlanAssessment = {
+  status: "continue" | "adjust" | "insufficient";
+  reason: string;
+  evidence: CanvasNodeRef[];
+};
+
+export type AttentionReasonCode =
+  | "blocked"
+  | "awaiting_confirmation"
+  | "overdue"
+  | "recent_change"
+  | "agent_result"
+  | "stale";
+
+export type AttentionItem = {
+  target: CanvasNodeRef;
+  reasonCode: AttentionReasonCode;
+  reason: string;
+  evidenceEventIds: string[];
+  score: number;
+};
+
+export type CanvasNode = {
+  ref: CanvasNodeRef;
+  label: string;
+  subtitle?: string;
+  state: "neutral" | "active" | "changed" | "confirmed" | "blocked";
+  depth: 0 | 1;
+  evidence: CanvasNodeRef[];
+};
+
+export type CanvasEdge = {
+  id: string;
+  source: CanvasNodeRef;
+  target: CanvasNodeRef;
+  label: string;
+  evidenceSentence?: string;
+  status: "confirmed" | "suggested";
+};
+
+export type CanvasAction =
+  | "open_evidence"
+  | "update_next_step"
+  | "confirm_checkpoint"
+  | "run_agent";
+
+export type CanvasInspector = {
+  title: string;
+  summary: string;
+  whyImportant: string;
+  evidence: CanvasNodeRef[];
+  impacts: CanvasNodeRef[];
+  availableActions: CanvasAction[];
+};
+
+export type CanvasTimelineEvent = {
+  id: string;
+  ref: CanvasNodeRef;
+  workItemId: string;
+  type: WorkEventType;
+  actor: string;
+  body: string;
+  createdAt: string;
+  phase: "now" | "history";
+  review?: {
+    judgment: string;
+    gaps: string[];
+    nextStep: string;
+    evidenceIds: string[];
+    mode: "model" | "deterministic";
+  };
+};
+
+export type CanvasTimeline = {
+  now: CanvasTimelineEvent[];
+  history: CanvasTimelineEvent[];
+};
+
+export type ProjectCanvasSnapshot = {
+  project: Project;
+  focus: CanvasNodeRef;
+  checkpoint: ProjectCheckpoint | null;
+  checkpointSource: "confirmed" | "inferred";
+  changesSinceCheckpoint: CanvasTimelineEvent[];
+  planAssessment: PlanAssessment;
+  attention: AttentionItem[];
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  inspector: CanvasInspector;
+  timeline: CanvasTimeline;
+};
+
 export type KnowledgeCard = {
   id: string;
   projectId: string;
