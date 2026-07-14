@@ -44,17 +44,17 @@ export default function HomePage() {
               FC-OPC Next iBot 2026 · 效率赛道
             </div>
             <h2 className="text-4xl md:text-5xl font-bold text-foreground mb-5 leading-[1.15] tracking-tight">
-              客户改了要求，
+              找得到，收成卡，
               <br />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-violet-300 to-cyan-300">
-                哪些约定要跟着改？
+                变成可勾选的下一步
               </span>
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8 leading-relaxed">
-              系统对照已有项目，指出受影响的工作、日期和价格；
+              给知识工作者：检索带来源，卡片可复用，行动有状态。
               <span className="text-foreground font-medium">
                 {" "}
-                服务方决定新方案，客户确认后再更新。{" "}
+                不卖编辑器，卖闭环。{" "}
               </span>
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 mb-14">
