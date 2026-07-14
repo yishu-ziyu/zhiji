@@ -11,6 +11,7 @@ import {
 const cards: KnowledgeCard[] = [
   {
     id: "a",
+    projectId: "project-fc-opc-ibot",
     title: "卡A标题够长",
     content: "正文A。依据说明可复用。",
     source: "doc",
@@ -20,6 +21,7 @@ const cards: KnowledgeCard[] = [
   },
   {
     id: "b",
+    projectId: "project-fc-opc-ibot",
     title: "卡B",
     content: "正文B 提到 卡A标题够长。",
     source: "meeting",
@@ -29,6 +31,7 @@ const cards: KnowledgeCard[] = [
   },
   {
     id: "c",
+    projectId: "project-fc-opc-ibot",
     title: "卡C",
     content: "无关。",
     source: "chat",
