@@ -6,6 +6,8 @@
 **工作项 / 时间线规格：** 见 `docs/SPEC-work-item-shared-situation.md`。  
 **知识足迹（检索点亮）规格：** 见 `docs/SPEC-knowledge-footprint.md`（P0 已实现）。  
 **知识关系（卡↔卡显式边）规格：** 见 `docs/SPEC-knowledge-relations.md`（P0 已实现）。
+**三层效率对齐（内容→结构→任务→可审；SignalGraph / mindwalk / Multica / Canvasight 对话全文）：** 见 `docs/research/2026-07-14-content-structure-task-audit-alignment.md`（Grok/Codex 共用）。
+**四个项目源码审计与项目恢复交互：** 见 `docs/research/2026-07-15-source-informed-resume-interaction-design.md`（设计研究，尚未进入产品代码）。
 
 ## 怎么说话
 
