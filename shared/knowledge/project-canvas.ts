@@ -63,12 +63,25 @@ export function rankAttention(
     let reasonCode: AttentionItem["reasonCode"] | null = null;
     let reason = "";
     let score = 0;
+    let trigger: WorkEvent | null = null;
 
     if (item.status === "blocked") {
+      trigger = itemEvents
+        .filter(
+          (event) =>
+            event.type === "block" || event.meta?.toStatus === "blocked",
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
       reasonCode = "blocked";
-      reason = `“${item.title}”已阻塞：${item.blockedReason || latest.body}`;
+      reason = `“${item.title}”已阻塞：${item.blockedReason || trigger?.body || "原因待确认"}`;
       score = 600;
     } else if (item.status === "confirmed") {
+      trigger = itemEvents
+        .filter(
+          (event) =>
+            event.type === "result" || event.meta?.toStatus === "confirmed",
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
       reasonCode = "awaiting_confirmation";
       reason = `“${item.title}”已有结果，正在等你确认`;
       score = 500;
@@ -86,6 +99,7 @@ export function rankAttention(
         )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
       if (recent && nowMs - Date.parse(recent.createdAt) <= 2 * DAY) {
+        trigger = recent;
         reasonCode = recent.type === "result" ? "agent_result" : "recent_change";
         reason = `“${item.title}”刚发生变化：${recent.body}`;
         score = recent.type === "result" ? 320 : 350;
@@ -104,8 +118,10 @@ export function rankAttention(
         target: { kind: "work_item", id: item.id },
         reasonCode,
         reason,
-        evidenceEventIds: [latest.id],
-        score: score + Math.max(0, Date.parse(latest.createdAt) / 1e13),
+        evidenceEventIds: trigger ? [trigger.id] : [],
+        score:
+          score +
+          Math.max(0, Date.parse(trigger?.createdAt ?? latest.createdAt) / 1e13),
       });
     }
   }
@@ -213,16 +229,22 @@ export function buildCanvasTimeline(
   events: WorkEvent[],
   workItems: ActionItem[],
 ): CanvasTimeline {
-  const statusById = new Map(workItems.map((item) => [item.id, item.status]));
+  const currentEventIds = new Set<string>();
+  for (const item of workItems) {
+    if (!["doing", "blocked", "confirmed"].includes(item.status)) continue;
+    const latestSignal = events
+      .filter(
+        (event) =>
+          event.workItemId === item.id && event.type !== "comment",
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (latestSignal) currentEventIds.add(latestSignal.id);
+  }
   const projected = events
     .slice()
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map<CanvasTimelineEvent>((event) => {
-      const status = statusById.get(event.workItemId);
-      const phase =
-        status === "doing" || status === "blocked" || status === "confirmed"
-          ? "now"
-          : "history";
+      const phase = currentEventIds.has(event.id) ? "now" : "history";
       return {
         id: event.id,
         ref: { kind: "event", id: event.id },
@@ -409,8 +431,14 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
           [{ kind: "card", id: card.id }],
         ),
       );
+      const source = relation.directed
+        ? ({ kind: "card", id: relation.fromCardId } as const)
+        : input.focus;
+      const relationTarget = relation.directed
+        ? ({ kind: "card", id: relation.toCardId } as const)
+        : target;
       edges.push(
-        makeEdge(input.focus, target, RELATION_TYPE_LABELS[relation.relationType], {
+        makeEdge(source, relationTarget, RELATION_TYPE_LABELS[relation.relationType], {
           evidenceSentence: relation.evidenceSentence,
           status:
             relation.status === "suggested" ? "suggested" : "confirmed",
@@ -423,6 +451,31 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
       const target = { kind: "work_item", id: item.id } as const;
       add(makeNode(target, item.title, STATUS_LABELS[item.status], 1, itemState(item)));
       edges.push(makeEdge(input.focus, target, "被工作项使用"));
+    }
+    const relatedWorkIds = new Set(
+      input.workItems
+        .filter((item) => item.evidenceIds.includes(card.id))
+        .map((item) => item.id),
+    );
+    const relatedEvents = input.events
+      .filter(
+        (event) =>
+          relatedWorkIds.has(event.workItemId) && event.type !== "comment",
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 2);
+    for (const event of relatedEvents) {
+      const target = { kind: "event", id: event.id } as const;
+      add(
+        makeNode(
+          target,
+          event.body || event.type,
+          event.actor,
+          1,
+          event.type === "block" ? "blocked" : "changed",
+        ),
+      );
+      edges.push(makeEdge(input.focus, target, "相关记录"));
     }
   }
 
@@ -443,12 +496,45 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
       const target = { kind: "work_item", id: item.id } as const;
       add(makeNode(target, item.title, STATUS_LABELS[item.status], 1, itemState(item)));
       edges.push(makeEdge(input.focus, target, "属于"));
-      for (const cardId of item.evidenceIds.slice(0, 3)) {
+      const review = event.meta?.review as
+        | { evidenceIds?: unknown }
+        | undefined;
+      const explicitCardIds = [
+        ...(typeof event.meta?.cardId === "string" ? [event.meta.cardId] : []),
+        ...(Array.isArray(event.meta?.evidenceIds)
+          ? event.meta.evidenceIds.map(String)
+          : []),
+        ...(Array.isArray(review?.evidenceIds)
+          ? review.evidenceIds.map(String)
+          : []),
+      ];
+      for (const cardId of [...new Set(explicitCardIds)].slice(0, 3)) {
         const card = cards.get(cardId);
         if (!card) continue;
         const cardRef = { kind: "card", id: card.id } as const;
         add(makeNode(cardRef, card.title || card.content.slice(0, 24), card.source, 1));
         edges.push(makeEdge(input.focus, cardRef, "引用依据"));
+      }
+      const critical = input.events
+        .filter(
+          (entry) =>
+            entry.workItemId === event.workItemId && entry.type !== "comment",
+        )
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const index = critical.findIndex((entry) => entry.id === event.id);
+      for (const adjacent of [critical[index - 1], critical[index + 1]]) {
+        if (!adjacent) continue;
+        const adjacentRef = { kind: "event", id: adjacent.id } as const;
+        add(
+          makeNode(
+            adjacentRef,
+            adjacent.body || adjacent.type,
+            adjacent.actor,
+            1,
+            adjacent.type === "block" ? "blocked" : "changed",
+          ),
+        );
+        edges.push(makeEdge(input.focus, adjacentRef, "相邻记录"));
       }
     }
   }
@@ -456,7 +542,10 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
   return { nodes: [...nodes.values()], edges };
 }
 
-function buildInspector(input: ProjectCanvasInput): CanvasInspector {
+function buildInspector(
+  input: ProjectCanvasInput,
+  attention: AttentionItem[],
+): CanvasInspector {
   if (input.focus.kind === "project") {
     const checkpoint = input.checkpoint;
     return {
@@ -468,10 +557,7 @@ function buildInspector(input: ProjectCanvasInput): CanvasInspector {
         ? `原下一步：${checkpoint.nextStep}`
         : "先确认当前目标，系统才能在下次准确说明变化。",
       evidence: [],
-      impacts: input.workItems.slice(0, 3).map((item) => ({
-        kind: "work_item",
-        id: item.id,
-      })),
+      impacts: attention.map((item) => item.target),
       availableActions: ["confirm_checkpoint"],
     };
   }
@@ -544,7 +630,7 @@ export function buildProjectCanvasSnapshot(
     attention,
     nodes: graph.nodes,
     edges: graph.edges,
-    inspector: buildInspector(input),
+    inspector: buildInspector(input, attention),
     timeline,
   };
 }

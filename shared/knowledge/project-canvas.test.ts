@@ -142,7 +142,8 @@ describe("project canvas domain", () => {
       "overdue",
     ]);
     expect(result).toHaveLength(3);
-    expect(result.every((item) => item.evidenceEventIds.length > 0)).toBe(true);
+    expect(result[0].evidenceEventIds).toEqual(["event-block"]);
+    expect(result[1].evidenceEventIds).toEqual(["event-confirmed"]);
   });
 
   it("marks the plan for adjustment when a blocking event exists", () => {
@@ -163,6 +164,111 @@ describe("project canvas domain", () => {
     expect(timeline.now.map((event) => event.id)).toContain("event-block");
     expect(timeline.history.map((event) => event.id)).toContain(
       "event-result-old",
+    );
+  });
+
+  it("keeps only the latest active signal in now and moves older results to history", () => {
+    const confirmedEvents: WorkEvent[] = [
+      {
+        id: "old-result",
+        workItemId: "confirmed",
+        type: "result",
+        actor: "agent:project-reviewer",
+        body: "较早结果",
+        createdAt: "2026-07-15T08:00:00.000Z",
+      },
+      {
+        id: "latest-confirmed",
+        workItemId: "confirmed",
+        type: "status_change",
+        actor: "agent:project-reviewer",
+        body: "等待确认",
+        meta: { toStatus: "confirmed" },
+        createdAt: "2026-07-15T09:00:00.000Z",
+      },
+    ];
+    const timeline = buildCanvasTimeline(confirmedEvents, workItems);
+    expect(timeline.now.map((event) => event.id)).toEqual([
+      "latest-confirmed",
+    ]);
+    expect(timeline.history.map((event) => event.id)).toContain("old-result");
+  });
+
+  it("preserves directed card relation meaning when focusing its target", () => {
+    const otherCard: KnowledgeCard = {
+      ...cards[0],
+      id: "card2",
+      title: "上游依据",
+    };
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: [...cards, otherCard],
+      relations: [
+        {
+          id: "relation-directed",
+          fromCardId: "card2",
+          toCardId: "card1",
+          relationType: "depends_on",
+          evidenceSentence: "上游依据依赖交互依据",
+          status: "confirmed",
+          directed: true,
+          source: "manual",
+          createdBy: "自己",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      focus: { kind: "card", id: "card1" },
+      now: NOW,
+    });
+    expect(snapshot.edges).toContainEqual(
+      expect.objectContaining({
+        source: { kind: "card", id: "card2" },
+        target: { kind: "card", id: "card1" },
+      }),
+    );
+  });
+
+  it("shows card-related events and only explicit event evidence", () => {
+    const cardSnapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      focus: { kind: "card", id: "card1" },
+      now: NOW,
+    });
+    expect(cardSnapshot.nodes.some((node) => node.ref.kind === "event")).toBe(
+      true,
+    );
+
+    const eventSnapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      events: [
+        {
+          id: "event-before",
+          workItemId: "blocked",
+          type: "decision",
+          actor: "自己",
+          body: "先检查图片",
+          createdAt: "2026-07-15T08:30:00.000Z",
+        },
+        events[0],
+      ],
+      focus: { kind: "event", id: "event-block" },
+      now: NOW,
+    });
+    expect(eventSnapshot.nodes.some((node) => node.ref.id === "event-before"))
+      .toBe(true);
+    expect(eventSnapshot.nodes.some((node) => node.ref.kind === "card"))
+      .toBe(false);
+  });
+
+  it("keeps the project inspector impacts aligned with ranked attention", () => {
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+    expect(snapshot.inspector.impacts).toEqual(
+      snapshot.attention.map((item) => item.target),
     );
   });
 
