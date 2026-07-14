@@ -1,6 +1,7 @@
 # SPEC · 知识足迹（检索点亮）
 
-**Status:** draft — 先规格，后实现  
+**Status:** P0 implemented (2026-07-14)  
+
 **Date:** 2026-07-14  
 **Product:** FC-OPC 知识工作台  
 **Related:**  

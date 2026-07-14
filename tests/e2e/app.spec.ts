@@ -26,6 +26,13 @@ test("knowledge demo: search, work item timeline, advance", async ({
     page.getByText(/Meeting|Doc|Note|Chat|Email|会议|文档|手记/i).first(),
   ).toBeVisible();
 
+  await expect(page.getByTestId("knowledge-footprint")).toBeVisible();
+  const litNodes = page.locator('[data-testid="footprint-node"][data-lit="1"]');
+  await expect(litNodes.first()).toBeVisible({ timeout: 10000 });
+  const litCount = await litNodes.count();
+  const cardCount = await cards.count();
+  expect(litCount).toBe(cardCount);
+
   await expect(page.getByTestId("work-items-panel")).toBeVisible();
 
   // Create a clean work item for deterministic advance
