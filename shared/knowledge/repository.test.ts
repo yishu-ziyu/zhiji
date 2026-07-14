@@ -125,6 +125,9 @@ describe("knowledge repository persistence", () => {
     expect(
       fs.existsSync(path.join(tmpDir, "project-checkpoints.json")),
     ).toBe(true);
+
+    repo.resetKnowledgeStoreForTests();
+    expect(repo.getLatestProjectCheckpoint(repo.DEFAULT_PROJECT_ID)).toBeNull();
   });
 
   it("returns one-hop evidence and events for a work-item focus", async () => {
@@ -143,6 +146,37 @@ describe("knowledge repository persistence", () => {
     expect(snapshot.nodes.every((node) => node.depth <= 1)).toBe(true);
     expect(snapshot.nodes.some((node) => node.ref.kind === "card")).toBe(true);
     expect(snapshot.nodes.some((node) => node.ref.kind === "event")).toBe(true);
+  });
+
+  it("rejects foreign references and foreign focus in project snapshots", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const other = repo.addProject({ name: "边界项目" });
+    const foreignCard = repo.addCard({
+      projectId: other.id,
+      content: "其他项目材料",
+    });
+
+    expect(() =>
+      repo.addAction({
+        projectId: repo.DEFAULT_PROJECT_ID,
+        description: "错误引用",
+        evidenceIds: [foreignCard.id],
+      }),
+    ).toThrow(/同一项目/);
+    expect(() =>
+      repo.addWorkEvent("ka-seed-1", {
+        type: "result",
+        body: "错误结果",
+        meta: { review: { evidenceIds: [foreignCard.id] } },
+      }),
+    ).toThrow(/同一项目/);
+    expect(() =>
+      repo.getProjectCanvasSnapshot(repo.DEFAULT_PROJECT_ID, {
+        kind: "card",
+        id: foreignCard.id,
+      }),
+    ).toThrow(/不属于当前项目/);
   });
 
   it("persists cards across reload of maps from disk", async () => {

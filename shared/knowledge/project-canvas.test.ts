@@ -273,6 +273,38 @@ describe("project canvas domain", () => {
     );
   });
 
+  it("does not emit card references absent from the project facts", () => {
+    const foreignRef = "foreign-card";
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      workItems: [
+        {
+          ...workItems[0],
+          evidenceIds: ["card1", foreignRef],
+        },
+      ],
+      events: [
+        {
+          ...events[0],
+          meta: { review: { evidenceIds: ["card1", foreignRef] } },
+        },
+      ],
+      focus: { kind: "work_item", id: "blocked" },
+      now: NOW,
+    });
+    expect(
+      snapshot.nodes.some((node) => node.ref.id === foreignRef),
+    ).toBe(false);
+    expect(snapshot.inspector.evidence.map((ref) => ref.id)).toEqual([
+      "card1",
+    ]);
+    expect(
+      [...snapshot.timeline.now, ...snapshot.timeline.history].flatMap(
+        (event) => event.review?.evidenceIds ?? [],
+      ),
+    ).not.toContain(foreignRef);
+  });
+
   it.each([
     { kind: "project", id: "p1" },
     { kind: "card", id: "card1" },
