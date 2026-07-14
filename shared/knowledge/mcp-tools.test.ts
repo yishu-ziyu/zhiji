@@ -64,4 +64,27 @@ describe("knowledge mcp tools", () => {
     });
     expect(updated.ok).toBe(true);
   });
+
+  it("keeps add, search, and dissect inside the selected project", async () => {
+    const repo = await import("./repository");
+    const project = repo.addProject({ name: "MCP 隔离" });
+    invokeKnowledgeMcpTool("add_knowledge", {
+      content: "MCP 项目材料",
+      projectId: project.id,
+    });
+    invokeKnowledgeMcpTool("dissect_task", {
+      goal: "MCP 项目任务",
+      projectId: project.id,
+    });
+
+    const searched = invokeKnowledgeMcpTool("search_knowledge", {
+      query: "MCP 项目材料",
+      filters: { projectId: project.id },
+    });
+    const hits = (searched.result as { hits: Array<{ projectId: string }> }).hits;
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((hit) => hit.projectId === project.id)).toBe(true);
+    expect(repo.listCards({ projectId: project.id })).toHaveLength(1);
+    expect(repo.listActions({ projectId: project.id }).length).toBeGreaterThan(0);
+  });
 });
