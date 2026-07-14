@@ -14,12 +14,16 @@ const SOURCE_FILTERS: { id: KnowledgeSource | "all"; label: string }[] = [
   { id: "manual", label: "Note" },
 ];
 
+export type SearchScope = "library" | "web";
+
 type Props = {
   query: string;
   loading?: boolean;
   sourceFilter: KnowledgeSource | "all";
+  searchScope?: SearchScope;
   onQueryChange: (value: string) => void;
   onSourceFilterChange: (value: KnowledgeSource | "all") => void;
+  onSearchScopeChange?: (scope: SearchScope) => void;
   onSearch: (nextQuery?: string) => void;
   exampleQueries?: string[];
 };
@@ -28,24 +32,56 @@ export function KnowledgeSearch({
   query,
   loading,
   sourceFilter,
+  searchScope = "library",
   onQueryChange,
   onSourceFilterChange,
+  onSearchScopeChange,
   onSearch,
   exampleQueries = ["检索 来源", "协作 状态", "会议", "验收"],
 }: Props) {
+  const isWeb = searchScope === "web";
   return (
     <div className="space-y-5 animate-rise">
       <div className="max-w-2xl mx-auto text-center space-y-3">
-        <p className="mono-label">Search · Source-backed</p>
+        <p className="mono-label">
+          {isWeb ? "Search · AnySearch web" : "Search · Source-backed"}
+        </p>
         <h1 className="font-hand text-[40px] md:text-[48px] leading-[1.05] text-foreground">
-          问一句，从已有知识里找
+          {isWeb ? "问一句，从全网找原料" : "问一句，从已有知识里找"}
         </h1>
         <p className="font-serif-cn text-[15px] text-muted-foreground leading-relaxed">
-          不卖编辑器。每条结果要能指回会议、文档或手记。
+          {isWeb
+            ? "外网结果可一键入库成带来源 URL 的卡片，再接工作项。"
+            : "不卖编辑器。每条结果要能指回会议、文档或手记。"}
         </p>
       </div>
 
       <div className="max-w-2xl mx-auto">
+        {onSearchScopeChange && (
+          <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5">
+            {(
+              [
+                { id: "library" as const, label: "库内" },
+                { id: "web" as const, label: "全网 AnySearch" },
+              ] as const
+            ).map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => onSearchScopeChange(s.id)}
+                className={cn(
+                  "rounded-[60px] px-3 py-1 mono-label transition-colors border",
+                  searchScope === s.id
+                    ? "border-primary bg-primary/15 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-border-strong",
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex gap-2 items-stretch rounded-[20px] border border-border bg-surface p-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -55,9 +91,13 @@ export function KnowledgeSearch({
               onKeyDown={(e) => {
                 if (e.key === "Enter") onSearch(query);
               }}
-              placeholder="验收标准是什么？协作状态怎么走？"
+              placeholder={
+                isWeb
+                  ? "例如：AnySearch agent search infrastructure"
+                  : "验收标准是什么？协作状态怎么走？"
+              }
               className="w-full rounded-[12px] bg-transparent pl-9 pr-3 py-3 text-sm outline-none placeholder:text-muted-foreground/70 font-sans"
-              aria-label="知识检索"
+              aria-label={isWeb ? "全网检索" : "知识检索"}
             />
           </div>
           <Button
@@ -66,11 +106,12 @@ export function KnowledgeSearch({
             onClick={() => onSearch(query)}
             disabled={loading}
           >
-            {loading ? "检索中…" : "检索"}
+            {loading ? "检索中…" : isWeb ? "搜全网" : "检索"}
             {!loading && <ArrowRight className="w-4 h-4" />}
           </Button>
         </div>
 
+        {!isWeb && (
         <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
           {SOURCE_FILTERS.map((f) => (
             <button
@@ -88,6 +129,7 @@ export function KnowledgeSearch({
             </button>
           ))}
         </div>
+        )}
 
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
           <span className="mono-label">Try</span>
