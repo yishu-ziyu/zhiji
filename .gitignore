@@ -10,6 +10,7 @@ playwright-report/
 tsconfig.tsbuildinfo
 .progress/
 ui-test.mjs
+.tmp/
 
 # Knowledge store (runtime JSON; re-seeded if empty)
 data/knowledge/*.json

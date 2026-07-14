@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url("https://fonts.googleapis.com/css2?family=Gochi+Hand&family=Noto+Serif+SC:wght@400;500;600&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap");
+@import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
 

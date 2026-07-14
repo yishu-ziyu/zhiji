@@ -160,6 +160,97 @@ describe("project canvas domain", () => {
     expect(assessPlan(null, [], []).status).toBe("insufficient");
   });
 
+  it("marks a changed next step as an adjustment with its event", () => {
+    const changed: WorkEvent = {
+      id: "event-next-step",
+      workItemId: "blocked",
+      type: "next_step_change",
+      actor: "自己",
+      body: "改做可用性检查",
+      createdAt: "2026-07-15T09:30:00.000Z",
+    };
+    expect(assessPlan(checkpoint, [changed], cards)).toEqual(
+      expect.objectContaining({
+        status: "adjust",
+        evidence: [{ kind: "event", id: "event-next-step" }],
+      }),
+    );
+  });
+
+  it("uses the newest plan-changing event regardless of its type", () => {
+    const olderDecision: WorkEvent = {
+      id: "older-decision",
+      workItemId: "blocked",
+      type: "decision",
+      actor: "自己",
+      body: "旧决定",
+      createdAt: "2026-07-15T09:10:00.000Z",
+    };
+    const newerNextStep: WorkEvent = {
+      id: "newer-next-step",
+      workItemId: "blocked",
+      type: "next_step_change",
+      actor: "自己",
+      body: "新的下一步",
+      createdAt: "2026-07-15T09:20:00.000Z",
+    };
+    expect(assessPlan(checkpoint, [olderDecision, newerNextStep], [])).toEqual(
+      expect.objectContaining({
+        status: "adjust",
+        evidence: [{ kind: "event", id: "newer-next-step" }],
+      }),
+    );
+  });
+
+  it("does not keep an already-unblocked item as a plan blocker", () => {
+    const blocked: WorkEvent = {
+      id: "temporary-block",
+      workItemId: "blocked",
+      type: "block",
+      actor: "自己",
+      body: "临时缺少输入",
+      createdAt: "2026-07-15T09:10:00.000Z",
+    };
+    const unblocked: WorkEvent = {
+      id: "temporary-unblock",
+      workItemId: "blocked",
+      type: "unblock",
+      actor: "自己",
+      body: "输入已补齐",
+      createdAt: "2026-07-15T09:20:00.000Z",
+    };
+    const assessment = assessPlan(checkpoint, [blocked, unblocked], []);
+    expect(assessment.status).toBe("insufficient");
+    expect(assessment.evidence).toEqual([{ kind: "event", id: "temporary-unblock" }]);
+  });
+
+  it("keeps a new Agent result as insufficient until the user confirms it", () => {
+    const result: WorkEvent = {
+      id: "event-new-result",
+      workItemId: "confirmed",
+      type: "result",
+      actor: "agent:project-reviewer",
+      body: "Agent 发现新的核对结果",
+      createdAt: "2026-07-15T09:30:00.000Z",
+    };
+    expect(assessPlan(checkpoint, [result], cards)).toEqual(
+      expect.objectContaining({
+        status: "insufficient",
+        evidence: [{ kind: "event", id: "event-new-result" }],
+      }),
+    );
+  });
+
+  it("continues a confirmed plan when no later record changes it", () => {
+    const beforeCheckpoint = { ...events[0], createdAt: "2026-07-15T07:30:00.000Z" };
+    expect(assessPlan(checkpoint, [beforeCheckpoint], [])).toEqual(
+      expect.objectContaining({
+        status: "continue",
+        evidence: [{ kind: "event", id: beforeCheckpoint.id }],
+      }),
+    );
+  });
+
   it("keeps critical events visible apart from ordinary comments", () => {
     const timeline = buildCanvasTimeline(events, workItems);
     expect(timeline.now.map((event) => event.id)).toContain("event-block");
@@ -224,6 +315,7 @@ describe("project canvas domain", () => {
     });
     expect(snapshot.edges).toContainEqual(
       expect.objectContaining({
+        relationId: "relation-directed",
         source: { kind: "card", id: "card2" },
         target: { kind: "card", id: "card1" },
       }),
@@ -273,6 +365,61 @@ describe("project canvas domain", () => {
     );
   });
 
+  it("keeps recent active work reachable when another item owns the attention signal", () => {
+    const recentWithoutSignal: ActionItem = {
+      ...baseItem,
+      id: "recent-without-signal",
+      title: "最近仍在推进",
+      deadline: "2026-07-16",
+      status: "todo",
+      updatedAt: "2026-07-15T09:30:00.000Z",
+    };
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      workItems: [workItems[0], recentWithoutSignal],
+      events: [events[0]],
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+
+    expect(snapshot.attention.map((item) => item.target.id)).toEqual([
+      "blocked",
+    ]);
+    expect(snapshot.nodes.map((node) => node.ref.id)).toContain(
+      "recent-without-signal",
+    );
+  });
+
+  it("orders project materials by their real timestamp", () => {
+    const older = { ...cards[0], id: "older", timestamp: "2026-07-14T08:00:00.000Z" };
+    const newer = { ...cards[0], id: "newer", timestamp: "2026-07-15T09:00:00.000Z" };
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: [older, newer],
+      workItems: [],
+      events: [],
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+    expect(snapshot.nodes.filter((node) => node.depth === 1)[0]?.ref.id).toBe("newer");
+  });
+
+  it("puts recently used project materials before newer unused materials", () => {
+    const usedOlder = { ...cards[0], id: "used-older", timestamp: "2026-07-14T08:00:00.000Z" };
+    const unusedNewer = { ...cards[0], id: "unused-newer", timestamp: "2026-07-15T09:00:00.000Z" };
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: [usedOlder, unusedNewer],
+      workItems: [],
+      events: [],
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+      recentCardIds: ["used-older"],
+    });
+    expect(snapshot.nodes.filter((node) => node.ref.kind === "card")[0]?.ref.id)
+      .toBe("used-older");
+  });
+
   it("does not emit card references absent from the project facts", () => {
     const foreignRef = "foreign-card";
     const snapshot = buildProjectCanvasSnapshot({
@@ -303,6 +450,25 @@ describe("project canvas domain", () => {
         (event) => event.review?.evidenceIds ?? [],
       ),
     ).not.toContain(foreignRef);
+  });
+
+  it("caps visible neighbors and reports how many remain folded", () => {
+    const manyCards = Array.from({ length: 8 }, (_, index) => ({
+      ...cards[0],
+      id: `many-card-${index}`,
+      title: `材料 ${index}`,
+    }));
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: manyCards,
+      workItems: [{ ...workItems[0], evidenceIds: manyCards.map((card) => card.id) }],
+      events: events.slice(0, 4).map((event) => ({ ...event, workItemId: "blocked" })),
+      focus: { kind: "work_item", id: "blocked" },
+      now: NOW,
+    });
+    expect(snapshot.nodes.filter((node) => node.depth === 1)).toHaveLength(6);
+    expect(snapshot.hiddenNeighborCount).toBe(6);
+    expect(snapshot.foldedNodes).toHaveLength(6);
   });
 
   it.each([

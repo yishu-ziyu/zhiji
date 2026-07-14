@@ -35,12 +35,12 @@ checkpoints:
     note: "design-spec + plan/spec"
   - id: e2e_knowledge
     status: required
-    state: todo
-    note: "Next engineering"
+    state: done
+    note: "Playwright 6/6; unit 81/81; lint, typecheck, production build passed"
   - id: peer_review
     status: optional
-    state: waived_lite
-    note: "Hackathon lite freeze; user-owned decision"
+    state: done
+    note: "Independent standards and spec axes approved after fixes"
   - id: growth
     status: N/A
     state: skipped

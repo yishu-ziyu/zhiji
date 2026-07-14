@@ -29,6 +29,7 @@ export type ProjectFacts = {
 export type ProjectCanvasInput = ProjectFacts & {
   focus: CanvasNodeRef;
   now: string;
+  recentCardIds?: string[];
 };
 
 const DAY = 86_400_000;
@@ -166,9 +167,14 @@ export function assessPlan(
   const changes = events
     .filter((event) => event.createdAt > checkpoint.createdAt)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const currentlyBlocked = new Set<string>();
+  for (const event of [...changes].reverse()) {
+    if (event.type === "block") currentlyBlocked.add(event.workItemId);
+    if (event.type === "unblock") currentlyBlocked.delete(event.workItemId);
+  }
   const blocking = changes.find(
     (event) =>
-      event.type === "block" ||
+      (event.type === "block" && currentlyBlocked.has(event.workItemId)) ||
       (event.type === "result" && Boolean(event.meta?.error)),
   );
   if (blocking) {
@@ -191,25 +197,74 @@ export function assessPlan(
     };
   }
 
-  const decision = changes.find((event) => event.type === "decision");
-  if (decision) {
+  const changedPlan = changes.find(
+    (event) =>
+      event.type === "decision" || event.type === "next_step_change",
+  );
+  if (changedPlan) {
     return {
       status: "adjust",
-      reason: `离开后出现新决定：${decision.body}`,
-      evidence: [{ kind: "event", id: decision.id }],
+      reason:
+        changedPlan.type === "decision"
+          ? `离开后出现新决定：${changedPlan.body}`
+          : `离开后下一步已经改变：${changedPlan.body}`,
+      evidence: [{ kind: "event", id: changedPlan.id }],
+    };
+  }
+
+  const result = changes.find((event) => event.type === "result");
+  if (result) {
+    return {
+      status: "insufficient",
+      reason: `Agent 已写回新结果，需要你确认是否改变原计划：${result.body}`,
+      evidence: [{ kind: "event", id: result.id }],
     };
   }
 
   const recentCard = cards
     .filter((card) => card.timestamp > checkpoint.createdAt)
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
-  return {
-    status: "insufficient",
-    reason: recentCard
-      ? "出现了新材料，但现有信息不足以判断原计划是否仍成立"
-      : "没有足够的新证据判断原计划是否仍成立",
-    evidence: recentCard ? [{ kind: "card", id: recentCard.id }] : [],
-  };
+  if (recentCard) {
+    return {
+      status: "insufficient",
+      reason: "出现了新材料，但现有信息不足以判断原计划是否仍成立",
+      evidence: [{ kind: "card", id: recentCard.id }],
+    };
+  }
+
+  if (changes[0]) {
+    return {
+      status: "insufficient",
+      reason: `离开后有新记录，需要你确认它是否影响原计划：${changes[0].body}`,
+      evidence: [{ kind: "event", id: changes[0].id }],
+    };
+  }
+
+  const latestKnownEvent = events
+    .filter((event) => event.createdAt <= checkpoint.createdAt)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (latestKnownEvent) {
+    return {
+      status: "continue",
+      reason: "离开后没有记录到改变原下一步的变化",
+      evidence: [{ kind: "event", id: latestKnownEvent.id }],
+    };
+  }
+
+  const latestKnownCard = cards
+    .filter((card) => card.timestamp <= checkpoint.createdAt)
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+  return latestKnownCard
+    ? {
+        status: "continue",
+        reason: "离开后没有记录到改变原下一步的变化",
+        evidence: [{ kind: "card", id: latestKnownCard.id }],
+      }
+    : {
+        status: "insufficient",
+        reason: "没有可引用的记录来判断原计划是否仍成立",
+        evidence: [],
+      };
 }
 
 function reviewFromEvent(
@@ -293,10 +348,13 @@ function makeEdge(
   source: CanvasNodeRef,
   target: CanvasNodeRef,
   label: string,
-  options?: Pick<CanvasEdge, "evidenceSentence" | "status">,
+  options?: Pick<CanvasEdge, "evidenceSentence" | "status" | "relationId">,
 ): CanvasEdge {
   return {
-    id: `${refKey(source)}>${refKey(target)}`,
+    id: options?.relationId
+      ? `relation:${options.relationId}`
+      : `${refKey(source)}>${refKey(target)}`,
+    relationId: options?.relationId,
     source,
     target,
     label,
@@ -342,13 +400,26 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
   if (input.focus.kind === "project") {
     const center = { kind: "project", id: input.project.id } as const;
     add(makeNode(center, input.project.name, "当前项目", 0, "active"));
-    const targets = attention.length
-      ? attention.map((entry) => entry.target)
-      : input.workItems.slice(0, 3).map((item) => ({
-          kind: "work_item" as const,
-          id: item.id,
-        }));
-    for (const target of targets) {
+    const attentionIds = new Set(attention.map((entry) => entry.target.id));
+    const targets = [
+      ...attention.map((entry) => ({
+        ref: entry.target,
+        edgeLabel: "当前重点",
+      })),
+      ...input.workItems
+        .filter(
+          (item) =>
+            item.status !== "done" &&
+            item.status !== "cancelled" &&
+            !attentionIds.has(item.id),
+        )
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .map((item) => ({
+          ref: { kind: "work_item" as const, id: item.id },
+          edgeLabel: "最近工作",
+        })),
+    ];
+    for (const { ref: target, edgeLabel } of targets) {
       const item = items.get(target.id);
       if (!item) continue;
       add(
@@ -363,9 +434,21 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
             .map((id) => ({ kind: "card", id })),
         ),
       );
-      edges.push(makeEdge(center, target, "当前重点"));
+      edges.push(makeEdge(center, target, edgeLabel));
     }
-    for (const card of input.cards.slice(0, Math.max(0, 5 - targets.length))) {
+    const recentOrder = new Map(
+      (input.recentCardIds ?? []).map((cardId, index) => [cardId, index]),
+    );
+    for (const card of [...input.cards].sort((a, b) => {
+      const aIndex = recentOrder.get(a.id);
+      const bIndex = recentOrder.get(b.id);
+      if (aIndex !== undefined || bIndex !== undefined) {
+        if (aIndex === undefined) return 1;
+        if (bIndex === undefined) return -1;
+        return aIndex - bIndex;
+      }
+      return b.timestamp.localeCompare(a.timestamp);
+    })) {
       const target = { kind: "card", id: card.id } as const;
       add(makeNode(target, card.title || card.content.slice(0, 24), card.source, 1));
       edges.push(makeEdge(center, target, "项目材料"));
@@ -384,7 +467,7 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
         itemState(item),
       ),
     );
-    for (const cardId of item.evidenceIds.slice(0, 4)) {
+    for (const cardId of item.evidenceIds) {
       const card = cards.get(cardId);
       if (!card) continue;
       const target = { kind: "card", id: card.id } as const;
@@ -393,8 +476,7 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
     }
     for (const event of input.events
       .filter((entry) => entry.workItemId === item.id && entry.type !== "comment")
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 3)) {
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
       const target = { kind: "event", id: event.id } as const;
       add(
         makeNode(
@@ -449,6 +531,7 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
         : target;
       edges.push(
         makeEdge(source, relationTarget, RELATION_TYPE_LABELS[relation.relationType], {
+          relationId: relation.id,
           evidenceSentence: relation.evidenceSentence,
           status:
             relation.status === "suggested" ? "suggested" : "confirmed",
@@ -456,8 +539,7 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
       );
     }
     for (const item of input.workItems
-      .filter((entry) => entry.evidenceIds.includes(card.id))
-      .slice(0, 3)) {
+      .filter((entry) => entry.evidenceIds.includes(card.id))) {
       const target = { kind: "work_item", id: item.id } as const;
       add(makeNode(target, item.title, STATUS_LABELS[item.status], 1, itemState(item)));
       edges.push(makeEdge(input.focus, target, "被工作项使用"));
@@ -472,8 +554,7 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
         (event) =>
           relatedWorkIds.has(event.workItemId) && event.type !== "comment",
       )
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 2);
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     for (const event of relatedEvents) {
       const target = { kind: "event", id: event.id } as const;
       add(
@@ -518,7 +599,7 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
           ? review.evidenceIds.map(String)
           : []),
       ];
-      for (const cardId of [...new Set(explicitCardIds)].slice(0, 3)) {
+      for (const cardId of [...new Set(explicitCardIds)]) {
         const card = cards.get(cardId);
         if (!card) continue;
         const cardRef = { kind: "card", id: card.id } as const;
@@ -549,7 +630,28 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
     }
   }
 
-  return { nodes: [...nodes.values()], edges };
+  const allNodes = [...nodes.values()];
+  const centerNodes = allNodes.filter((node) => node.depth === 0);
+  const neighbors = allNodes.filter((node) => node.depth === 1);
+  const visibleNodes = [...centerNodes, ...neighbors.slice(0, 6)];
+  const foldedNodes = neighbors.slice(6);
+  const visibleKeys = new Set(visibleNodes.map((node) => refKey(node.ref)));
+  const foldedKeys = new Set(foldedNodes.map((node) => refKey(node.ref)));
+  return {
+    nodes: visibleNodes,
+    edges: edges.filter(
+      (edge) =>
+        visibleKeys.has(refKey(edge.source)) &&
+        visibleKeys.has(refKey(edge.target)),
+    ),
+    foldedNodes,
+    foldedEdges: edges.filter(
+      (edge) =>
+        (visibleKeys.has(refKey(edge.source)) && foldedKeys.has(refKey(edge.target))) ||
+        (foldedKeys.has(refKey(edge.source)) && visibleKeys.has(refKey(edge.target))),
+    ),
+    hiddenNeighborCount: foldedNodes.length,
+  };
 }
 
 function buildInspector(
@@ -574,6 +676,7 @@ function buildInspector(
   if (input.focus.kind === "work_item") {
     const item = input.workItems.find((entry) => entry.id === input.focus.id);
     if (!item) throw new Error("工作项不属于当前项目");
+    const isOpen = item.status !== "done" && item.status !== "cancelled";
     return {
       title: item.title,
       summary: item.description,
@@ -585,7 +688,13 @@ function buildInspector(
         .filter((id) => input.cards.some((card) => card.id === id))
         .map((id) => ({ kind: "card", id })),
       impacts: [],
-      availableActions: ["open_evidence", "update_next_step", "run_agent"],
+      workItem: structuredClone(item),
+      availableActions: [
+        ...(item.evidenceIds.length > 0 ? (["open_evidence"] as const) : []),
+        "link_evidence",
+        "comment",
+        ...(isOpen ? (["update_work", "update_next_step", "run_agent"] as const) : []),
+      ],
     };
   }
   if (input.focus.kind === "card") {
@@ -599,7 +708,7 @@ function buildInspector(
       impacts: input.workItems
         .filter((item) => item.evidenceIds.includes(card.id))
         .map((item) => ({ kind: "work_item", id: item.id })),
-      availableActions: ["open_evidence"],
+      availableActions: ["open_evidence", "create_relation"],
     };
   }
   const event = input.events.find((entry) => entry.id === input.focus.id);
@@ -646,6 +755,9 @@ export function buildProjectCanvasSnapshot(
     attention,
     nodes: graph.nodes,
     edges: graph.edges,
+    foldedNodes: graph.foldedNodes,
+    foldedEdges: graph.foldedEdges,
+    hiddenNeighborCount: graph.hiddenNeighborCount,
     inspector: buildInspector(input, attention),
     timeline,
   };

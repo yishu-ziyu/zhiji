@@ -38,6 +38,16 @@ describe("knowledge repository persistence", () => {
     expect(fs.existsSync(path.join(tmpDir, "projects.json"))).toBe(true);
   });
 
+  it("fails closed when persisted JSON is corrupt instead of reseeding over it", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const file = path.join(tmpDir, "cards.json");
+    fs.writeFileSync(file, "{not-json", "utf-8");
+
+    expect(() => repo.listCards()).toThrow(/无法读取数据文件/);
+    expect(fs.readFileSync(file, "utf-8")).toBe("{not-json");
+  });
+
   it("migrates legacy cards and work items into the default project", async () => {
     fs.writeFileSync(
       path.join(tmpDir, "cards.json"),
@@ -199,6 +209,14 @@ describe("knowledge repository persistence", () => {
     expect(reloaded.some((c) => c.id === created.id)).toBe(true);
   });
 
+  it("rejects an unknown card source at the persistence boundary", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    expect(() =>
+      repo.addCard({ content: "非法来源", source: "bogus" as never }),
+    ).toThrow(/来源无效/);
+  });
+
   it("persists action status updates", async () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
@@ -215,6 +233,60 @@ describe("knowledge repository persistence", () => {
     ) as Record<string, { status: string }>;
     expect(raw[item.id]?.status).toBe("done");
     expect(repo.getAction(item.id)?.status).toBe("done");
+  });
+
+  it("recovers a pending work-state transaction before serving reads", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const actionsFile = path.join(tmpDir, "actions.json");
+    const eventsFile = path.join(tmpDir, "events.json");
+    const actions = JSON.parse(fs.readFileSync(actionsFile, "utf-8")) as Record<string, Record<string, unknown>>;
+    const events = JSON.parse(fs.readFileSync(eventsFile, "utf-8")) as Record<string, Record<string, unknown>>;
+    actions["ka-seed-1"] = { ...actions["ka-seed-1"], nextStep: "从事务日志恢复" };
+    events["recovered-event"] = {
+      id: "recovered-event",
+      workItemId: "ka-seed-1",
+      type: "next_step_change",
+      actor: "自己",
+      body: "从事务日志恢复",
+      createdAt: "2026-07-15T10:00:00.000Z",
+    };
+    fs.writeFileSync(
+      path.join(tmpDir, "work-state-transaction.json"),
+      JSON.stringify({ pending: { actions, events } }),
+      "utf-8",
+    );
+
+    expect(repo.getAction("ka-seed-1")?.nextStep).toBe("从事务日志恢复");
+    expect(repo.listEventsForWorkItem("ka-seed-1").map((event) => event.id))
+      .toContain("recovered-event");
+    expect(fs.existsSync(path.join(tmpDir, "work-state-transaction.json"))).toBe(false);
+  });
+
+  it("searches project materials, work items, and records without cross-project hits", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const item = repo.addAction({
+      projectId: repo.DEFAULT_PROJECT_ID,
+      title: "火箭验收任务",
+      description: "检查发射清单",
+      nextStep: "核对燃料",
+    });
+    repo.addCard({
+      projectId: repo.DEFAULT_PROJECT_ID,
+      title: "火箭会议材料",
+      content: "发射窗口已经确认",
+    });
+    repo.addWorkEvent(item.id, { type: "comment", body: "火箭风险已经复核" });
+    const other = repo.addProject({ name: "其他项目" });
+    repo.addCard({ projectId: other.id, content: "火箭不应跨项目出现" });
+
+    const hits = repo.searchProjectRecords(repo.DEFAULT_PROJECT_ID, "火箭", 12);
+    expect(new Set(hits.map((hit) => hit.ref.kind))).toEqual(
+      new Set(["card", "work_item", "event"]),
+    );
+    expect(hits.some((hit) => hit.summary.includes("不应跨项目"))).toBe(false);
+    expect(hits.find((hit) => hit.ref.kind === "card")?.source).toBe("manual");
   });
 
   it("writes timeline events on status change and comment", async () => {
@@ -306,6 +378,31 @@ describe("knowledge repository persistence", () => {
     );
   });
 
+  it("records opened materials and orders the project canvas by recent use", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const usedOlder = repo.addCard({
+      title: "刚查看的旧材料",
+      content: "这条材料创建得早，但刚刚被查看",
+      timestamp: "2026-07-10T08:00:00.000Z",
+    });
+    repo.addCard({
+      title: "未查看的新材料",
+      content: "这条材料更新，但没有被使用",
+      timestamp: "2026-07-15T09:00:00.000Z",
+    });
+
+    repo.recordOpenedFootprint(usedOlder.id);
+    const footprint = repo.getFootprintData({ mode: "window", sinceDays: 7 });
+    expect(footprint.lit).toContainEqual(
+      expect.objectContaining({ cardId: usedOlder.id, depth: 2 }),
+    );
+
+    const snapshot = repo.getProjectCanvasSnapshot(repo.DEFAULT_PROJECT_ID);
+    expect(snapshot.nodes.filter((node) => node.ref.kind === "card")[0]?.ref.id)
+      .toBe(usedOlder.id);
+  });
+
   it("seeds confirmed relations with evidence sentences", async () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
@@ -348,6 +445,19 @@ describe("knowledge repository persistence", () => {
     ).toThrow(/来源句/);
   });
 
+  it("rejects an unknown relation source at the persistence boundary", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const cards = repo.listCards();
+    expect(() => repo.createRelation({
+      fromCardId: cards[0].id,
+      toCardId: cards[1].id,
+      relationType: "supports",
+      evidenceSentence: "非法来源不能写入",
+      source: "bogus" as never,
+    })).toThrow(/来源无效/);
+  });
+
   it("path between seed cards", async () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
@@ -380,6 +490,23 @@ describe("knowledge repository persistence", () => {
     expect(
       repo.getNeighbors(cards[0].id).edges.some((e) => e.id === rel.id),
     ).toBe(false);
+  });
+
+  it("keeps relation direction consistent when its type changes", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const cards = repo.listCards();
+    const relation = repo.createRelation({
+      fromCardId: cards[0].id,
+      toCardId: cards[1].id,
+      relationType: "supports",
+      evidenceSentence: "方向随关系类型变化。",
+    });
+
+    expect(repo.patchRelation(relation.id, { relationType: "same_topic" }).directed)
+      .toBe(false);
+    expect(repo.patchRelation(relation.id, { relationType: "supports" }).directed)
+      .toBe(true);
   });
 
   it("evidence island only includes edges inside evidence set", async () => {

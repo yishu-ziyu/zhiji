@@ -79,14 +79,5 @@ export function searchKnowledge(
     .sort((a, b) => b.score - a.score || b.timestamp.localeCompare(a.timestamp))
     .slice(0, limit);
 
-  if (hits.length === 0 && tokens.length > 0) {
-    // Soft fallback: return recent filtered cards so UI never looks empty mid-demo.
-    return cards
-      .slice()
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-      .slice(0, Math.min(5, limit))
-      .map((card) => ({ ...card, score: 0 }));
-  }
-
   return hits;
 }
