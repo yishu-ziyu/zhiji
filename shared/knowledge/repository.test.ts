@@ -35,6 +35,7 @@ describe("knowledge repository persistence", () => {
     expect(cards.length).toBeGreaterThanOrEqual(4);
     expect(fs.existsSync(path.join(tmpDir, "cards.json"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "actions.json"))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "projects.json"))).toBe(true);
   });
 
   it("migrates legacy cards and work items into the default project", async () => {
@@ -75,8 +76,17 @@ describe("knowledge repository persistence", () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
     const other = repo.addProject({ name: "另一个项目", summary: "隔离检查" });
-    repo.addCard({ content: "只属于另一个项目", projectId: other.id });
+    const foreignCard = repo.addCard({
+      content: "只属于另一个项目",
+      projectId: other.id,
+    });
     repo.addAction({ description: "另一个项目的工作", projectId: other.id });
+    const defaultItem = repo.listActions({
+      projectId: repo.DEFAULT_PROJECT_ID,
+    })[0];
+    const defaultCard = repo.listCards({
+      projectId: repo.DEFAULT_PROJECT_ID,
+    })[0];
 
     expect(repo.listCards({ projectId: other.id })).toHaveLength(1);
     expect(repo.listActions({ projectId: other.id })).toHaveLength(1);
@@ -85,6 +95,17 @@ describe("knowledge repository persistence", () => {
         .listCards({ projectId: repo.DEFAULT_PROJECT_ID })
         .some((card) => card.content === "只属于另一个项目"),
     ).toBe(false);
+    expect(() => repo.linkEvidence(defaultItem.id, foreignCard.id)).toThrow(
+      /同一项目/,
+    );
+    expect(() =>
+      repo.createRelation({
+        fromCardId: defaultCard.id,
+        toCardId: foreignCard.id,
+        relationType: "supports",
+        evidenceSentence: "跨项目关系不应成立",
+      }),
+    ).toThrow(/同一项目/);
   });
 
   it("persists the latest confirmed project checkpoint", async () => {
