@@ -8,6 +8,7 @@ import type {
   ActionStatus,
   ActionSuggestion,
 } from "@/shared/types/knowledge";
+import { STATUS_LABELS } from "@/shared/types/knowledge";
 
 type Props = {
   actions: ActionItem[];
@@ -17,14 +18,15 @@ type Props = {
   loading?: boolean;
 };
 
-const statusLabel: Record<ActionStatus, string> = {
-  todo: "Todo",
-  doing: "Doing",
-  confirmed: "Confirm",
-  done: "Done",
-};
+const statusLabel = STATUS_LABELS;
 
-const statusOrder: ActionStatus[] = ["todo", "doing", "confirmed", "done"];
+const statusOrder: ActionStatus[] = [
+  "todo",
+  "doing",
+  "blocked",
+  "confirmed",
+  "done",
+];
 
 const nextStatus: Partial<Record<ActionStatus, ActionStatus>> = {
   todo: "doing",
