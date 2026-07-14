@@ -2,8 +2,22 @@
 
 export type KnowledgeSource = "meeting" | "email" | "chat" | "doc" | "manual";
 
+export const DEFAULT_PROJECT_ID = "project-fc-opc-ibot";
+
+export type ProjectStatus = "active" | "paused" | "archived";
+
+export type Project = {
+  id: string;
+  name: string;
+  summary: string;
+  status: ProjectStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type KnowledgeCard = {
   id: string;
+  projectId: string;
   content: string;
   source: KnowledgeSource;
   tags: string[];
@@ -28,6 +42,7 @@ export type ActionStatus =
  */
 export type ActionItem = {
   id: string;
+  projectId: string;
   /** Short title; defaults from description */
   title: string;
   description: string;
@@ -71,6 +86,7 @@ export type WorkEvent = {
 };
 
 export type KnowledgeSearchFilters = {
+  projectId?: string;
   source?: KnowledgeSource | KnowledgeSource[];
   tags?: string[];
   limit?: number;

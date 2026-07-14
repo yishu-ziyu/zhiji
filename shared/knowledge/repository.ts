@@ -15,13 +15,20 @@ import type {
   LibraryNode,
   NeighborView,
   PathView,
+  Project,
   QuerySession,
   RelationStatus,
   RelationType,
   WorkEvent,
   WorkEventType,
 } from "@/shared/types/knowledge";
-import { ACTION_STATUSES, DEFAULT_ACTOR } from "@/shared/types/knowledge";
+import {
+  ACTION_STATUSES,
+  DEFAULT_ACTOR,
+  DEFAULT_PROJECT_ID,
+} from "@/shared/types/knowledge";
+
+export { DEFAULT_PROJECT_ID } from "@/shared/types/knowledge";
 import {
   assertCanPatchTo,
   assertWorkItemForStatus,
@@ -48,6 +55,7 @@ import {
 
 type NewCardInput = {
   content: string;
+  projectId?: string;
   source?: KnowledgeSource;
   tags?: string[];
   links?: string[];
@@ -58,6 +66,7 @@ type NewCardInput = {
 
 type NewActionInput = {
   description: string;
+  projectId?: string;
   title?: string;
   assignee?: string;
   deadline?: string;
@@ -98,6 +107,10 @@ function resolveDataDir(): string {
 
 function cardsPath(): string {
   return path.join(resolveDataDir(), "cards.json");
+}
+
+function projectsPath(): string {
+  return path.join(resolveDataDir(), "projects.json");
 }
 
 function actionsPath(): string {
@@ -148,7 +161,17 @@ function writeJsonMap<T>(file: string, map: Map<string, T>): void {
 
 function loadCards(): Map<string, KnowledgeCard> {
   ensureDataDir();
-  return readJsonMap<KnowledgeCard>(cardsPath());
+  const raw = readJsonMap<Partial<KnowledgeCard> & { id?: string }>(cardsPath());
+  const cards = new Map<string, KnowledgeCard>();
+  for (const [id, card] of raw) {
+    cards.set(id, normalizeCard({ ...card, id: card.id ?? id }));
+  }
+  return cards;
+}
+
+function loadProjects(): Map<string, Project> {
+  ensureDataDir();
+  return readJsonMap<Project>(projectsPath());
 }
 
 function loadActionsRaw(): Map<string, ActionItem> {
@@ -170,6 +193,10 @@ function loadEvents(): Map<string, WorkEvent> {
 
 function saveCards(cards: Map<string, KnowledgeCard>): void {
   writeJsonMap(cardsPath(), cards);
+}
+
+function saveProjects(projects: Map<string, Project>): void {
+  writeJsonMap(projectsPath(), projects);
 }
 
 function saveActions(actions: Map<string, ActionItem>): void {
@@ -211,6 +238,10 @@ function copyRelation(rel: KnowledgeRelation): KnowledgeRelation {
   return structuredClone(rel);
 }
 
+function copyProject(project: Project): Project {
+  return structuredClone(project);
+}
+
 function copyCard(card: KnowledgeCard): KnowledgeCard {
   return structuredClone(card);
 }
@@ -221,6 +252,21 @@ function copyAction(item: ActionItem): ActionItem {
 
 function copyEvent(event: WorkEvent): WorkEvent {
   return structuredClone(event);
+}
+
+function normalizeCard(
+  raw: Partial<KnowledgeCard> & { id?: string },
+): KnowledgeCard {
+  return {
+    id: raw.id ?? randomUUID(),
+    projectId: raw.projectId ?? DEFAULT_PROJECT_ID,
+    content: raw.content?.trim() || "未命名卡片",
+    source: raw.source ?? "manual",
+    tags: raw.tags ?? [],
+    timestamp: raw.timestamp ?? new Date().toISOString(),
+    links: raw.links ?? [],
+    title: raw.title?.trim() || undefined,
+  };
 }
 
 /** Migrate legacy action JSON into full work item shape. */
@@ -248,6 +294,7 @@ export function normalizeAction(
 
   return {
     id: raw.id ?? randomUUID(),
+    projectId: raw.projectId ?? DEFAULT_PROJECT_ID,
     title,
     description,
     assignee: raw.assignee?.trim() || "待定",
@@ -268,6 +315,7 @@ function buildSeedCards(now: string): KnowledgeCard[] {
   return [
     {
       id: "kc-seed-1",
+      projectId: DEFAULT_PROJECT_ID,
       title: "知识工作者怎么推进",
       content:
         "资料检索 → 沉淀成可复用卡片 → 接到可推进的工作项。入口不必依赖个人微信私聊读取。",
@@ -278,6 +326,7 @@ function buildSeedCards(now: string): KnowledgeCard[] {
     },
     {
       id: "kc-seed-2",
+      projectId: DEFAULT_PROJECT_ID,
       title: "检索验收标准",
       content:
         "好的检索结果必须带来源：路径、链接或会议原文片段；没有来源的摘要不当成事实。",
@@ -288,6 +337,7 @@ function buildSeedCards(now: string): KnowledgeCard[] {
     },
     {
       id: "kc-seed-3",
+      projectId: DEFAULT_PROJECT_ID,
       title: "工作项状态",
       content:
         "状态：待开始 → 进行中 → 待确认 → 完成；可标阻塞。进行中须有负责人与下一步。",
@@ -298,6 +348,7 @@ function buildSeedCards(now: string): KnowledgeCard[] {
     },
     {
       id: "kc-seed-4",
+      projectId: DEFAULT_PROJECT_ID,
       title: "Demo 说法",
       content:
         "不是再做一个全能笔记，而是让找过的材料下次还能用，并且能变成可勾选的下一步。",
@@ -313,6 +364,7 @@ function buildSeedActions(now: string): ActionItem[] {
   return [
     normalizeAction({
       id: "ka-seed-1",
+      projectId: DEFAULT_PROJECT_ID,
       title: "跑通检索并展示带来源的卡片",
       description: "用一条真实问题跑通知识检索并展示带来源的卡片",
       assignee: "自己",
@@ -327,6 +379,7 @@ function buildSeedActions(now: string): ActionItem[] {
     }),
     normalizeAction({
       id: "ka-seed-2",
+      projectId: DEFAULT_PROJECT_ID,
       title: "会议文本生成卡片与工作项",
       description: "把会议粘贴文本整理成卡片并生成行动项",
       assignee: "自己",
@@ -449,7 +502,25 @@ function workingRelations(): Map<string, KnowledgeRelation> {
   return loadRelations();
 }
 
+function workingProjects(): Map<string, Project> {
+  const projects = loadProjects();
+  if (!projects.has(DEFAULT_PROJECT_ID)) {
+    const now = new Date().toISOString();
+    projects.set(DEFAULT_PROJECT_ID, {
+      id: DEFAULT_PROJECT_ID,
+      name: "fc-opc-ibot",
+      summary: "帮助知识工作者恢复项目状态、理解变化并继续执行",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    saveProjects(projects);
+  }
+  return projects;
+}
+
 function workingCards(): Map<string, KnowledgeCard> {
+  workingProjects();
   const cards = loadCards();
   const actions = loadActionsRaw();
   const events = loadEvents();
@@ -458,6 +529,7 @@ function workingCards(): Map<string, KnowledgeCard> {
 }
 
 function workingActions(): Map<string, ActionItem> {
+  workingProjects();
   const cards = loadCards();
   const actions = loadActionsRaw();
   const events = loadEvents();
@@ -491,8 +563,44 @@ function appendEvent(
   return event;
 }
 
-export function listCards(): KnowledgeCard[] {
-  return [...workingCards().values()].map(copyCard);
+export function listProjects(): Project[] {
+  return [...workingProjects().values()]
+    .map(copyProject)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export function getProject(id: string): Project | null {
+  const project = workingProjects().get(id);
+  return project ? copyProject(project) : null;
+}
+
+export function addProject(input: {
+  name: string;
+  summary?: string;
+}): Project {
+  const name = input.name?.trim();
+  if (!name) throw new Error("项目名称不能为空");
+  const projects = workingProjects();
+  const now = new Date().toISOString();
+  const project: Project = {
+    id: randomUUID(),
+    name,
+    summary: input.summary?.trim() || "",
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+  };
+  projects.set(project.id, project);
+  saveProjects(projects);
+  return copyProject(project);
+}
+
+export function listCards(filter?: { projectId?: string }): KnowledgeCard[] {
+  let cards = [...workingCards().values()].map(copyCard);
+  if (filter?.projectId) {
+    cards = cards.filter((card) => card.projectId === filter.projectId);
+  }
+  return cards;
 }
 
 export function getCard(id: string): KnowledgeCard | null {
@@ -508,6 +616,7 @@ export function addCard(input: NewCardInput): KnowledgeCard {
   const now = new Date().toISOString();
   const card: KnowledgeCard = {
     id: input.id ?? randomUUID(),
+    projectId: input.projectId ?? DEFAULT_PROJECT_ID,
     content,
     source: input.source ?? "manual",
     tags: (input.tags ?? []).map((t) => t.trim()).filter(Boolean),
@@ -525,11 +634,15 @@ export function addCards(inputs: NewCardInput[]): KnowledgeCard[] {
 }
 
 export function listActions(filter?: {
+  projectId?: string;
   assignee?: string;
   status?: ActionStatus | ActionStatus[];
   openOnly?: boolean;
 }): ActionItem[] {
   let items = [...workingActions().values()].map(copyAction);
+  if (filter?.projectId) {
+    items = items.filter((item) => item.projectId === filter.projectId);
+  }
   if (filter?.assignee) {
     items = items.filter((a) => a.assignee === filter.assignee);
   }
@@ -580,6 +693,7 @@ export function addAction(input: NewActionInput): ActionItem {
   const now = new Date().toISOString();
   const item = normalizeAction({
     id: input.id ?? randomUUID(),
+    projectId: input.projectId ?? DEFAULT_PROJECT_ID,
     title: input.title,
     description,
     assignee: input.assignee,
@@ -862,6 +976,7 @@ export function resetKnowledgeStoreForTests(): void {
   ensureDataDir();
   for (const p of [
     cardsPath(),
+    projectsPath(),
     actionsPath(),
     eventsPath(),
     footprintEventsPath(),
