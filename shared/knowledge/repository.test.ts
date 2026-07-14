@@ -37,6 +37,56 @@ describe("knowledge repository persistence", () => {
     expect(fs.existsSync(path.join(tmpDir, "actions.json"))).toBe(true);
   });
 
+  it("migrates legacy cards and work items into the default project", async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "cards.json"),
+      JSON.stringify({
+        legacy: {
+          id: "legacy",
+          content: "旧卡片",
+          source: "manual",
+          tags: [],
+          timestamp: "2026-07-14T00:00:00.000Z",
+          links: [],
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, "actions.json"),
+      JSON.stringify({
+        legacyAction: {
+          id: "legacyAction",
+          title: "旧工作项",
+          description: "旧工作项",
+          status: "todo",
+        },
+      }),
+    );
+
+    const repo = await loadRepo();
+    expect(repo.DEFAULT_PROJECT_ID).toBe("project-fc-opc-ibot");
+    expect(repo.listCards({ projectId: repo.DEFAULT_PROJECT_ID })[0].projectId)
+      .toBe(repo.DEFAULT_PROJECT_ID);
+    expect(repo.listActions({ projectId: repo.DEFAULT_PROJECT_ID })[0].projectId)
+      .toBe(repo.DEFAULT_PROJECT_ID);
+  });
+
+  it("isolates cards and work items by project", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const other = repo.addProject({ name: "另一个项目", summary: "隔离检查" });
+    repo.addCard({ content: "只属于另一个项目", projectId: other.id });
+    repo.addAction({ description: "另一个项目的工作", projectId: other.id });
+
+    expect(repo.listCards({ projectId: other.id })).toHaveLength(1);
+    expect(repo.listActions({ projectId: other.id })).toHaveLength(1);
+    expect(
+      repo
+        .listCards({ projectId: repo.DEFAULT_PROJECT_ID })
+        .some((card) => card.content === "只属于另一个项目"),
+    ).toBe(false);
+  });
+
   it("persists cards across reload of maps from disk", async () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
@@ -253,5 +303,3 @@ describe("knowledge repository persistence", () => {
     expect(island.edges.length).toBeGreaterThanOrEqual(1);
   });
 });
-
-
