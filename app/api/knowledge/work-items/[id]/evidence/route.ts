@@ -12,7 +12,6 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const { id } = await ctx.params;
     const body = (await req.json()) as {
       cardId?: string;
-      actor?: string;
     };
     if (!body.cardId?.trim()) {
       return NextResponse.json({ error: "cardId 必填" }, { status: 400 });
@@ -20,7 +19,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const item = linkEvidence(
       id,
       body.cardId.trim(),
-      body.actor ?? DEFAULT_ACTOR,
+      DEFAULT_ACTOR,
     );
     return NextResponse.json({ item });
   } catch (error) {

@@ -57,8 +57,6 @@ export async function POST(req: NextRequest) {
       relationType?: RelationType;
       evidenceSentence?: string;
       status?: RelationStatus;
-      source?: "manual" | "rule" | "import" | "model";
-      createdBy?: string;
       workItemId?: string;
       anchorCardId?: string;
     };
@@ -83,12 +81,12 @@ export async function POST(req: NextRequest) {
         relationType: body.relationType,
         evidenceSentence: body.evidenceSentence,
         status: body.status ?? "confirmed",
-        source: body.source ?? "manual",
-        createdBy: body.createdBy ?? DEFAULT_ACTOR,
+        source: "manual",
+        createdBy: DEFAULT_ACTOR,
         workItemId: body.workItemId,
         anchorCardId: body.anchorCardId,
       },
-      body.createdBy ?? DEFAULT_ACTOR,
+      DEFAULT_ACTOR,
     );
 
     return NextResponse.json({ item }, { status: 201 });

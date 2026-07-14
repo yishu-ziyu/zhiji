@@ -66,6 +66,7 @@ export type CanvasNode = {
 
 export type CanvasEdge = {
   id: string;
+  relationId?: string;
   source: CanvasNodeRef;
   target: CanvasNodeRef;
   label: string;
@@ -75,6 +76,10 @@ export type CanvasEdge = {
 
 export type CanvasAction =
   | "open_evidence"
+  | "link_evidence"
+  | "update_work"
+  | "comment"
+  | "create_relation"
   | "update_next_step"
   | "confirm_checkpoint"
   | "run_agent";
@@ -86,6 +91,7 @@ export type CanvasInspector = {
   evidence: CanvasNodeRef[];
   impacts: CanvasNodeRef[];
   availableActions: CanvasAction[];
+  workItem?: ActionItem;
 };
 
 export type CanvasTimelineEvent = {
@@ -121,6 +127,9 @@ export type ProjectCanvasSnapshot = {
   attention: AttentionItem[];
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  foldedNodes: CanvasNode[];
+  foldedEdges: CanvasEdge[];
+  hiddenNeighborCount: number;
   inspector: CanvasInspector;
   timeline: CanvasTimeline;
 };
@@ -209,6 +218,15 @@ export type KnowledgeSearchRequest = {
 
 export type KnowledgeSearchHit = KnowledgeCard & {
   score: number;
+};
+
+export type ProjectSearchHit = {
+  ref: CanvasNodeRef;
+  title: string;
+  summary: string;
+  score: number;
+  updatedAt: string;
+  source?: KnowledgeSource;
 };
 
 export type MinutesResult = {

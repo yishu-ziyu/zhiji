@@ -9,10 +9,8 @@ import { DEFAULT_ACTOR } from "@/shared/types/knowledge";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function POST(req: NextRequest, ctx: Ctx) {
+export async function POST(_req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
-  const body = (await req.json().catch(() => ({}))) as { actor?: string };
-  const actor = body.actor?.trim() || DEFAULT_ACTOR;
   const detail = getWorkItemDetail(id);
   if (!detail) {
     return NextResponse.json({ error: "工作项不存在" }, { status: 404 });
@@ -21,8 +19,17 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({ error: "已结束的工作不能交给 Agent" }, { status: 400 });
   }
   if (!detail.item.nextStep.trim() || detail.evidence.length === 0) {
+    const reason = !detail.item.nextStep.trim()
+      ? "需要先明确下一步"
+      : "需要先关联至少一条依据";
+    addWorkEvent(id, {
+      type: "block",
+      actor: "agent:project-reviewer",
+      body: `Agent 无法开始：${reason}`,
+      meta: { error: reason },
+    });
     return NextResponse.json(
-      { error: "交给 Agent 前需要明确下一步并关联至少一条依据" },
+      { error: `交给 Agent 前${reason}` },
       { status: 400 },
     );
   }
@@ -35,11 +42,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         status: "doing",
         blockedReason: null,
       },
-      actor,
+      DEFAULT_ACTOR,
     );
     const running = getWorkItemDetail(id)!;
     const mode = process.env.AGENT_RUN_MODE === "model" ? "model" : "deterministic";
     const review = await reviewWorkItem(running, { mode });
+    if (review.evidenceIds.length === 0) {
+      throw new Error("Agent 未引用有效依据");
+    }
     addWorkEvent(id, {
       type: "result",
       actor: "agent:project-reviewer",

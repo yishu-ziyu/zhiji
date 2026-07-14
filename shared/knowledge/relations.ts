@@ -15,6 +15,7 @@ import type {
 } from "@/shared/types/knowledge";
 import {
   EVIDENCE_SENTENCE_MAX,
+  RELATION_SOURCES,
   RELATION_TYPES,
   RELATION_TYPE_LABELS,
   UNDIRECTED_RELATION_TYPES,
@@ -112,6 +113,9 @@ export function assertRelationShape(
     throw new RelationValidationError("关系状态无效");
   }
   const source = input.source ?? "manual";
+  if (!RELATION_SOURCES.includes(source)) {
+    throw new RelationValidationError("关系来源无效");
+  }
   return {
     fromCardId,
     toCardId,

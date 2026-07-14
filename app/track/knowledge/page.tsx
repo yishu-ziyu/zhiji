@@ -1,831 +1,852 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Sidebar } from "@/shared/components/layout/Sidebar";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  Bell,
+  Bot,
+  ChevronDown,
+  FilePlus2,
+  Filter,
+  Plus,
+  Search,
+  Sparkles,
+  X,
+} from "lucide-react";
 import type {
   ActionItem,
   ActionStatus,
-  ActionSuggestion,
+  CanvasNodeRef,
   FootprintLitEntry,
   FootprintViewMode,
   KnowledgeCard,
-  KnowledgeRelation,
-  KnowledgeSearchHit,
   KnowledgeSource,
-  LibraryNode,
-  RelationNeighborEdge,
+  Project,
+  ProjectCanvasSnapshot,
+  ProjectSearchHit,
   RelationType,
-  WorkEvent,
 } from "@/shared/types/knowledge";
-import { DEFAULT_ACTOR } from "@/shared/types/knowledge";
-import { CapturePanel } from "./components/CapturePanel";
-import { CardList } from "./components/CardList";
-import {
-  CardRelationsPanel,
-} from "./components/CardRelationsPanel";
-import { KnowledgeFootprintMap } from "./components/KnowledgeFootprintMap";
-import {
-  KnowledgeSearch,
-  type SearchScope,
-} from "./components/KnowledgeSearch";
-import { WebSearchPanel } from "./components/WebSearchPanel";
-import { WorkItemsPanel } from "./components/WorkItemsPanel";
-import type { AnySearchHit } from "@/shared/anysearch/client";
-import { formatWebHitAsCardContent } from "@/shared/anysearch/client";
+import { SOURCE_CLUSTER_LABELS } from "@/shared/types/knowledge";
+import { ProjectCanvas } from "./components/ProjectCanvas";
+import { ProjectInspector } from "./components/ProjectInspector";
+import { ProjectNavigator } from "./components/ProjectNavigator";
+import { ProjectTimeline } from "./components/ProjectTimeline";
+import styles from "./project-canvas.module.css";
 
-async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json()) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error || "请求失败");
+type ApiError = { error?: string };
+
+async function apiJson<T>(
+  url: string,
+  init?: RequestInit,
+): Promise<T> {
+  const response = await fetch(url, init);
+  const data = (await response.json()) as T & ApiError;
+  if (!response.ok) throw new Error(data.error || "请求失败");
   return data;
 }
 
-async function patchJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(url, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json()) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error || "请求失败");
-  return data;
+function focusValue(ref: CanvasNodeRef) {
+  return `${ref.kind}:${ref.id}`;
 }
 
-type WorkDetail = {
-  item: ActionItem;
-  events: WorkEvent[];
-  evidence: KnowledgeCard[];
-};
+function focusFromUrl(projectId: string): CanvasNodeRef {
+  const value = new URL(window.location.href).searchParams.get("focus");
+  if (!value) return { kind: "project", id: projectId };
+  const separator = value.indexOf(":");
+  const kind = value.slice(0, separator);
+  const id = value.slice(separator + 1);
+  if (
+    !["project", "card", "work_item", "event"].includes(kind) ||
+    !id
+  ) {
+    return { kind: "project", id: projectId };
+  }
+  return { kind: kind as CanvasNodeRef["kind"], id };
+}
 
 export default function KnowledgePage() {
-  const defaultUser = DEFAULT_ACTOR;
-  const [query, setQuery] = useState("检索 来源");
-  const [sourceFilter, setSourceFilter] = useState<KnowledgeSource | "all">("all");
-  const [searchScope, setSearchScope] = useState<SearchScope>("library");
-  const [webHits, setWebHits] = useState<AnySearchHit[]>([]);
-  const [webAuthMode, setWebAuthMode] = useState<"api_key" | "anonymous" | undefined>();
-  const [webElapsedMs, setWebElapsedMs] = useState<number | undefined>();
-  const [ingestingUrl, setIngestingUrl] = useState<string | null>(null);
-  const [hits, setHits] = useState<KnowledgeSearchHit[]>([]);
-  const [actions, setActions] = useState<ActionItem[]>([]);
-  const [suggestions, setSuggestions] = useState<ActionSuggestion[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<WorkDetail | null>(null);
-  const [filterMine, setFilterMine] = useState(false);
-  const [newContent, setNewContent] = useState("");
-  const [newTags, setNewTags] = useState("手记");
-  const [transcript, setTranscript] = useState(
-    "今天对齐了知识工作者 demo：先检索再沉淀。小王负责补验收标准，本周五前完成。决定采用带来源的卡片列表。",
-  );
-  const [goal, setGoal] = useState("两天内做出能演示的检索、卡片和待办");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [snapshot, setSnapshot] = useState<ProjectCanvasSnapshot | null>(null);
+  const [projectCards, setProjectCards] = useState<KnowledgeCard[]>([]);
+  const [myOpenWork, setMyOpenWork] = useState<ActionItem[]>([]);
+  const [footprint, setFootprint] = useState<FootprintLitEntry[]>([]);
+  const [footprintMode, setFootprintMode] = useState<FootprintViewMode>("window");
+  const [footprintRevision, setFootprintRevision] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<ProjectSearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [createWorkOpen, setCreateWorkOpen] = useState(false);
+  const [createCardOpen, setCreateCardOpen] = useState(false);
+  const [cardTitle, setCardTitle] = useState("");
+  const [cardContent, setCardContent] = useState("");
+  const [cardSource, setCardSource] = useState<KnowledgeSource>("manual");
+  const [workTitle, setWorkTitle] = useState("");
+  const [workNextStep, setWorkNextStep] = useState("");
+  const [workEvidenceId, setWorkEvidenceId] = useState("");
+  const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [searchedOnce, setSearchedOnce] = useState(false);
-  const [querySessionId, setQuerySessionId] = useState<string | null>(null);
-  const [footprintMode, setFootprintMode] =
-    useState<FootprintViewMode>("current_query");
-  const [libraryNodes, setLibraryNodes] = useState<LibraryNode[]>([]);
-  const [footprintLit, setFootprintLit] = useState<FootprintLitEntry[]>([]);
-  const [litCount, setLitCount] = useState(0);
-  const [dimCount, setDimCount] = useState(0);
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
-  const [relationEdges, setRelationEdges] = useState<RelationNeighborEdge[]>(
+  const [error, setError] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const snapshotRequestRef = useRef(0);
+  const cardsRequestRef = useRef(0);
+  const workRequestRef = useRef(0);
+  const footprintRequestRef = useRef(0);
+  const searchRequestRef = useRef(0);
+  const navigationRequestRef = useRef(0);
+  const mutationRequestRef = useRef(0);
+  const activeProjectIdRef = useRef("");
+
+  const loadSnapshot = useCallback(
+    async (nextProjectId: string, focus?: CanvasNodeRef) => {
+      const requestId = ++snapshotRequestRef.current;
+      setLoading(true);
+      setError(null);
+      try {
+        const ref = focus ?? focusFromUrl(nextProjectId);
+        const params = new URLSearchParams({ focus: focusValue(ref) });
+        const data = await apiJson<{ snapshot: ProjectCanvasSnapshot }>(
+          `/api/knowledge/projects/${nextProjectId}/canvas?${params}`,
+        );
+        if (requestId === snapshotRequestRef.current) {
+          setSnapshot(data.snapshot);
+        }
+      } catch (nextError) {
+        if (requestId === snapshotRequestRef.current) {
+          setError(nextError instanceof Error ? nextError.message : "读取项目失败");
+        }
+      } finally {
+        if (requestId === snapshotRequestRef.current) setLoading(false);
+      }
+    },
     [],
   );
-  const [islandEdges, setIslandEdges] = useState<KnowledgeRelation[]>([]);
-  const [pathHint, setPathHint] = useState<{
-    nodes: string[];
-    length: number;
-  } | null>(null);
-  const [allCards, setAllCards] = useState<KnowledgeCard[]>([]);
 
-  const refreshLibraryMap = useCallback(async () => {
-    const res = await fetch("/api/knowledge/library-map");
-    if (!res.ok) return;
-    const data = (await res.json()) as { nodes?: LibraryNode[] };
-    setLibraryNodes(data.nodes ?? []);
+  const loadProjectCards = useCallback(async (nextProjectId: string) => {
+    const requestId = ++cardsRequestRef.current;
+    const data = await apiJson<{ cards: KnowledgeCard[] }>(
+      `/api/knowledge/add?projectId=${encodeURIComponent(nextProjectId)}`,
+    );
+    if (requestId === cardsRequestRef.current) setProjectCards(data.cards);
   }, []);
 
-  const refreshFootprint = useCallback(
-    async (
-      mode: FootprintViewMode,
-      sessionId?: string | null,
-      workId?: string | null,
-    ) => {
-      const params = new URLSearchParams({ mode });
-      if (mode === "current_query") {
-        const sid = sessionId ?? querySessionId;
-        if (!sid) {
-          setFootprintLit([]);
-          setLitCount(0);
-          return;
-        }
-        params.set("querySessionId", sid);
-      }
-      if (mode === "work_item") {
-        const wid = workId ?? selectedId;
-        if (!wid) {
-          setFootprintLit([]);
-          setLitCount(0);
-          return;
-        }
-        params.set("workItemId", wid);
-      }
-      if (mode === "window") params.set("sinceDays", "7");
-      const res = await fetch(`/api/knowledge/footprint?${params}`);
-      if (!res.ok) return;
-      const data = (await res.json()) as {
-        lit?: FootprintLitEntry[];
-        litCount?: number;
-        dimCount?: number;
-      };
-      setFootprintLit(data.lit ?? []);
-      setLitCount(data.litCount ?? data.lit?.length ?? 0);
-      setDimCount(data.dimCount ?? 0);
-    },
-    [querySessionId, selectedId],
-  );
-
-  const refreshActions = useCallback(async () => {
-    const qs = filterMine
-      ? `?assignee=${encodeURIComponent(defaultUser)}&openOnly=1`
-      : "";
-    const res = await fetch(`/api/knowledge/work-items${qs}`);
-    const data = (await res.json()) as { items?: ActionItem[] };
-    setActions(data.items ?? []);
-  }, [filterMine, defaultUser]);
-
-  const loadDetail = useCallback(async (id: string) => {
-    const res = await fetch(`/api/knowledge/work-items/${id}`);
-    if (!res.ok) {
-      setDetail(null);
-      setIslandEdges([]);
-      return;
-    }
-    const data = (await res.json()) as WorkDetail;
-    setDetail(data);
-    const islandRes = await fetch(`/api/knowledge/work-items/${id}/island`);
-    if (islandRes.ok) {
-      const island = (await islandRes.json()) as {
-        edges?: KnowledgeRelation[];
-      };
-      setIslandEdges(island.edges ?? []);
-    } else {
-      setIslandEdges([]);
-    }
+  const loadMyOpenWork = useCallback(async (nextProjectId: string) => {
+    const requestId = ++workRequestRef.current;
+    const params = new URLSearchParams({
+      projectId: nextProjectId,
+      assignee: "自己",
+      openOnly: "1",
+    });
+    const data = await apiJson<{ items: ActionItem[] }>(
+      `/api/knowledge/work-items?${params}`,
+    );
+    if (requestId === workRequestRef.current) setMyOpenWork(data.items);
   }, []);
 
-  const loadNeighbors = useCallback(async (cardId: string | null) => {
-    if (!cardId) {
-      setRelationEdges([]);
-      setPathHint(null);
-      return;
+  const loadFootprint = useCallback(async (options?: {
+    mode?: FootprintViewMode;
+    querySessionId?: string;
+    workItemId?: string;
+  }) => {
+    const requestId = ++footprintRequestRef.current;
+    const mode = options?.mode ?? "window";
+    const params = new URLSearchParams({ mode });
+    if (options?.querySessionId) params.set("querySessionId", options.querySessionId);
+    if (options?.workItemId) params.set("workItemId", options.workItemId);
+    if (mode === "window") params.set("sinceDays", "7");
+    const data = await apiJson<{ lit: FootprintLitEntry[] }>(
+      `/api/knowledge/footprint?${params}`,
+    );
+    if (requestId === footprintRequestRef.current) {
+      setFootprint(data.lit);
+      setFootprintMode(mode);
+      setFootprintRevision((value) => value + 1);
     }
-    const res = await fetch(`/api/knowledge/cards/${cardId}/neighbors`);
-    if (!res.ok) {
-      setRelationEdges([]);
-      return;
-    }
-    const data = (await res.json()) as { edges?: RelationNeighborEdge[] };
-    setRelationEdges(data.edges ?? []);
   }, []);
-
-
-  const runLibrarySearch = useCallback(
-    async (q?: string, source?: KnowledgeSource | "all") => {
-      setLoading(true);
-      setError(null);
-      setSearchedOnce(true);
-      const nextQuery = q ?? query;
-      const nextSource = source ?? sourceFilter;
-      try {
-        const data = await postJson<{
-          hits: KnowledgeSearchHit[];
-          querySessionId?: string;
-        }>("/api/knowledge/search", {
-          query: nextQuery,
-          filters:
-            nextSource === "all"
-              ? { limit: 20 }
-              : { source: nextSource, limit: 20 },
-        });
-        setHits(data.hits);
-        setAllCards((prev) => {
-          const map = new Map(prev.map((c) => [c.id, c]));
-          for (const h of data.hits) map.set(h.id, h);
-          return [...map.values()];
-        });
-        if (data.querySessionId) {
-          setQuerySessionId(data.querySessionId);
-          setFootprintMode("current_query");
-          await refreshLibraryMap();
-          await refreshFootprint("current_query", data.querySessionId);
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "检索失败");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [query, sourceFilter, refreshLibraryMap, refreshFootprint],
-  );
-
-  const runWebSearch = useCallback(
-    async (q?: string) => {
-      setLoading(true);
-      setError(null);
-      setSearchedOnce(true);
-      const nextQuery = (q ?? query).trim();
-      if (!nextQuery) {
-        setError("请输入检索词");
-        setLoading(false);
-        return;
-      }
-      try {
-        const data = await postJson<{
-          hits: AnySearchHit[];
-          authMode?: "api_key" | "anonymous";
-          elapsedMs?: number;
-        }>("/api/knowledge/web-search", {
-          query: nextQuery,
-          maxResults: 5,
-        });
-        setWebHits(data.hits ?? []);
-        setWebAuthMode(data.authMode);
-        setWebElapsedMs(data.elapsedMs);
-        setNotice(
-          `AnySearch：${data.hits?.length ?? 0} 条${data.authMode === "anonymous" ? "（匿名）" : ""}`,
-        );
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "全网检索失败");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [query],
-  );
-
-  const runSearch = useCallback(
-    async (q?: string, source?: KnowledgeSource | "all") => {
-      if (searchScope === "web") {
-        await runWebSearch(q);
-        return;
-      }
-      await runLibrarySearch(q, source);
-    },
-    [searchScope, runWebSearch, runLibrarySearch],
-  );
-
-  const ingestWebHit = useCallback(
-    async (hit: AnySearchHit) => {
-      setIngestingUrl(hit.url);
-      setError(null);
-      setNotice(null);
-      try {
-        const data = await postJson<{ card: KnowledgeCard }>(
-          "/api/knowledge/add",
-          {
-            title: hit.title.slice(0, 80),
-            content: formatWebHitAsCardContent(hit),
-            source: "doc" as KnowledgeSource,
-            tags: ["web", "anysearch"],
-          },
-        );
-        setNotice(`已入库：${data.card.title ?? data.card.id}`);
-        setSearchScope("library");
-        await runLibrarySearch(hit.title.slice(0, 40) || "anysearch");
-        setSelectedCardId(data.card.id);
-        await loadNeighbors(data.card.id);
-        await refreshLibraryMap();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "入库失败");
-      } finally {
-        setIngestingUrl(null);
-      }
-    },
-    [runLibrarySearch, loadNeighbors, refreshLibraryMap],
-  );
-
-  const refreshSuggestions = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await postJson<{ suggestions: ActionSuggestion[] }>(
-        "/api/knowledge/state",
-        { action: "suggest", context: query },
-      );
-      setSuggestions(data.suggestions ?? []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "建议失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [query]);
 
   useEffect(() => {
-    let alive = true;
-    (async () => {
+    let active = true;
+    void (async () => {
       try {
-        const [searchData, itemsRes, suggestData, mapRes] = await Promise.all([
-          postJson<{
-            hits: KnowledgeSearchHit[];
-            querySessionId?: string;
-          }>("/api/knowledge/search", {
-            query: "检索 来源",
-          }),
-          fetch("/api/knowledge/work-items").then((r) => r.json()) as Promise<{
-            items?: ActionItem[];
-          }>,
-          postJson<{ suggestions: ActionSuggestion[] }>("/api/knowledge/state", {
-            action: "suggest",
-            context: "检索 来源",
-          }),
-          fetch("/api/knowledge/library-map").then((r) => r.json()) as Promise<{
-            nodes?: LibraryNode[];
-          }>,
-        ]);
-        if (!alive) return;
-        setHits(searchData.hits);
-        setAllCards(searchData.hits);
-        setActions(itemsRes.items ?? []);
-        setSuggestions(suggestData.suggestions ?? []);
-        setLibraryNodes(mapRes.nodes ?? []);
-        setSearchedOnce(true);
-        if (searchData.querySessionId) {
-          setQuerySessionId(searchData.querySessionId);
-          const fp = await fetch(
-            `/api/knowledge/footprint?mode=current_query&querySessionId=${searchData.querySessionId}`,
-          ).then((r) => r.json());
-          setFootprintLit(fp.lit ?? []);
-          setLitCount(fp.litCount ?? 0);
-          setDimCount(fp.dimCount ?? 0);
+        const data = await apiJson<{ projects: Project[] }>(
+          "/api/knowledge/projects",
+        );
+        if (!active) return;
+        setProjects(data.projects);
+        const urlProjectId = new URL(window.location.href).searchParams.get(
+          "projectId",
+        );
+        const selected =
+          data.projects.find((project) => project.id === urlProjectId) ??
+          data.projects[0];
+        if (selected) {
+          activeProjectIdRef.current = selected.id;
+          setProjectId(selected.id);
+          await Promise.all([
+            loadSnapshot(selected.id),
+            loadProjectCards(selected.id),
+            loadMyOpenWork(selected.id),
+            loadFootprint(),
+          ]);
         }
-        const firstCard = searchData.hits[0];
-        if (firstCard) {
-          setSelectedCardId(firstCard.id);
-          await loadNeighbors(firstCard.id);
-        }
-        const first = itemsRes.items?.[0];
-        if (first) {
-          setSelectedId(first.id);
-          await loadDetail(first.id);
-        }
-      } catch {
-        // First paint can stay empty; user can retry via buttons.
+      } catch (nextError) {
+        setError(nextError instanceof Error ? nextError.message : "读取项目失败");
+        setLoading(false);
       }
     })();
     return () => {
-      alive = false;
+      active = false;
     };
-  }, [loadDetail, loadNeighbors]);
+  }, [loadFootprint, loadMyOpenWork, loadProjectCards, loadSnapshot]);
 
   useEffect(() => {
-    void refreshActions();
-  }, [filterMine, refreshActions]);
+    function handlePopState() {
+      const url = new URL(window.location.href);
+      const requestedId = url.searchParams.get("projectId");
+      const selected = projects.find((project) => project.id === requestedId) ?? projects[0];
+      if (!selected) return;
+      const focus = selected.id === requestedId
+        ? focusFromUrl(selected.id)
+        : ({ kind: "project", id: selected.id } as const);
+      activeProjectIdRef.current = selected.id;
+      mutationRequestRef.current += 1;
+      setBusy(false);
+      setProjectId(selected.id);
+      setSnapshot(null);
+      setQuery("");
+      setSearchResults([]);
+      setSearching(false);
+      setProjectCards([]);
+      setMyOpenWork([]);
+      setFootprint([]);
+      navigationRequestRef.current += 1;
+      searchRequestRef.current += 1;
+      if (selected.id !== requestedId) updateUrl(selected.id, focus, true);
+      void Promise.all([
+        loadSnapshot(selected.id, focus),
+        loadProjectCards(selected.id),
+        loadMyOpenWork(selected.id),
+        loadFootprint(),
+      ]);
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [loadFootprint, loadMyOpenWork, loadProjectCards, loadSnapshot, projects]);
 
   useEffect(() => {
-    void loadNeighbors(selectedCardId);
-  }, [selectedCardId, loadNeighbors]);
+    function handleShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
 
-  const answerLine = useMemo(() => {
-    if (!searchedOnce || hits.length === 0) return null;
-    const top = hits[0];
-    const src =
-      top.source === "meeting"
-        ? "会议"
-        : top.source === "doc"
-          ? "文档"
-          : top.source === "chat"
-            ? "聊天"
-            : top.source === "email"
-              ? "邮件"
-              : "手记";
-    return {
-      title: top.title || top.content.slice(0, 48),
-      blurb: top.content.slice(0, 120) + (top.content.length > 120 ? "…" : ""),
-      source: src,
-      count: hits.length,
+  function updateUrl(nextProjectId: string, focus: CanvasNodeRef, replace = false) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("projectId", nextProjectId);
+    url.searchParams.set("focus", focusValue(focus));
+    window.history[replace ? "replaceState" : "pushState"]({}, "", url);
+  }
+
+  function beginMutation() {
+    const context = {
+      id: ++mutationRequestRef.current,
+      navigation: navigationRequestRef.current,
+      projectId: activeProjectIdRef.current,
     };
-  }, [hits, searchedOnce]);
-
-  async function handleAdd() {
-    setLoading(true);
+    setBusy(true);
     setError(null);
-    setNotice(null);
-    try {
-      await postJson("/api/knowledge/add", {
-        content: newContent,
-        source: "manual" as KnowledgeSource,
-        tags: newTags
-          .split(/[,，\s]+/)
-          .map((t) => t.trim())
-          .filter(Boolean),
-        title: newContent.slice(0, 24),
-      });
-      setNewContent("");
-      setNotice("已保存卡片");
-      await runLibrarySearch(query || "手记");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "保存失败");
-    } finally {
-      setLoading(false);
-    }
+    return context;
   }
 
-  async function handleMinutes() {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const data = await postJson<{
-        title: string;
-        cards: unknown[];
-        actionItems: ActionItem[];
-        offline?: boolean;
-      }>("/api/knowledge/minutes", { transcript });
-      setNotice(
-        `纪要「${data.title}」：${data.cards.length} 卡 · ${data.actionItems.length} 工作项${data.offline ? "（离线）" : ""}`,
-      );
-      await refreshActions();
-      await runLibrarySearch("会议");
-      await refreshSuggestions();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "纪要失败");
-    } finally {
-      setLoading(false);
-    }
+  function mutationIsCurrent(context: ReturnType<typeof beginMutation>) {
+    return context.id === mutationRequestRef.current &&
+      context.navigation === navigationRequestRef.current &&
+      context.projectId === activeProjectIdRef.current;
   }
 
-  async function handleDissect() {
-    setLoading(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const data = await postJson<{
-        actionItems: ActionItem[];
-        offline?: boolean;
-      }>("/api/knowledge/dissect", { goal });
-      setNotice(
-        `已拆 ${data.actionItems.length} 条工作项${data.offline ? "（离线）" : ""}`,
-      );
-      await refreshActions();
-      await refreshSuggestions();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "拆解失败");
-    } finally {
-      setLoading(false);
+  async function handleFocus(ref: CanvasNodeRef) {
+    if (!projectId) return;
+    const navigationId = ++navigationRequestRef.current;
+    const requestedProjectId = projectId;
+    setCheckpointOpen(false);
+    updateUrl(requestedProjectId, ref);
+    setSearchResults([]);
+    const snapshotPromise = loadSnapshot(requestedProjectId, ref);
+    if (ref.kind === "card") {
+      void apiJson("/api/knowledge/footprint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cardId: ref.id }),
+      }).then(() => {
+        if (navigationId === navigationRequestRef.current) {
+          return loadFootprint();
+        }
+      }).catch(() => undefined);
     }
+    await snapshotPromise;
   }
 
-  async function handleSelect(id: string) {
-    setSelectedId(id);
-    setError(null);
-    try {
-      await loadDetail(id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "加载详情失败");
-    }
+  async function handleSelectProject(id: string) {
+    navigationRequestRef.current += 1;
+    mutationRequestRef.current += 1;
+    activeProjectIdRef.current = id;
+    setBusy(false);
+    const focus = { kind: "project", id } as const;
+    setProjectId(id);
+    setSnapshot(null);
+    setProjectCards([]);
+    setMyOpenWork([]);
+    setFootprint([]);
+    setQuery("");
+    setSearchResults([]);
+    setSearching(false);
+    searchRequestRef.current += 1;
+    updateUrl(id, focus);
+    await Promise.all([
+      loadSnapshot(id, focus),
+      loadProjectCards(id),
+      loadMyOpenWork(id),
+      loadFootprint(),
+    ]);
   }
 
-  async function handlePatch(
-    id: string,
-    patch: Partial<{
-      status: ActionStatus;
-      assignee: string;
-      nextStep: string;
-      blockedReason: string;
-    }>,
-  ) {
-    setLoading(true);
+  async function handleSearch(event: FormEvent) {
+    event.preventDefault();
+    if (!query.trim() || !projectId) return;
+    setSearching(true);
     setError(null);
+    const requestId = ++searchRequestRef.current;
+    const requestedProjectId = projectId;
     try {
-      await patchJson(`/api/knowledge/work-items/${id}`, patch);
-      await refreshActions();
-      await loadDetail(id);
-      setNotice("工作项已更新");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "更新失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleCreate(input: {
-    title: string;
-    assignee: string;
-    nextStep: string;
-  }) {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await postJson<{ item: ActionItem }>(
-        "/api/knowledge/work-items",
+      const data = await apiJson<{
+        projectHits: ProjectSearchHit[];
+        querySessionId?: string;
+      }>(
+        "/api/knowledge/search",
         {
-          title: input.title,
-          description: input.title,
-          assignee: input.assignee,
-          nextStep: input.nextStep,
-          status: "todo",
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: query.trim(),
+            filters: { projectId, limit: 8 },
+          }),
         },
       );
-      await refreshActions();
-      setSelectedId(data.item.id);
-      await loadDetail(data.item.id);
-      setNotice("已创建工作项");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "创建失败");
+      if (
+        requestId === searchRequestRef.current &&
+        requestedProjectId === projectId
+      ) {
+        setSearchResults(data.projectHits);
+        if (data.querySessionId) {
+          await loadFootprint({
+            mode: "current_query",
+            querySessionId: data.querySessionId,
+          });
+        }
+      }
+    } catch (nextError) {
+      if (requestId === searchRequestRef.current) {
+        setError(nextError instanceof Error ? nextError.message : "搜索失败");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === searchRequestRef.current) setSearching(false);
     }
   }
 
-  async function handleAddEvent(
-    id: string,
-    type: "comment" | "decision" | "result" | "block",
-    body: string,
-  ) {
-    setLoading(true);
-    setError(null);
+  async function handleUpdateNextStep(value: string) {
+    if (!snapshot || snapshot.focus.kind !== "work_item") return;
+    const mutation = beginMutation();
     try {
-      await postJson(`/api/knowledge/work-items/${id}/events`, {
-        type,
-        body,
-        actor: defaultUser,
+      await apiJson(`/api/knowledge/work-items/${snapshot.focus.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nextStep: value }),
       });
-      await refreshActions();
-      await loadDetail(id);
-      setNotice(type === "block" ? "已标记阻塞" : "已写入时间线");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "写入失败");
-    } finally {
-      setLoading(false);
+      if (!mutationIsCurrent(mutation)) return;
+      await Promise.all([
+        loadSnapshot(mutation.projectId, snapshot.focus),
+        loadMyOpenWork(mutation.projectId),
+      ]);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice("下一步已写入时间线");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setError(nextError instanceof Error ? nextError.message : "更新失败");
+      setBusy(false);
     }
   }
 
-  async function handleLinkEvidence(workItemId: string, cardId: string) {
-    setLoading(true);
-    setError(null);
+  async function handleLinkEvidence(cardId: string) {
+    if (!snapshot || snapshot.focus.kind !== "work_item") return;
+    const mutation = beginMutation();
     try {
-      await postJson(`/api/knowledge/work-items/${workItemId}/evidence`, {
-        cardId,
-        actor: defaultUser,
+      await apiJson(`/api/knowledge/work-items/${snapshot.focus.id}/evidence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cardId }),
       });
-      await loadDetail(workItemId);
-      await refreshFootprint(footprintMode, querySessionId, workItemId);
-      setNotice("已关联依据");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "关联失败");
-    } finally {
-      setLoading(false);
+      if (!mutationIsCurrent(mutation)) return;
+      await Promise.all([
+        loadSnapshot(mutation.projectId, snapshot.focus),
+        loadMyOpenWork(mutation.projectId),
+        loadFootprint({ mode: "work_item", workItemId: snapshot.focus.id }),
+      ]);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice("依据已关联并写入时间线");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setError(nextError instanceof Error ? nextError.message : "关联依据失败");
     }
   }
 
-  async function handleFootprintMode(mode: FootprintViewMode) {
-    setFootprintMode(mode);
-    setError(null);
+  async function handleUpdateWork(input: {
+    status: ActionStatus;
+    blockedReason?: string;
+    assignee?: string;
+  }) {
+    if (!snapshot || snapshot.focus.kind !== "work_item") return;
+    const mutation = beginMutation();
     try {
-      await refreshFootprint(mode, querySessionId, selectedId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "足迹加载失败");
+      await apiJson(`/api/knowledge/work-items/${snapshot.focus.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!mutationIsCurrent(mutation)) return;
+      await Promise.all([
+        loadSnapshot(mutation.projectId, snapshot.focus),
+        loadMyOpenWork(mutation.projectId),
+      ]);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice("执行结果已写入项目状态和时间线");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setError(nextError instanceof Error ? nextError.message : "写入执行结果失败");
+    }
+  }
+
+  async function handleAddComment(body: string) {
+    if (!snapshot || snapshot.focus.kind !== "work_item") return;
+    const mutation = beginMutation();
+    try {
+      await apiJson(`/api/knowledge/work-items/${snapshot.focus.id}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "comment", body }),
+      });
+      if (!mutationIsCurrent(mutation)) return;
+      await Promise.all([
+        loadSnapshot(mutation.projectId, snapshot.focus),
+        loadMyOpenWork(mutation.projectId),
+      ]);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice("执行记录已写入时间线");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setError(nextError instanceof Error ? nextError.message : "写入记录失败");
     }
   }
 
   async function handleCreateRelation(input: {
-    fromCardId: string;
     toCardId: string;
     relationType: RelationType;
     evidenceSentence: string;
   }) {
-    setLoading(true);
-    setError(null);
+    if (!snapshot || snapshot.focus.kind !== "card") return;
+    const mutation = beginMutation();
     try {
-      await postJson("/api/knowledge/relations", {
-        ...input,
-        createdBy: defaultUser,
+      await apiJson("/api/knowledge/relations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromCardId: snapshot.focus.id,
+          toCardId: input.toCardId,
+          relationType: input.relationType,
+          evidenceSentence: input.evidenceSentence,
+          status: "confirmed",
+          source: "manual",
+        }),
       });
-      await loadNeighbors(input.fromCardId);
-      if (selectedId) await loadDetail(selectedId);
-      setNotice("已保存关系");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "创建关系失败");
-    } finally {
-      setLoading(false);
+      if (!mutationIsCurrent(mutation)) return;
+      await Promise.all([
+        loadSnapshot(mutation.projectId, snapshot.focus),
+        loadMyOpenWork(mutation.projectId),
+      ]);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice("材料关系已建立");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setError(nextError instanceof Error ? nextError.message : "建立关系失败");
     }
   }
 
-  async function handleRelationStatus(
+  async function handleReviewRelation(
     relationId: string,
     status: "confirmed" | "rejected",
   ) {
-    setLoading(true);
-    setError(null);
+    if (!snapshot || snapshot.focus.kind !== "card") return;
+    const mutation = beginMutation();
     try {
-      await patchJson(`/api/knowledge/relations/${relationId}`, { status });
-      await loadNeighbors(selectedCardId);
-      if (selectedId) await loadDetail(selectedId);
-      setNotice(status === "confirmed" ? "已确认关系" : "已否决建议");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "更新关系失败");
-    } finally {
-      setLoading(false);
+      await apiJson(`/api/knowledge/relations/${relationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!mutationIsCurrent(mutation)) return;
+      await loadSnapshot(mutation.projectId, snapshot.focus);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice(status === "confirmed" ? "建议关系已确认" : "建议关系已否决");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setError(nextError instanceof Error ? nextError.message : "更新关系失败");
     }
   }
 
-  async function handleSelectCard(cardId: string) {
-    setSelectedCardId(cardId);
-    // After neighbors load (effect), optionally compute path to first neighbor.
-    // Here: path to first island peer if any.
-    const islandPeer = islandEdges.find(
-      (e) => e.fromCardId === cardId || e.toCardId === cardId,
-    );
-    const other = islandPeer
-      ? islandPeer.fromCardId === cardId
-        ? islandPeer.toCardId
-        : islandPeer.fromCardId
-      : null;
-    if (!other) {
-      setPathHint(null);
-      return;
-    }
+  async function handleRunAgent() {
+    if (!snapshot || snapshot.focus.kind !== "work_item") return;
+    const mutation = beginMutation();
     try {
-      const res = await fetch(
-        `/api/knowledge/path?from=${encodeURIComponent(cardId)}&to=${encodeURIComponent(other)}&maxDepth=3`,
+      await apiJson(
+        `/api/knowledge/work-items/${snapshot.focus.id}/agent-run`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        },
       );
-      if (res.ok) {
-        const data = (await res.json()) as {
-          path?: { nodes: string[]; length: number } | null;
-        };
-        setPathHint(data.path ?? null);
-      }
-    } catch {
-      setPathHint(null);
+      if (!mutationIsCurrent(mutation)) return;
+      await Promise.all([
+        loadSnapshot(mutation.projectId, snapshot.focus),
+        loadMyOpenWork(mutation.projectId),
+      ]);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice("Agent 已写回复核结果，等待你确认");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      await Promise.all([
+        loadSnapshot(mutation.projectId, snapshot.focus),
+        loadMyOpenWork(mutation.projectId),
+      ]);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setError(nextError instanceof Error ? nextError.message : "Agent 执行失败");
     }
+  }
+
+  async function handleCheckpoint(input: {
+    goal: string;
+    completed: string[];
+    unresolved: string[];
+    nextStep: string;
+  }) {
+    if (!projectId) return;
+    const mutation = beginMutation();
+    try {
+      await apiJson(`/api/knowledge/projects/${mutation.projectId}/checkpoints`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          completed: input.completed,
+          unresolved: input.unresolved,
+          confirmedBy: "自己",
+        }),
+      });
+      if (!mutationIsCurrent(mutation)) return;
+      setCheckpointOpen(false);
+      await loadSnapshot(mutation.projectId, { kind: "project", id: mutation.projectId });
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice("已保存你确认的项目状态");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setError(nextError instanceof Error ? nextError.message : "保存失败");
+      setBusy(false);
+    }
+  }
+
+  async function handleCreateWork(event: FormEvent) {
+    event.preventDefault();
+    if (!workTitle.trim() || !workNextStep.trim()) return;
+    const mutation = beginMutation();
+    try {
+      const data = await apiJson<{ item: { id: string } }>(
+        "/api/knowledge/work-items",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: mutation.projectId,
+            title: workTitle.trim(),
+            nextStep: workNextStep.trim(),
+            assignee: "自己",
+            cardId: workEvidenceId || undefined,
+          }),
+        },
+      );
+      if (!mutationIsCurrent(mutation)) return;
+      setCreateWorkOpen(false);
+      setWorkTitle("");
+      setWorkNextStep("");
+      setWorkEvidenceId("");
+      mutation.navigation = navigationRequestRef.current + 1;
+      await Promise.all([
+        handleFocus({ kind: "work_item", id: data.item.id }),
+        loadMyOpenWork(mutation.projectId),
+      ]);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice("已创建工作项");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setError(nextError instanceof Error ? nextError.message : "创建失败");
+      setBusy(false);
+    }
+  }
+
+  async function handleCreateCard(event: FormEvent) {
+    event.preventDefault();
+    if (!cardContent.trim() || !projectId) return;
+    const mutation = beginMutation();
+    try {
+      const data = await apiJson<{ card: KnowledgeCard }>("/api/knowledge/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: mutation.projectId,
+          title: cardTitle.trim() || undefined,
+          content: cardContent.trim(),
+          source: cardSource,
+        }),
+      });
+      if (!mutationIsCurrent(mutation)) return;
+      setCreateCardOpen(false);
+      setCardTitle("");
+      setCardContent("");
+      setCardSource("manual");
+      mutation.navigation = navigationRequestRef.current + 1;
+      await Promise.all([
+        loadProjectCards(mutation.projectId),
+        handleFocus({ kind: "card", id: data.card.id }),
+      ]);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice("项目材料已加入画布");
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setError(nextError instanceof Error ? nextError.message : "新增材料失败");
+    }
+  }
+
+  async function requestCheckpoint() {
+    if (!projectId) return;
+    const projectFocus = { kind: "project", id: projectId } as const;
+    if (
+      snapshot?.focus.kind !== "project" ||
+      snapshot.focus.id !== projectId
+    ) {
+      await handleFocus(projectFocus);
+    }
+    setCheckpointOpen(true);
+    setNewMenuOpen(false);
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-6xl mx-auto px-4 md:px-6 py-6 md:py-8 space-y-6">
-          <KnowledgeSearch
-            query={query}
-            loading={loading}
-            sourceFilter={sourceFilter}
-            searchScope={searchScope}
-            onQueryChange={setQuery}
-            onSearchScopeChange={(scope) => {
-              setSearchScope(scope);
-              setError(null);
-              if (scope === "web" && webHits.length === 0) {
-                setQuery((q) =>
-                  q === "检索 来源" ? "AnySearch AI agent search" : q,
-                );
-              }
-            }}
-            onSourceFilterChange={(v) => {
-              setSourceFilter(v);
-              void runLibrarySearch(query, v);
-            }}
-            onSearch={(q) => void runSearch(q)}
-            exampleQueries={
-              searchScope === "web"
-                ? [
-                    "AnySearch AI agent search",
-                    "knowledge footprint visualization",
-                    "Heptabase whiteboard",
-                  ]
-                : undefined
-            }
-          />
+    <main className={styles.workspace} data-testid="project-canvas-shell">
+      <ProjectNavigator
+        key={`${projectId}:${footprintMode}:${footprintRevision}`}
+        projects={projects}
+        projectId={projectId}
+        snapshot={snapshot}
+        projectCards={projectCards}
+        myOpenWork={myOpenWork}
+        footprint={footprint}
+        footprintMode={footprintMode}
+        onSelectProject={handleSelectProject}
+        onOpenSearch={() => searchRef.current?.focus()}
+        onFocusAttention={() => {
+          const first = snapshot?.attention[0];
+          if (first) void handleFocus(first.target);
+        }}
+        onCreateWork={() => setCreateWorkOpen(true)}
+        onFocus={(ref) => void handleFocus(ref)}
+      />
 
-          {(error || notice) && (
-            <div
-              className={`rounded-[12px] border px-3 py-2 text-sm max-w-3xl mx-auto font-serif-cn ${
-                error
-                  ? "border-destructive/50 bg-destructive/10 text-[#f5c4c0]"
-                  : "border-primary/40 bg-primary/10 text-foreground"
-              }`}
+      <header className={styles.topbar}>
+        <form className={styles.canvasSearch} onSubmit={handleSearch}>
+          <button
+            type="submit"
+            className={styles.searchSubmit}
+            aria-label="搜索当前项目"
+            disabled={searching || !query.trim()}
+          >
+            <Search size={20} />
+          </button>
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索当前项目的材料、任务和记录…"
+            aria-label="搜索内容"
+          />
+          <kbd>⌘F</kbd>
+          {searching ? <span className={styles.searching}>搜索中</span> : null}
+          {searchResults.length > 0 ? (
+            <div className={styles.searchResults}>
+              {searchResults.map((hit) => (
+                <button
+                  key={`${hit.ref.kind}:${hit.ref.id}`}
+                  type="button"
+                  onClick={() => void handleFocus(hit.ref)}
+                >
+                  <FilePlus2 size={16} />
+                  <span>
+                    <strong>
+                      {hit.title}
+                      {hit.source ? <em className={styles.searchSource}>来源：{SOURCE_CLUSTER_LABELS[hit.source]}</em> : null}
+                    </strong>
+                    <small>{hit.summary}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </form>
+        <div className={styles.topbarActions}>
+          <button
+            type="button"
+            className={styles.copilotButton}
+            onClick={() => {
+              const first = snapshot?.attention[0];
+              if (first) void handleFocus(first.target);
+            }}
+          >
+            <Sparkles size={17} />AI Copilot
+          </button>
+          <button type="button" className={styles.iconButton} aria-label="通知" disabled title="当前没有未读通知"><Bell size={18} /></button>
+          <button type="button" className={styles.iconButton} aria-label="筛选" disabled title="当前视图已按项目过滤"><Filter size={18} /></button>
+          <div className={styles.newMenuWrap}>
+            <button
+              type="button"
+              className={styles.newButton}
+              onClick={() => setNewMenuOpen((value) => !value)}
             >
-              {error || notice}
-            </div>
-          )}
-
-          {searchScope === "library" && answerLine && (
-            <div className="max-w-3xl mx-auto paper-card paper-grain p-4 animate-rise no-shadow">
-              <p className="mono-label text-[#1a1a1a]/70 mb-2">
-                Answer · {answerLine.count} sources · {answerLine.source}
-              </p>
-              <p className="font-hand text-[28px] leading-tight text-[#1a1a1a]">
-                {answerLine.title}
-              </p>
-              <p className="font-serif-cn text-[13px] text-[#1a1a1a]/80 mt-2 leading-relaxed">
-                {answerLine.blurb}
-              </p>
-            </div>
-          )}
-
-          {searchScope === "library" && (
-          <KnowledgeFootprintMap
-            nodes={libraryNodes}
-            lit={footprintLit}
-            mode={footprintMode}
-            litCount={litCount}
-            dimCount={dimCount}
-            selectedCardId={selectedCardId}
-            loading={loading}
-            workItemModeAvailable={Boolean(selectedId)}
-            onModeChange={(m) => void handleFootprintMode(m)}
-            onSelectCard={(id) => void handleSelectCard(id)}
-          />
-          )}
-
-          <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
-            <section className="space-y-5 min-w-0">
-              {searchScope === "web" ? (
-                <div className="rounded-[16px] border border-border bg-surface/60 p-4">
-                  <WebSearchPanel
-                    hits={webHits}
-                    loading={loading}
-                    authMode={webAuthMode}
-                    elapsedMs={webElapsedMs}
-                    onIngest={(hit) => void ingestWebHit(hit)}
-                    ingestingUrl={ingestingUrl}
-                  />
-                </div>
-              ) : (
-              <CardList
-                hits={hits}
-                query={query}
-                selectedCardId={selectedCardId}
-                onSelectCard={(id) => void handleSelectCard(id)}
-              />
-              )}
-              {searchScope === "library" && (
-              <CardRelationsPanel
-                cardId={selectedCardId}
-                edges={relationEdges}
-                linkableCards={allCards.length > 0 ? allCards : hits}
-                loading={loading}
-                onSelectCard={(id) => void handleSelectCard(id)}
-                onCreate={(input) => void handleCreateRelation(input)}
-                onConfirm={(id) => void handleRelationStatus(id, "confirmed")}
-                onReject={(id) => void handleRelationStatus(id, "rejected")}
-                pathHint={pathHint}
-              />
-              )}
-              <CapturePanel
-                loading={loading}
-                newContent={newContent}
-                newTags={newTags}
-                transcript={transcript}
-                goal={goal}
-                onNewContentChange={setNewContent}
-                onNewTagsChange={setNewTags}
-                onTranscriptChange={setTranscript}
-                onGoalChange={setGoal}
-                onAdd={() => void handleAdd()}
-                onMinutes={() => void handleMinutes()}
-                onDissect={() => void handleDissect()}
-              />
-            </section>
-
-            <div className="lg:sticky lg:top-6">
-              <div className="surface-card p-4">
-                <WorkItemsPanel
-                  items={actions}
-                  selectedId={selectedId}
-                  detail={detail}
-                  suggestions={suggestions}
-                  filterMine={filterMine}
-                  defaultUser={defaultUser}
-                  loading={loading}
-                  onSelect={(id) => void handleSelect(id)}
-                  onFilterMineChange={setFilterMine}
-                  onRefreshSuggestions={() => void refreshSuggestions()}
-                  onCreate={(input) => void handleCreate(input)}
-                  onPatch={(id, patch) => void handlePatch(id, patch)}
-                  onAddEvent={(id, type, body) =>
-                    void handleAddEvent(id, type, body)
-                  }
-                  onLinkEvidence={(wid, cid) =>
-                    void handleLinkEvidence(wid, cid)
-                  }
-                  linkableCards={hits}
-                  islandEdges={islandEdges}
-                />
+              <Plus size={18} />新建<ChevronDown size={14} />
+            </button>
+            {newMenuOpen ? (
+              <div className={styles.newMenu}>
+                <button type="button" onClick={() => void requestCheckpoint()}>
+                  <Bot size={16} /><span><strong>记录当前状态</strong><small>保存目标和下一步</small></span>
+                </button>
+                <button type="button" onClick={() => { setCreateWorkOpen(true); setNewMenuOpen(false); }}>
+                  <FilePlus2 size={16} /><span><strong>新增工作项</strong><small>写入项目和时间线</small></span>
+                </button>
+                <button type="button" onClick={() => { setCreateCardOpen(true); setNewMenuOpen(false); }}>
+                  <FilePlus2 size={16} /><span><strong>新增项目材料</strong><small>加入画布并可被检索</small></span>
+                </button>
               </div>
-              <p className="mono-label mt-2 px-1 text-center lg:text-left">
-                API · /api/knowledge/work-items
-              </p>
-            </div>
+            ) : null}
           </div>
         </div>
-      </main>
-    </div>
+      </header>
+
+      <ProjectCanvas snapshot={snapshot} loading={loading} onFocus={handleFocus} />
+      <ProjectInspector
+        key={`${snapshot?.focus.kind ?? "none"}:${snapshot?.focus.id ?? "none"}:${snapshot?.inspector.workItem?.updatedAt ?? "static"}:${checkpointOpen ? "checkpoint" : "view"}`}
+        snapshot={snapshot}
+        projectCards={projectCards}
+        busy={busy}
+        checkpointOpen={checkpointOpen}
+        onFocus={handleFocus}
+        onUpdateNextStep={handleUpdateNextStep}
+        onLinkEvidence={handleLinkEvidence}
+        onUpdateWork={handleUpdateWork}
+        onAddComment={handleAddComment}
+        onCreateRelation={handleCreateRelation}
+        onReviewRelation={handleReviewRelation}
+        onRunAgent={handleRunAgent}
+        onCheckpoint={handleCheckpoint}
+      />
+      <ProjectTimeline snapshot={snapshot} onFocus={handleFocus} />
+
+      {notice || error ? (
+        <div className={styles.toast} data-error={Boolean(error)}>
+          <span>{error ?? notice}</span>
+          <button type="button" aria-label="关闭" onClick={() => { setNotice(null); setError(null); }}><X size={15} /></button>
+        </div>
+      ) : null}
+
+      {createWorkOpen ? (
+        <div className={styles.modalBackdrop} role="presentation">
+          <form className={styles.createModal} onSubmit={handleCreateWork}>
+            <header><div><span>新工作项</span><h2>把决定变成下一步</h2></div><button type="button" aria-label="关闭" onClick={() => setCreateWorkOpen(false)}><X size={18} /></button></header>
+            <label><span>工作项</span><input value={workTitle} onChange={(event) => setWorkTitle(event.target.value)} autoFocus /></label>
+            <label><span>下一步</span><input value={workNextStep} onChange={(event) => setWorkNextStep(event.target.value)} /></label>
+            <label>
+              <span>直接依据（交给 Agent 时必需）</span>
+              <select value={workEvidenceId} onChange={(event) => setWorkEvidenceId(event.target.value)}>
+                <option value="">暂不关联</option>
+                {projectCards.map((card) => (
+                  <option key={card.id} value={card.id}>{card.title || card.content.slice(0, 40)}</option>
+                ))}
+              </select>
+            </label>
+            <footer><button type="button" onClick={() => setCreateWorkOpen(false)}>取消</button><button type="submit" disabled={busy || !workTitle.trim() || !workNextStep.trim()}>创建并打开</button></footer>
+          </form>
+        </div>
+      ) : null}
+
+      {createCardOpen ? (
+        <div className={styles.modalBackdrop} role="presentation">
+          <form className={styles.createModal} onSubmit={handleCreateCard}>
+            <header>
+              <div><span>项目材料</span><h2>加入一条可追溯材料</h2></div>
+              <button type="button" aria-label="关闭新增材料" onClick={() => setCreateCardOpen(false)}><X size={16} /></button>
+            </header>
+            <label>
+              <span>标题（可选）</span>
+              <input value={cardTitle} onChange={(event) => setCardTitle(event.target.value)} />
+            </label>
+            <label>
+              <span>内容</span>
+              <textarea value={cardContent} onChange={(event) => setCardContent(event.target.value)} rows={5} autoFocus />
+            </label>
+            <label>
+              <span>来源</span>
+              <select value={cardSource} onChange={(event) => setCardSource(event.target.value as KnowledgeSource)}>
+                <option value="meeting">会议</option>
+                <option value="chat">聊天</option>
+                <option value="email">邮件</option>
+                <option value="doc">文档</option>
+                <option value="manual">手记</option>
+              </select>
+            </label>
+            <footer>
+              <button type="button" onClick={() => setCreateCardOpen(false)}>取消</button>
+              <button type="submit" disabled={busy || !cardContent.trim()}>加入项目</button>
+            </footer>
+          </form>
+        </div>
+      ) : null}
+    </main>
   );
 }

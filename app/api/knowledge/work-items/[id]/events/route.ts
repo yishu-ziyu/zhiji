@@ -5,12 +5,16 @@ import {
   WorkItemValidationError,
 } from "@/shared/knowledge/repository";
 import type { WorkEventType } from "@/shared/types/knowledge";
-import {
-  DEFAULT_ACTOR,
-  WORK_EVENT_TYPES,
-} from "@/shared/types/knowledge";
+import { DEFAULT_ACTOR } from "@/shared/types/knowledge";
 
 type Ctx = { params: Promise<{ id: string }> };
+const PUBLIC_EVENT_TYPES: WorkEventType[] = [
+  "comment",
+  "decision",
+  "block",
+  "unblock",
+  "result",
+];
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
@@ -28,15 +32,26 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       meta?: Record<string, unknown>;
     };
 
-    if (!body.type || !WORK_EVENT_TYPES.includes(body.type)) {
+    if (!body.type || !PUBLIC_EVENT_TYPES.includes(body.type)) {
       return NextResponse.json({ error: "type 无效" }, { status: 400 });
     }
 
+    if (body.type === "result" && !body.body?.trim()) {
+      return NextResponse.json({ error: "result 需要写明结果" }, { status: 400 });
+    }
+
+    const meta =
+      body.type === "decision" && body.meta?.reaffirmsNextStep === true
+        ? { reaffirmsNextStep: true }
+        : body.type === "block" && typeof body.meta?.reason === "string"
+          ? { reason: body.meta.reason }
+          : undefined;
+
     const event = addWorkEvent(id, {
       type: body.type,
-      actor: body.actor ?? DEFAULT_ACTOR,
+      actor: body.type === "result" ? "agent:external" : DEFAULT_ACTOR,
       body: body.body,
-      meta: body.meta,
+      meta,
     });
 
     return NextResponse.json({ event }, { status: 201 });

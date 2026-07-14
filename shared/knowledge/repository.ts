@@ -19,6 +19,7 @@ import type {
   Project,
   ProjectCanvasSnapshot,
   ProjectCheckpoint,
+  ProjectSearchHit,
   QuerySession,
   RelationStatus,
   RelationType,
@@ -29,6 +30,8 @@ import {
   ACTION_STATUSES,
   DEFAULT_ACTOR,
   DEFAULT_PROJECT_ID,
+  KNOWLEDGE_SOURCES,
+  UNDIRECTED_RELATION_TYPES,
 } from "@/shared/types/knowledge";
 
 export { DEFAULT_PROJECT_ID } from "@/shared/types/knowledge";
@@ -129,6 +132,10 @@ function eventsPath(): string {
   return path.join(resolveDataDir(), "events.json");
 }
 
+function workStateTransactionPath(): string {
+  return path.join(resolveDataDir(), "work-state-transaction.json");
+}
+
 function footprintEventsPath(): string {
   return path.join(resolveDataDir(), "footprint-events.json");
 }
@@ -149,22 +156,54 @@ function ensureDataDir(): void {
 }
 
 function readJsonMap<T>(file: string): Map<string, T> {
+  let raw: string;
   try {
-    if (!fs.existsSync(file)) return new Map();
-    const raw = fs.readFileSync(file, "utf-8");
-    if (!raw.trim()) return new Map();
-    const data = JSON.parse(raw) as Record<string, T>;
-    return new Map(Object.entries(data));
+    raw = fs.readFileSync(file, "utf-8");
   } catch (error) {
-    console.error(`Failed to load ${file}`, error);
-    return new Map();
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Map();
+    throw new Error(`无法读取数据文件：${file}`, { cause: error });
+  }
+  if (!raw.trim()) return new Map();
+  try {
+    const data = JSON.parse(raw) as unknown;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw new Error("顶层必须是对象");
+    }
+    return new Map(Object.entries(data as Record<string, T>));
+  } catch (error) {
+    throw new Error(`无法读取数据文件：${file}`, { cause: error });
   }
 }
 
 function writeJsonMap<T>(file: string, map: Map<string, T>): void {
   ensureDataDir();
   const obj = Object.fromEntries(map);
-  fs.writeFileSync(file, JSON.stringify(obj, null, 2), "utf-8");
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(obj, null, 2), "utf-8");
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {
+      // The original write error is the actionable failure.
+    }
+    throw error;
+  }
+}
+
+type PendingWorkState = {
+  actions: Record<string, ActionItem>;
+  events: Record<string, WorkEvent>;
+};
+
+function recoverPendingWorkState(): void {
+  const file = workStateTransactionPath();
+  const transaction = readJsonMap<PendingWorkState>(file).get("pending");
+  if (!transaction) return;
+  writeJsonMap(actionsPath(), new Map(Object.entries(transaction.actions)));
+  writeJsonMap(eventsPath(), new Map(Object.entries(transaction.events)));
+  fs.rmSync(file, { force: true });
 }
 
 function loadCards(): Map<string, KnowledgeCard> {
@@ -189,6 +228,7 @@ function loadProjectCheckpoints(): Map<string, ProjectCheckpoint> {
 
 function loadActionsRaw(): Map<string, ActionItem> {
   ensureDataDir();
+  recoverPendingWorkState();
   const raw = readJsonMap<Partial<ActionItem> & { description?: string}>(
     actionsPath(),
   );
@@ -201,6 +241,7 @@ function loadActionsRaw(): Map<string, ActionItem> {
 
 function loadEvents(): Map<string, WorkEvent> {
   ensureDataDir();
+  recoverPendingWorkState();
   return readJsonMap<WorkEvent>(eventsPath());
 }
 
@@ -224,6 +265,23 @@ function saveActions(actions: Map<string, ActionItem>): void {
 
 function saveEvents(events: Map<string, WorkEvent>): void {
   writeJsonMap(eventsPath(), events);
+}
+
+function saveWorkState(
+  actions: Map<string, ActionItem>,
+  events: Map<string, WorkEvent>,
+): void {
+  const pending: PendingWorkState = {
+    actions: Object.fromEntries(actions),
+    events: Object.fromEntries(events),
+  };
+  writeJsonMap(
+    workStateTransactionPath(),
+    new Map([["pending", pending]]),
+  );
+  saveActions(actions);
+  saveEvents(events);
+  fs.rmSync(workStateTransactionPath(), { force: true });
 }
 
 function loadFootprintEvents(): Map<string, FootprintEvent> {
@@ -495,8 +553,7 @@ function seedIfEmpty(
     events.set(ev.id, ev);
   }
   saveCards(cards);
-  saveActions(actions);
-  saveEvents(events);
+  saveWorkState(actions, events);
   const relations = loadRelations();
   if (relations.size === 0) {
     for (const rel of buildSeedRelations(now)) {
@@ -721,6 +778,14 @@ export function getProjectCanvasSnapshot(
     (focus.kind === "event" && eventIds.has(focus.id));
   if (!focusBelongs) throw new Error("关注对象不属于当前项目");
 
+  const recentCardIds = [...loadFootprintEvents().values()]
+    .filter((event) => cardIds.has(event.cardId) && event.depth > 0)
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .reduce<string[]>((ids, event) => {
+      if (!ids.includes(event.cardId)) ids.push(event.cardId);
+      return ids;
+    }, []);
+
   return buildProjectCanvasSnapshot({
     project,
     cards,
@@ -730,6 +795,7 @@ export function getProjectCanvasSnapshot(
     checkpoint: getLatestProjectCheckpoint(projectId),
     focus,
     now,
+    recentCardIds,
   });
 }
 
@@ -743,6 +809,9 @@ export function addCard(input: NewCardInput): KnowledgeCard {
   if (!content) throw new Error("卡片内容不能为空");
   const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
   if (!getProject(projectId)) throw new Error("项目不存在");
+  if (input.source && !KNOWLEDGE_SOURCES.includes(input.source)) {
+    throw new Error("卡片来源无效");
+  }
 
   const cards = workingCards();
   const now = new Date().toISOString();
@@ -802,6 +871,65 @@ export function listEventsForWorkItem(workItemId: string): WorkEvent[] {
     .filter((e) => e.workItemId === workItemId)
     .map(copyEvent)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function searchScore(query: string, title: string, body: string): number {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return 0;
+  const terms = normalizedQuery.split(/\s+/).filter(Boolean);
+  const normalizedTitle = title.toLowerCase();
+  const normalizedBody = body.toLowerCase();
+  let score = normalizedTitle.includes(normalizedQuery) ? 80 : 0;
+  if (normalizedBody.includes(normalizedQuery)) score += 45;
+  for (const term of terms) {
+    if (normalizedTitle.includes(term)) score += 18;
+    if (normalizedBody.includes(term)) score += 8;
+  }
+  return score;
+}
+
+export function searchProjectRecords(
+  projectId: string,
+  query: string,
+  limit = 12,
+): ProjectSearchHit[] {
+  if (!getProject(projectId)) throw new Error("项目不存在");
+  const cards = listCards({ projectId });
+  const items = listActions({ projectId });
+  const itemIds = new Set(items.map((item) => item.id));
+  const events = [...workingEvents().values()]
+    .filter((event) => itemIds.has(event.workItemId))
+    .map(copyEvent);
+
+  const hits: ProjectSearchHit[] = [
+    ...cards.map((card) => ({
+      ref: { kind: "card" as const, id: card.id },
+      title: card.title || "项目材料",
+      summary: card.content,
+      source: card.source,
+      score: searchScore(query, card.title || "项目材料", `${card.content} ${card.tags.join(" ")} ${card.source}`),
+      updatedAt: card.timestamp,
+    })),
+    ...items.map((item) => ({
+      ref: { kind: "work_item" as const, id: item.id },
+      title: item.title,
+      summary: `${item.description} · 下一步：${item.nextStep}`,
+      score: searchScore(query, item.title, `${item.description} ${item.nextStep} ${item.verificationCriteria} ${item.status}`),
+      updatedAt: item.updatedAt,
+    })),
+    ...events.map((event) => ({
+      ref: { kind: "event" as const, id: event.id },
+      title: event.type === "result" ? "Agent 结果" : event.body.slice(0, 44) || "项目记录",
+      summary: `${event.actor} · ${event.body}`,
+      score: searchScore(query, event.body, `${event.actor} ${event.type}`),
+      updatedAt: event.createdAt,
+    })),
+  ];
+
+  return hits
+    .filter((hit) => hit.score > 0)
+    .sort((a, b) => b.score - a.score || b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, Math.max(1, Math.min(limit, 24)));
 }
 
 export function getWorkItemDetail(id: string): {
@@ -864,8 +992,7 @@ export function addAction(input: NewActionInput): ActionItem {
     body: `创建工作项「${item.title}」`,
     meta: { toStatus: item.status },
   });
-  saveActions(actions);
-  saveEvents(events);
+  saveWorkState(actions, events);
   return copyAction(item);
 }
 
@@ -986,8 +1113,7 @@ export function patchWorkItem(
   }
 
   actions.set(id, next);
-  saveActions(actions);
-  saveEvents(events);
+  saveWorkState(actions, events);
   return copyAction(next);
 }
 
@@ -1025,7 +1151,6 @@ export function addWorkEvent(
       updatedAt: new Date().toISOString(),
     };
     actions.set(workItemId, updated);
-    saveActions(actions);
   }
 
   if (input.type === "unblock") {
@@ -1039,15 +1164,13 @@ export function addWorkEvent(
       };
       assertWorkItemForStatus(updated, "doing");
       actions.set(workItemId, updated);
-      saveActions(actions);
     }
   }
 
   const item = actions.get(workItemId)!;
   item.updatedAt = new Date().toISOString();
   actions.set(workItemId, item);
-  saveActions(actions);
-  saveEvents(events);
+  saveWorkState(actions, events);
   return copyEvent(event);
 }
 
@@ -1083,8 +1206,7 @@ export function linkEvidence(
     body: `关联依据：${card.title || card.content.slice(0, 40)}`,
     meta: { cardId, source: card.source },
   });
-  saveActions(actions);
-  saveEvents(events);
+  saveWorkState(actions, events);
   recordLinkedFootprint(cardId, workItemId, actor);
   return copyAction(updated);
 }
@@ -1112,8 +1234,7 @@ export function unlinkEvidence(
     body: `取消关联依据 ${cardId}`,
     meta: { cardId, unlinked: true },
   });
-  saveActions(actions);
-  saveEvents(events);
+  saveWorkState(actions, events);
   return copyAction(updated);
 }
 
@@ -1129,6 +1250,7 @@ export function resetKnowledgeStoreForTests(): void {
     projectCheckpointsPath(),
     actionsPath(),
     eventsPath(),
+    workStateTransactionPath(),
     footprintEventsPath(),
     querySessionsPath(),
     relationsPath(),
@@ -1206,6 +1328,24 @@ export function recordLinkedFootprint(
     actor,
   };
   fp.set(ev.id, ev);
+  saveFootprintEvents(fp);
+}
+
+export function recordOpenedFootprint(
+  cardId: string,
+  actor: string = DEFAULT_ACTOR,
+): void {
+  if (!getCard(cardId)) throw new Error("卡片不存在");
+  const fp = loadFootprintEvents();
+  const event: FootprintEvent = {
+    id: randomUUID(),
+    cardId,
+    at: new Date().toISOString(),
+    kind: "opened",
+    depth: depthForKind("opened"),
+    actor,
+  };
+  fp.set(event.id, event);
   saveFootprintEvents(fp);
 }
 
@@ -1378,6 +1518,7 @@ export function patchRelation(
   }
   if (patch.relationType) {
     next.relationType = patch.relationType;
+    next.directed = !UNDIRECTED_RELATION_TYPES.includes(patch.relationType);
   }
   if (patch.evidenceSentence !== undefined) {
     const sentence = patch.evidenceSentence.replace(/\s+/g, " ").trim();

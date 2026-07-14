@@ -30,7 +30,6 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
       verificationCriteria?: string;
       nextStep?: string;
       blockedReason?: string | null;
-      actor?: string;
     };
 
     if (body.status && !ACTION_STATUSES.includes(body.status)) {
@@ -49,7 +48,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
         nextStep: body.nextStep,
         blockedReason: body.blockedReason,
       },
-      body.actor ?? DEFAULT_ACTOR,
+      DEFAULT_ACTOR,
     );
 
     const detail = getWorkItemDetail(item.id);

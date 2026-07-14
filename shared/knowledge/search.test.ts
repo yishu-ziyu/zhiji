@@ -51,12 +51,12 @@ describe("searchKnowledge", () => {
     expect(hits.every((h) => h.source === "email")).toBe(true);
   });
 
-  it("returns soft fallback when no token match", () => {
+  it("returns no hits when no token matches", () => {
     const hits = searchKnowledge("完全不存在的火星词汇xyz123");
-    expect(hits.length).toBeGreaterThan(0);
+    expect(hits).toEqual([]);
   });
 
-  it("keeps search and fallback inside the selected project", () => {
+  it("keeps search inside the selected project", () => {
     const other = addProject({ name: "搜索隔离" });
     addCard({
       content: "另一个项目的唯一词 北斗七号",
@@ -64,10 +64,9 @@ describe("searchKnowledge", () => {
     });
 
     const matched = searchKnowledge("北斗七号", { projectId: other.id });
-    const fallback = searchKnowledge("完全不存在", { projectId: other.id });
+    const missing = searchKnowledge("完全不存在", { projectId: other.id });
     expect(matched.length).toBeGreaterThan(0);
     expect(matched.every((hit) => hit.projectId === other.id)).toBe(true);
-    expect(fallback.length).toBeGreaterThan(0);
-    expect(fallback.every((hit) => hit.projectId === other.id)).toBe(true);
+    expect(missing).toEqual([]);
   });
 });

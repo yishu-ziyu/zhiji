@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addProjectCheckpoint } from "@/shared/knowledge/repository";
+import { DEFAULT_ACTOR } from "@/shared/types/knowledge";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -11,14 +12,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       completed?: string[];
       unresolved?: string[];
       nextStep?: string;
-      confirmedBy?: string;
     };
     const checkpoint = addProjectCheckpoint(id, {
       goal: body.goal ?? "",
       completed: Array.isArray(body.completed) ? body.completed : [],
       unresolved: Array.isArray(body.unresolved) ? body.unresolved : [],
       nextStep: body.nextStep ?? "",
-      confirmedBy: body.confirmedBy ?? "自己",
+      confirmedBy: DEFAULT_ACTOR,
     });
     return NextResponse.json({ checkpoint }, { status: 201 });
   } catch (error) {

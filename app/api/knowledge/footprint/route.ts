@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getFootprintData } from "@/shared/knowledge/repository";
+import {
+  getFootprintData,
+  recordOpenedFootprint,
+} from "@/shared/knowledge/repository";
 import type { FootprintViewMode } from "@/shared/types/knowledge";
+import { DEFAULT_ACTOR } from "@/shared/types/knowledge";
 
 const MODES: FootprintViewMode[] = ["current_query", "window", "work_item"];
 
@@ -32,4 +36,21 @@ export async function GET(req: NextRequest) {
     sinceDays: sinceDays ? Number(sinceDays) : 7,
   });
   return NextResponse.json(data);
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = (await req.json()) as { cardId?: string };
+    if (!body.cardId) {
+      return NextResponse.json({ error: "cardId 必填" }, { status: 400 });
+    }
+    recordOpenedFootprint(body.cardId, DEFAULT_ACTOR);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "记录失败";
+    return NextResponse.json(
+      { error: message },
+      { status: message.includes("不存在") ? 404 : 400 },
+    );
+  }
 }
