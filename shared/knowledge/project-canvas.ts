@@ -89,6 +89,9 @@ export function rankAttention(
       /^\d{4}-\d{2}-\d{2}/.test(item.deadline) &&
       Date.parse(`${item.deadline.slice(0, 10)}T23:59:59.999Z`) < nowMs
     ) {
+      trigger = itemEvents
+        .filter((event) => event.type === "status_change")
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? latest;
       reasonCode = "overdue";
       reason = `“${item.title}”已超过 ${item.deadline.slice(0, 10)}，仍未结束`;
       score = 400;
@@ -107,6 +110,7 @@ export function rankAttention(
         item.status === "doing" &&
         nowMs - Date.parse(item.updatedAt) >= 3 * DAY
       ) {
+        trigger = latest;
         reasonCode = "stale";
         reason = `“${item.title}”已连续三天没有更新`;
         score = 200;

@@ -144,6 +144,7 @@ describe("project canvas domain", () => {
     expect(result).toHaveLength(3);
     expect(result[0].evidenceEventIds).toEqual(["event-block"]);
     expect(result[1].evidenceEventIds).toEqual(["event-confirmed"]);
+    expect(result[2].evidenceEventIds).toEqual(["event-overdue"]);
   });
 
   it("marks the plan for adjustment when a blocking event exists", () => {
