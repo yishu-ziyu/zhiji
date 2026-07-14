@@ -24,8 +24,14 @@ import {
   CardRelationsPanel,
 } from "./components/CardRelationsPanel";
 import { KnowledgeFootprintMap } from "./components/KnowledgeFootprintMap";
-import { KnowledgeSearch } from "./components/KnowledgeSearch";
+import {
+  KnowledgeSearch,
+  type SearchScope,
+} from "./components/KnowledgeSearch";
+import { WebSearchPanel } from "./components/WebSearchPanel";
 import { WorkItemsPanel } from "./components/WorkItemsPanel";
+import type { AnySearchHit } from "@/shared/anysearch/client";
+import { formatWebHitAsCardContent } from "@/shared/anysearch/client";
 
 async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(url, {
@@ -59,6 +65,11 @@ export default function KnowledgePage() {
   const defaultUser = DEFAULT_ACTOR;
   const [query, setQuery] = useState("检索 来源");
   const [sourceFilter, setSourceFilter] = useState<KnowledgeSource | "all">("all");
+  const [searchScope, setSearchScope] = useState<SearchScope>("library");
+  const [webHits, setWebHits] = useState<AnySearchHit[]>([]);
+  const [webAuthMode, setWebAuthMode] = useState<"api_key" | "anonymous" | undefined>();
+  const [webElapsedMs, setWebElapsedMs] = useState<number | undefined>();
+  const [ingestingUrl, setIngestingUrl] = useState<string | null>(null);
   const [hits, setHits] = useState<KnowledgeSearchHit[]>([]);
   const [actions, setActions] = useState<ActionItem[]>([]);
   const [suggestions, setSuggestions] = useState<ActionSuggestion[]>([]);
@@ -185,7 +196,7 @@ export default function KnowledgePage() {
   }, []);
 
 
-  const runSearch = useCallback(
+  const runLibrarySearch = useCallback(
     async (q?: string, source?: KnowledgeSource | "all") => {
       setLoading(true);
       setError(null);
@@ -222,6 +233,82 @@ export default function KnowledgePage() {
       }
     },
     [query, sourceFilter, refreshLibraryMap, refreshFootprint],
+  );
+
+  const runWebSearch = useCallback(
+    async (q?: string) => {
+      setLoading(true);
+      setError(null);
+      setSearchedOnce(true);
+      const nextQuery = (q ?? query).trim();
+      if (!nextQuery) {
+        setError("请输入检索词");
+        setLoading(false);
+        return;
+      }
+      try {
+        const data = await postJson<{
+          hits: AnySearchHit[];
+          authMode?: "api_key" | "anonymous";
+          elapsedMs?: number;
+        }>("/api/knowledge/web-search", {
+          query: nextQuery,
+          maxResults: 5,
+        });
+        setWebHits(data.hits ?? []);
+        setWebAuthMode(data.authMode);
+        setWebElapsedMs(data.elapsedMs);
+        setNotice(
+          `AnySearch：${data.hits?.length ?? 0} 条${data.authMode === "anonymous" ? "（匿名）" : ""}`,
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "全网检索失败");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [query],
+  );
+
+  const runSearch = useCallback(
+    async (q?: string, source?: KnowledgeSource | "all") => {
+      if (searchScope === "web") {
+        await runWebSearch(q);
+        return;
+      }
+      await runLibrarySearch(q, source);
+    },
+    [searchScope, runWebSearch, runLibrarySearch],
+  );
+
+  const ingestWebHit = useCallback(
+    async (hit: AnySearchHit) => {
+      setIngestingUrl(hit.url);
+      setError(null);
+      setNotice(null);
+      try {
+        const data = await postJson<{ card: KnowledgeCard }>(
+          "/api/knowledge/add",
+          {
+            title: hit.title.slice(0, 80),
+            content: formatWebHitAsCardContent(hit),
+            source: "doc" as KnowledgeSource,
+            tags: ["web", "anysearch"],
+          },
+        );
+        setNotice(`已入库：${data.card.title ?? data.card.id}`);
+        setSearchScope("library");
+        await runLibrarySearch(hit.title.slice(0, 40) || "anysearch");
+        setSelectedCardId(data.card.id);
+        await loadNeighbors(data.card.id);
+        await refreshLibraryMap();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "入库失败");
+      } finally {
+        setIngestingUrl(null);
+      }
+    },
+    [runLibrarySearch, loadNeighbors, refreshLibraryMap],
   );
 
   const refreshSuggestions = useCallback(async () => {
@@ -342,7 +429,7 @@ export default function KnowledgePage() {
       });
       setNewContent("");
       setNotice("已保存卡片");
-      await runSearch(query || "手记");
+      await runLibrarySearch(query || "手记");
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
     } finally {
@@ -365,7 +452,7 @@ export default function KnowledgePage() {
         `纪要「${data.title}」：${data.cards.length} 卡 · ${data.actionItems.length} 工作项${data.offline ? "（离线）" : ""}`,
       );
       await refreshActions();
-      await runSearch("会议");
+      await runLibrarySearch("会议");
       await refreshSuggestions();
     } catch (e) {
       setError(e instanceof Error ? e.message : "纪要失败");
@@ -589,12 +676,31 @@ export default function KnowledgePage() {
             query={query}
             loading={loading}
             sourceFilter={sourceFilter}
+            searchScope={searchScope}
             onQueryChange={setQuery}
+            onSearchScopeChange={(scope) => {
+              setSearchScope(scope);
+              setError(null);
+              if (scope === "web" && webHits.length === 0) {
+                setQuery((q) =>
+                  q === "检索 来源" ? "AnySearch AI agent search" : q,
+                );
+              }
+            }}
             onSourceFilterChange={(v) => {
               setSourceFilter(v);
-              void runSearch(query, v);
+              void runLibrarySearch(query, v);
             }}
             onSearch={(q) => void runSearch(q)}
+            exampleQueries={
+              searchScope === "web"
+                ? [
+                    "AnySearch AI agent search",
+                    "knowledge footprint visualization",
+                    "Heptabase whiteboard",
+                  ]
+                : undefined
+            }
           />
 
           {(error || notice) && (
@@ -609,7 +715,7 @@ export default function KnowledgePage() {
             </div>
           )}
 
-          {answerLine && (
+          {searchScope === "library" && answerLine && (
             <div className="max-w-3xl mx-auto paper-card paper-grain p-4 animate-rise no-shadow">
               <p className="mono-label text-[#1a1a1a]/70 mb-2">
                 Answer · {answerLine.count} sources · {answerLine.source}
@@ -623,6 +729,7 @@ export default function KnowledgePage() {
             </div>
           )}
 
+          {searchScope === "library" && (
           <KnowledgeFootprintMap
             nodes={libraryNodes}
             lit={footprintLit}
@@ -635,15 +742,30 @@ export default function KnowledgePage() {
             onModeChange={(m) => void handleFootprintMode(m)}
             onSelectCard={(id) => void handleSelectCard(id)}
           />
+          )}
 
           <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
             <section className="space-y-5 min-w-0">
+              {searchScope === "web" ? (
+                <div className="rounded-[16px] border border-border bg-surface/60 p-4">
+                  <WebSearchPanel
+                    hits={webHits}
+                    loading={loading}
+                    authMode={webAuthMode}
+                    elapsedMs={webElapsedMs}
+                    onIngest={(hit) => void ingestWebHit(hit)}
+                    ingestingUrl={ingestingUrl}
+                  />
+                </div>
+              ) : (
               <CardList
                 hits={hits}
                 query={query}
                 selectedCardId={selectedCardId}
                 onSelectCard={(id) => void handleSelectCard(id)}
               />
+              )}
+              {searchScope === "library" && (
               <CardRelationsPanel
                 cardId={selectedCardId}
                 edges={relationEdges}
@@ -655,6 +777,7 @@ export default function KnowledgePage() {
                 onReject={(id) => void handleRelationStatus(id, "rejected")}
                 pathHint={pathHint}
               />
+              )}
               <CapturePanel
                 loading={loading}
                 newContent={newContent}
