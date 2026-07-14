@@ -1,10 +1,34 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { resetKnowledgeStoreForTests, addCard } from "./repository";
-import { searchKnowledge } from "./search";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 describe("searchKnowledge", () => {
-  beforeEach(() => {
+  let tmpDir: string;
+  let previousDataDir: string | undefined;
+  let addCard: typeof import("./repository").addCard;
+  let resetKnowledgeStoreForTests: typeof import("./repository").resetKnowledgeStoreForTests;
+  let searchKnowledge: typeof import("./search").searchKnowledge;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fc-opc-search-"));
+    previousDataDir = process.env.KNOWLEDGE_DATA_DIR;
+    process.env.KNOWLEDGE_DATA_DIR = tmpDir;
+    const repo = await import("./repository");
+    const search = await import("./search");
+    addCard = repo.addCard;
+    resetKnowledgeStoreForTests = repo.resetKnowledgeStoreForTests;
+    searchKnowledge = search.searchKnowledge;
     resetKnowledgeStoreForTests();
+  });
+
+  afterEach(() => {
+    if (previousDataDir === undefined) {
+      delete process.env.KNOWLEDGE_DATA_DIR;
+    } else {
+      process.env.KNOWLEDGE_DATA_DIR = previousDataDir;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("finds seeded card by keyword", () => {
