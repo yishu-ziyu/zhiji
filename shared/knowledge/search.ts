@@ -39,6 +39,10 @@ function matchesFilters(
 ): boolean {
   if (!filters) return true;
 
+  if (filters.projectId && card.projectId !== filters.projectId) {
+    return false;
+  }
+
   if (filters.source) {
     const sources = Array.isArray(filters.source)
       ? filters.source

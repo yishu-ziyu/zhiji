@@ -779,7 +779,10 @@ export function getWorkItemDetail(id: string): {
   const events = listEventsForWorkItem(id);
   const evidence = item.evidenceIds
     .map((cid) => getCard(cid))
-    .filter((c): c is KnowledgeCard => c !== null);
+    .filter(
+      (card): card is KnowledgeCard =>
+        card !== null && card.projectId === item.projectId,
+    );
   return { item, events, evidence };
 }
 
@@ -1013,6 +1016,9 @@ export function linkEvidence(
   const events = workingEvents();
   const item = actions.get(workItemId);
   if (!item) throw new Error("工作项不存在");
+  if (card.projectId !== item.projectId) {
+    throw new Error("依据卡和工作项必须属于同一项目");
+  }
 
   if (item.evidenceIds.includes(cardId)) {
     return copyAction(item);
@@ -1087,6 +1093,7 @@ export function resetKnowledgeStoreForTests(): void {
   const actions = new Map<string, ActionItem>();
   const events = new Map<string, WorkEvent>();
   seedIfEmpty(cards, actions, events);
+  workingProjects();
 }
 
 export function getKnowledgeDataDirForTests(): string {
@@ -1259,6 +1266,11 @@ export function createRelation(
   const cards = workingCards();
   const cardIds = new Set(cards.keys());
   const shape = assertRelationShape(input, cardIds);
+  const fromCard = cards.get(shape.fromCardId)!;
+  const toCard = cards.get(shape.toCardId)!;
+  if (fromCard.projectId !== toCard.projectId) {
+    throw new RelationValidationError("关系两端必须属于同一项目");
+  }
   const relations = workingRelations();
   const key = relationDedupKey(shape);
   for (const existing of relations.values()) {
@@ -1351,13 +1363,20 @@ export function getNeighbors(
   cardId: string,
   options?: { status?: RelationStatus | RelationStatus[] },
 ): NeighborView {
-  if (!getCard(cardId)) {
+  const focusCard = getCard(cardId);
+  if (!focusCard) {
     throw new RelationValidationError("卡不存在");
   }
-  const cards = new Map(listCards().map((c) => [c.id, c]));
+  const cards = new Map(
+    listCards({ projectId: focusCard.projectId }).map((card) => [card.id, card]),
+  );
+  const projectRelations = [...workingRelations().values()].filter(
+    (relation) =>
+      cards.has(relation.fromCardId) && cards.has(relation.toCardId),
+  );
   return buildNeighborView(
     cardId,
-    [...workingRelations().values()],
+    projectRelations,
     cards,
     options,
   );
