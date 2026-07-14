@@ -1,10 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { BookOpen, ListTree, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Sidebar } from "@/shared/components/layout/Sidebar";
 import type {
   ActionItem,
@@ -14,6 +10,7 @@ import type {
   KnowledgeSource,
 } from "@/shared/types/knowledge";
 import { ActionSuggestions } from "./components/ActionSuggestions";
+import { CapturePanel } from "./components/CapturePanel";
 import { CardList } from "./components/CardList";
 import { KnowledgeSearch } from "./components/KnowledgeSearch";
 
@@ -30,6 +27,7 @@ async function postJson<T>(url: string, body: Record<string, unknown>): Promise<
 
 export default function KnowledgePage() {
   const [query, setQuery] = useState("检索 来源");
+  const [sourceFilter, setSourceFilter] = useState<KnowledgeSource | "all">("all");
   const [hits, setHits] = useState<KnowledgeSearchHit[]>([]);
   const [actions, setActions] = useState<ActionItem[]>([]);
   const [suggestions, setSuggestions] = useState<ActionSuggestion[]>([]);
@@ -42,6 +40,7 @@ export default function KnowledgePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [searchedOnce, setSearchedOnce] = useState(false);
 
   const refreshActions = useCallback(async () => {
     const res = await fetch("/api/knowledge/state");
@@ -49,21 +48,33 @@ export default function KnowledgePage() {
     setActions(data.actions ?? []);
   }, []);
 
-  const runSearch = useCallback(async (q?: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await postJson<{ hits: KnowledgeSearchHit[] }>(
-        "/api/knowledge/search",
-        { query: q ?? query },
-      );
-      setHits(data.hits);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "检索失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [query]);
+  const runSearch = useCallback(
+    async (q?: string, source?: KnowledgeSource | "all") => {
+      setLoading(true);
+      setError(null);
+      setSearchedOnce(true);
+      const nextQuery = q ?? query;
+      const nextSource = source ?? sourceFilter;
+      try {
+        const data = await postJson<{ hits: KnowledgeSearchHit[] }>(
+          "/api/knowledge/search",
+          {
+            query: nextQuery,
+            filters:
+              nextSource === "all"
+                ? { limit: 20 }
+                : { source: nextSource, limit: 20 },
+          },
+        );
+        setHits(data.hits);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "检索失败");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [query, sourceFilter],
+  );
 
   const refreshSuggestions = useCallback(async () => {
     setLoading(true);
@@ -101,6 +112,7 @@ export default function KnowledgePage() {
         setHits(searchData.hits);
         setActions(stateRes.actions ?? []);
         setSuggestions(suggestData.suggestions ?? []);
+        setSearchedOnce(true);
       } catch {
         // First paint can stay empty; user can retry via buttons.
       }
@@ -109,6 +121,27 @@ export default function KnowledgePage() {
       alive = false;
     };
   }, []);
+
+  const answerLine = useMemo(() => {
+    if (!searchedOnce || hits.length === 0) return null;
+    const top = hits[0];
+    const src =
+      top.source === "meeting"
+        ? "会议"
+        : top.source === "doc"
+          ? "文档"
+          : top.source === "chat"
+            ? "聊天"
+            : top.source === "email"
+              ? "邮件"
+              : "手记";
+    return {
+      title: top.title || top.content.slice(0, 48),
+      blurb: top.content.slice(0, 120) + (top.content.length > 120 ? "…" : ""),
+      source: src,
+      count: hits.length,
+    };
+  }, [hits, searchedOnce]);
 
   async function handleAdd() {
     setLoading(true);
@@ -125,8 +158,8 @@ export default function KnowledgePage() {
         title: newContent.slice(0, 24),
       });
       setNewContent("");
-      setNotice("已保存卡片");
-      await runSearch(query || newContent.slice(0, 12));
+      setNotice("已保存卡片（Notion 式属性：标签 · 手记 · 时间）");
+      await runSearch(query || "手记");
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
     } finally {
@@ -146,7 +179,7 @@ export default function KnowledgePage() {
         offline?: boolean;
       }>("/api/knowledge/minutes", { transcript });
       setNotice(
-        `纪要「${data.title}」完成：${data.cards.length} 张卡片，${data.actionItems.length} 条行动${data.offline ? "（离线兜底）" : ""}`,
+        `纪要「${data.title}」：${data.cards.length} 卡 · ${data.actionItems.length} 行动${data.offline ? "（离线）" : ""}`,
       );
       await refreshActions();
       await runSearch("会议");
@@ -168,7 +201,7 @@ export default function KnowledgePage() {
         offline?: boolean;
       }>("/api/knowledge/dissect", { goal });
       setNotice(
-        `拆解完成：${data.actionItems.length} 条行动${data.offline ? "（离线）" : ""}`,
+        `已拆 ${data.actionItems.length} 条行动${data.offline ? "（离线）" : ""}`,
       );
       await refreshActions();
       await refreshSuggestions();
@@ -201,23 +234,22 @@ export default function KnowledgePage() {
     <div className="flex min-h-screen bg-background">
       <Sidebar efficiencyMode="board" />
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
-          <header className="space-y-2">
-            <div className="inline-flex items-center gap-2 text-xs font-medium text-primary bg-primary/10 border border-primary/20 px-2.5 py-1 rounded-full">
-              <BookOpen className="w-3.5 h-3.5" />
-              知识工作者闭环 · 检索 / 沉淀 / 协作
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight">知识库工作台</h1>
-            <p className="text-sm text-muted-foreground max-w-2xl">
-              找得到 → 收成卡片 → 拆成行动 → 更新状态。MCP 工具见{" "}
-              <code className="text-xs bg-muted px-1 rounded">GET /api/knowledge/mcp</code>
-              。
-            </p>
-          </header>
+        <div className="max-w-6xl mx-auto px-4 md:px-6 py-6 md:py-8 space-y-6">
+          <KnowledgeSearch
+            query={query}
+            loading={loading}
+            sourceFilter={sourceFilter}
+            onQueryChange={setQuery}
+            onSourceFilterChange={(v) => {
+              setSourceFilter(v);
+              void runSearch(query, v);
+            }}
+            onSearch={(q) => void runSearch(q)}
+          />
 
           {(error || notice) && (
             <div
-              className={`rounded-lg border px-3 py-2 text-sm ${
+              className={`rounded-xl border px-3 py-2 text-sm max-w-3xl mx-auto ${
                 error
                   ? "border-red-500/30 bg-red-500/10 text-red-200"
                   : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
@@ -227,77 +259,54 @@ export default function KnowledgePage() {
             </div>
           )}
 
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-primary" />
-              资料检索
-            </h2>
-            <KnowledgeSearch
-              query={query}
-              loading={loading}
-              onQueryChange={setQuery}
-              onSearch={() => void runSearch()}
-            />
-            <CardList hits={hits} />
-          </section>
+          {answerLine && (
+            <div className="max-w-3xl mx-auto rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/10 via-card to-card p-4">
+              <p className="text-[11px] font-medium text-primary mb-1">
+                简答 · 依据 {answerLine.count} 条 · 首要来源 {answerLine.source}
+              </p>
+              <p className="text-sm font-semibold text-foreground">
+                {answerLine.title}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                {answerLine.blurb}
+              </p>
+            </div>
+          )}
 
-          <div className="grid md:grid-cols-2 gap-6">
-            <Card className="p-4 space-y-3">
-              <h2 className="text-sm font-semibold">沉淀卡片</h2>
-              <Textarea
-                value={newContent}
-                onChange={(e) => setNewContent(e.target.value)}
-                placeholder="写一条可复用的事实、结论或约定…"
-                rows={4}
+          <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
+            <section className="space-y-4 min-w-0">
+              <CardList hits={hits} query={query} />
+              <CapturePanel
+                loading={loading}
+                newContent={newContent}
+                newTags={newTags}
+                transcript={transcript}
+                goal={goal}
+                onNewContentChange={setNewContent}
+                onNewTagsChange={setNewTags}
+                onTranscriptChange={setTranscript}
+                onGoalChange={setGoal}
+                onAdd={() => void handleAdd()}
+                onMinutes={() => void handleMinutes()}
+                onDissect={() => void handleDissect()}
               />
-              <input
-                value={newTags}
-                onChange={(e) => setNewTags(e.target.value)}
-                placeholder="标签，逗号分隔"
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-              />
-              <Button type="button" onClick={() => void handleAdd()} disabled={loading || !newContent.trim()}>
-                保存到知识库
-              </Button>
-            </Card>
+            </section>
 
-            <Card className="p-4 space-y-3">
-              <h2 className="text-sm font-semibold flex items-center gap-2">
-                <ListTree className="w-4 h-4" />
-                任务拆解
-              </h2>
-              <Textarea
-                value={goal}
-                onChange={(e) => setGoal(e.target.value)}
-                rows={4}
-              />
-              <Button type="button" onClick={() => void handleDissect()} disabled={loading || !goal.trim()}>
-                拆解为目标行动
-              </Button>
-            </Card>
+            <div className="lg:sticky lg:top-6">
+              <div className="rounded-2xl border border-border/70 bg-card/50 p-3.5">
+                <ActionSuggestions
+                  actions={actions}
+                  suggestions={suggestions}
+                  onStatusChange={(id, status) => void handleStatusChange(id, status)}
+                  onRefreshSuggestions={() => void refreshSuggestions()}
+                  loading={loading}
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-2 px-1 text-center lg:text-left">
+                MCP：GET /api/knowledge/mcp
+              </p>
+            </div>
           </div>
-
-          <Card className="p-4 space-y-3">
-            <h2 className="text-sm font-semibold">会议 / 粘贴文本 → 卡片 + 行动</h2>
-            <Textarea
-              value={transcript}
-              onChange={(e) => setTranscript(e.target.value)}
-              rows={5}
-            />
-            <Button type="button" onClick={() => void handleMinutes()} disabled={loading || !transcript.trim()}>
-              生成纪要并入库
-            </Button>
-          </Card>
-
-          <section>
-            <ActionSuggestions
-              actions={actions}
-              suggestions={suggestions}
-              onStatusChange={(id, status) => void handleStatusChange(id, status)}
-              onRefreshSuggestions={() => void refreshSuggestions()}
-              loading={loading}
-            />
-          </section>
         </div>
       </main>
     </div>

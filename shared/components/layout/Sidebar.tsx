@@ -78,7 +78,7 @@ export function Sidebar({ efficiencyMode = "capture" }: SidebarProps) {
       </nav>
       <div className="p-3 border-t border-border">
         <div className="text-xs text-muted-foreground text-center">
-          检索 · 沉淀 · 协作
+          搜得到 · 收成卡 · 能推进
         </div>
       </div>
     </aside>
