@@ -10,7 +10,7 @@ import type { ActionItem, DissectResult } from "@/shared/types/knowledge";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { goal?: string };
+    const body = (await req.json()) as { goal?: string; projectId?: string };
     const goal = body.goal?.trim();
     if (!goal) {
       return NextResponse.json({ error: "goal 不能为空" }, { status: 400 });
@@ -40,11 +40,15 @@ export async function POST(req: NextRequest) {
             assignee: a.assignee,
             deadline: a.deadline,
             verificationCriteria: a.verificationCriteria,
+            projectId: body.projectId,
           })),
       );
 
       if (actionItems.length === 0) {
-        const fallback = invokeKnowledgeMcpTool("dissect_task", { goal });
+        const fallback = invokeKnowledgeMcpTool("dissect_task", {
+          goal,
+          projectId: body.projectId,
+        });
         return NextResponse.json(fallback.result as DissectResult);
       }
 
@@ -54,7 +58,10 @@ export async function POST(req: NextRequest) {
         offline: false,
       } satisfies DissectResult);
     } catch {
-      const fallback = invokeKnowledgeMcpTool("dissect_task", { goal });
+      const fallback = invokeKnowledgeMcpTool("dissect_task", {
+        goal,
+        projectId: body.projectId,
+      });
       if (!fallback.ok) {
         return NextResponse.json(
           { error: fallback.error || "拆解失败" },

@@ -11,7 +11,7 @@ import type {
   MinutesResult,
 } from "@/shared/types/knowledge";
 
-function offlineMinutes(transcript: string): MinutesResult {
+function offlineMinutes(transcript: string, projectId?: string): MinutesResult {
   const lines = transcript
     .split(/\n+/)
     .map((l) => l.trim())
@@ -24,6 +24,7 @@ function offlineMinutes(transcript: string): MinutesResult {
       content: snippet,
       source: "meeting",
       tags: ["会议", "离线兜底"],
+      projectId,
     },
   ]);
 
@@ -34,6 +35,7 @@ function offlineMinutes(transcript: string): MinutesResult {
       deadline: "待确认",
       verificationCriteria: "卡片内容与原文一致且可检索",
       cardId: cards[0]?.id,
+      projectId,
     },
   ]);
 
@@ -48,7 +50,10 @@ function offlineMinutes(transcript: string): MinutesResult {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { transcript?: string };
+    const body = (await req.json()) as {
+      transcript?: string;
+      projectId?: string;
+    };
     const transcript = body.transcript?.trim();
     if (!transcript) {
       return NextResponse.json({ error: "transcript 不能为空" }, { status: 400 });
@@ -85,6 +90,7 @@ export async function POST(req: NextRequest) {
             source: (c.source as KnowledgeCard["source"]) || "meeting",
             tags: c.tags ?? ["会议"],
             title: c.title,
+            projectId: body.projectId,
           })),
       );
 
@@ -95,6 +101,7 @@ export async function POST(req: NextRequest) {
             content: parsed.summary || transcript.slice(0, 200),
             source: "meeting",
             tags: ["会议"],
+            projectId: body.projectId,
           },
         ]);
       }
@@ -108,6 +115,7 @@ export async function POST(req: NextRequest) {
             deadline: a.deadline,
             verificationCriteria: a.verificationCriteria,
             cardId: cards[0]?.id,
+            projectId: body.projectId,
           })),
       );
 
@@ -119,7 +127,7 @@ export async function POST(req: NextRequest) {
         offline: false,
       } satisfies MinutesResult);
     } catch {
-      return NextResponse.json(offlineMinutes(transcript));
+      return NextResponse.json(offlineMinutes(transcript, body.projectId));
     }
   } catch (error) {
     return NextResponse.json(
