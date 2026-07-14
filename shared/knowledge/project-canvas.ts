@@ -214,6 +214,7 @@ export function assessPlan(
 
 function reviewFromEvent(
   event: WorkEvent,
+  allowedEvidenceIds?: Set<string>,
 ): CanvasTimelineEvent["review"] | undefined {
   const review = event.meta?.review;
   if (!review || typeof review !== "object") return undefined;
@@ -223,7 +224,9 @@ function reviewFromEvent(
     gaps: Array.isArray(value.gaps) ? value.gaps.map(String) : [],
     nextStep: String(value.nextStep ?? ""),
     evidenceIds: Array.isArray(value.evidenceIds)
-      ? value.evidenceIds.map(String)
+      ? value.evidenceIds
+          .map(String)
+          .filter((id) => !allowedEvidenceIds || allowedEvidenceIds.has(id))
       : [],
     mode: value.mode === "model" ? "model" : "deterministic",
   };
@@ -232,6 +235,7 @@ function reviewFromEvent(
 export function buildCanvasTimeline(
   events: WorkEvent[],
   workItems: ActionItem[],
+  allowedEvidenceIds?: Set<string>,
 ): CanvasTimeline {
   const currentEventIds = new Set<string>();
   for (const item of workItems) {
@@ -258,7 +262,7 @@ export function buildCanvasTimeline(
         body: event.body,
         createdAt: event.createdAt,
         phase,
-        review: reviewFromEvent(event),
+        review: reviewFromEvent(event, allowedEvidenceIds),
       };
     });
   return {
@@ -354,7 +358,9 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
           STATUS_LABELS[item.status],
           1,
           itemState(item),
-          item.evidenceIds.map((id) => ({ kind: "card", id })),
+          item.evidenceIds
+            .filter((id) => cards.has(id))
+            .map((id) => ({ kind: "card", id })),
         ),
       );
       edges.push(makeEdge(center, target, "当前重点"));
@@ -575,7 +581,9 @@ function buildInspector(
         item.status === "blocked"
           ? item.blockedReason || "这项工作当前被阻塞"
           : `当前状态：${STATUS_LABELS[item.status]}；下一步：${item.nextStep}`,
-      evidence: item.evidenceIds.map((id) => ({ kind: "card", id })),
+      evidence: item.evidenceIds
+        .filter((id) => input.cards.some((card) => card.id === id))
+        .map((id) => ({ kind: "card", id })),
       impacts: [],
       availableActions: ["open_evidence", "update_next_step", "run_agent"],
     };
@@ -617,7 +625,11 @@ export function buildProjectCanvasSnapshot(
     input.workItems,
     input.events,
   );
-  const timeline = buildCanvasTimeline(relevantEvents, input.workItems);
+  const timeline = buildCanvasTimeline(
+    relevantEvents,
+    input.workItems,
+    new Set(input.cards.map((card) => card.id)),
+  );
   const changesSinceCheckpoint = input.checkpoint
     ? [...timeline.now, ...timeline.history].filter(
         (event) => event.createdAt > input.checkpoint!.createdAt,
