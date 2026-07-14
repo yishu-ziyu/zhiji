@@ -1,10 +1,32 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { resetKnowledgeStoreForTests } from "./repository";
-import { invokeKnowledgeMcpTool, listKnowledgeMcpTools } from "./mcp-tools";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 describe("knowledge mcp tools", () => {
-  beforeEach(() => {
-    resetKnowledgeStoreForTests();
+  let tmpDir: string;
+  let previousDataDir: string | undefined;
+  let invokeKnowledgeMcpTool: typeof import("./mcp-tools").invokeKnowledgeMcpTool;
+  let listKnowledgeMcpTools: typeof import("./mcp-tools").listKnowledgeMcpTools;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fc-opc-mcp-"));
+    previousDataDir = process.env.KNOWLEDGE_DATA_DIR;
+    process.env.KNOWLEDGE_DATA_DIR = tmpDir;
+    const repo = await import("./repository");
+    const mcp = await import("./mcp-tools");
+    repo.resetKnowledgeStoreForTests();
+    invokeKnowledgeMcpTool = mcp.invokeKnowledgeMcpTool;
+    listKnowledgeMcpTools = mcp.listKnowledgeMcpTools;
+  });
+
+  afterEach(() => {
+    if (previousDataDir === undefined) {
+      delete process.env.KNOWLEDGE_DATA_DIR;
+    } else {
+      process.env.KNOWLEDGE_DATA_DIR = previousDataDir;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("lists five tools", () => {
