@@ -6,13 +6,16 @@ import type {
   ActionItem,
   ActionStatus,
   ActionSuggestion,
+  KnowledgeCard,
   KnowledgeSearchHit,
   KnowledgeSource,
+  WorkEvent,
 } from "@/shared/types/knowledge";
-import { ActionSuggestions } from "./components/ActionSuggestions";
+import { DEFAULT_ACTOR } from "@/shared/types/knowledge";
 import { CapturePanel } from "./components/CapturePanel";
 import { CardList } from "./components/CardList";
 import { KnowledgeSearch } from "./components/KnowledgeSearch";
+import { WorkItemsPanel } from "./components/WorkItemsPanel";
 
 async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(url, {
@@ -25,12 +28,33 @@ async function postJson<T>(url: string, body: Record<string, unknown>): Promise<
   return data;
 }
 
+async function patchJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json()) as T & { error?: string };
+  if (!res.ok) throw new Error(data.error || "请求失败");
+  return data;
+}
+
+type WorkDetail = {
+  item: ActionItem;
+  events: WorkEvent[];
+  evidence: KnowledgeCard[];
+};
+
 export default function KnowledgePage() {
+  const defaultUser = DEFAULT_ACTOR;
   const [query, setQuery] = useState("检索 来源");
   const [sourceFilter, setSourceFilter] = useState<KnowledgeSource | "all">("all");
   const [hits, setHits] = useState<KnowledgeSearchHit[]>([]);
   const [actions, setActions] = useState<ActionItem[]>([]);
   const [suggestions, setSuggestions] = useState<ActionSuggestion[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<WorkDetail | null>(null);
+  const [filterMine, setFilterMine] = useState(false);
   const [newContent, setNewContent] = useState("");
   const [newTags, setNewTags] = useState("手记");
   const [transcript, setTranscript] = useState(
@@ -43,9 +67,22 @@ export default function KnowledgePage() {
   const [searchedOnce, setSearchedOnce] = useState(false);
 
   const refreshActions = useCallback(async () => {
-    const res = await fetch("/api/knowledge/state");
-    const data = (await res.json()) as { actions?: ActionItem[] };
-    setActions(data.actions ?? []);
+    const qs = filterMine
+      ? `?assignee=${encodeURIComponent(defaultUser)}&openOnly=1`
+      : "";
+    const res = await fetch(`/api/knowledge/work-items${qs}`);
+    const data = (await res.json()) as { items?: ActionItem[] };
+    setActions(data.items ?? []);
+  }, [filterMine, defaultUser]);
+
+  const loadDetail = useCallback(async (id: string) => {
+    const res = await fetch(`/api/knowledge/work-items/${id}`);
+    if (!res.ok) {
+      setDetail(null);
+      return;
+    }
+    const data = (await res.json()) as WorkDetail;
+    setDetail(data);
   }, []);
 
   const runSearch = useCallback(
@@ -96,12 +133,12 @@ export default function KnowledgePage() {
     let alive = true;
     (async () => {
       try {
-        const [searchData, stateRes, suggestData] = await Promise.all([
+        const [searchData, itemsRes, suggestData] = await Promise.all([
           postJson<{ hits: KnowledgeSearchHit[] }>("/api/knowledge/search", {
             query: "检索 来源",
           }),
-          fetch("/api/knowledge/state").then((r) => r.json()) as Promise<{
-            actions?: ActionItem[];
+          fetch("/api/knowledge/work-items").then((r) => r.json()) as Promise<{
+            items?: ActionItem[];
           }>,
           postJson<{ suggestions: ActionSuggestion[] }>("/api/knowledge/state", {
             action: "suggest",
@@ -110,9 +147,14 @@ export default function KnowledgePage() {
         ]);
         if (!alive) return;
         setHits(searchData.hits);
-        setActions(stateRes.actions ?? []);
+        setActions(itemsRes.items ?? []);
         setSuggestions(suggestData.suggestions ?? []);
         setSearchedOnce(true);
+        const first = itemsRes.items?.[0];
+        if (first) {
+          setSelectedId(first.id);
+          await loadDetail(first.id);
+        }
       } catch {
         // First paint can stay empty; user can retry via buttons.
       }
@@ -120,7 +162,11 @@ export default function KnowledgePage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [loadDetail]);
+
+  useEffect(() => {
+    void refreshActions();
+  }, [filterMine, refreshActions]);
 
   const answerLine = useMemo(() => {
     if (!searchedOnce || hits.length === 0) return null;
@@ -158,7 +204,7 @@ export default function KnowledgePage() {
         title: newContent.slice(0, 24),
       });
       setNewContent("");
-      setNotice("已保存卡片（Notion 式属性：标签 · 手记 · 时间）");
+      setNotice("已保存卡片");
       await runSearch(query || "手记");
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
@@ -179,7 +225,7 @@ export default function KnowledgePage() {
         offline?: boolean;
       }>("/api/knowledge/minutes", { transcript });
       setNotice(
-        `纪要「${data.title}」：${data.cards.length} 卡 · ${data.actionItems.length} 行动${data.offline ? "（离线）" : ""}`,
+        `纪要「${data.title}」：${data.cards.length} 卡 · ${data.actionItems.length} 工作项${data.offline ? "（离线）" : ""}`,
       );
       await refreshActions();
       await runSearch("会议");
@@ -201,7 +247,7 @@ export default function KnowledgePage() {
         offline?: boolean;
       }>("/api/knowledge/dissect", { goal });
       setNotice(
-        `已拆 ${data.actionItems.length} 条行动${data.offline ? "（离线）" : ""}`,
+        `已拆 ${data.actionItems.length} 条工作项${data.offline ? "（离线）" : ""}`,
       );
       await refreshActions();
       await refreshSuggestions();
@@ -212,19 +258,103 @@ export default function KnowledgePage() {
     }
   }
 
-  async function handleStatusChange(taskId: string, status: ActionStatus) {
+  async function handleSelect(id: string) {
+    setSelectedId(id);
+    setError(null);
+    try {
+      await loadDetail(id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载详情失败");
+    }
+  }
+
+  async function handlePatch(
+    id: string,
+    patch: Partial<{
+      status: ActionStatus;
+      assignee: string;
+      nextStep: string;
+      blockedReason: string;
+    }>,
+  ) {
     setLoading(true);
     setError(null);
     try {
-      await postJson("/api/knowledge/state", {
-        action: "update",
-        taskId,
-        newStatus: status,
+      await patchJson(`/api/knowledge/work-items/${id}`, patch);
+      await refreshActions();
+      await loadDetail(id);
+      setNotice("工作项已更新");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "更新失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreate(input: {
+    title: string;
+    assignee: string;
+    nextStep: string;
+  }) {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await postJson<{ item: ActionItem }>(
+        "/api/knowledge/work-items",
+        {
+          title: input.title,
+          description: input.title,
+          assignee: input.assignee,
+          nextStep: input.nextStep,
+          status: "todo",
+        },
+      );
+      await refreshActions();
+      setSelectedId(data.item.id);
+      await loadDetail(data.item.id);
+      setNotice("已创建工作项");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "创建失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAddEvent(
+    id: string,
+    type: "comment" | "decision" | "result" | "block",
+    body: string,
+  ) {
+    setLoading(true);
+    setError(null);
+    try {
+      await postJson(`/api/knowledge/work-items/${id}/events`, {
+        type,
+        body,
+        actor: defaultUser,
       });
       await refreshActions();
-      await refreshSuggestions();
+      await loadDetail(id);
+      setNotice(type === "block" ? "已标记阻塞" : "已写入时间线");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "状态更新失败");
+      setError(e instanceof Error ? e.message : "写入失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleLinkEvidence(workItemId: string, cardId: string) {
+    setLoading(true);
+    setError(null);
+    try {
+      await postJson(`/api/knowledge/work-items/${workItemId}/evidence`, {
+        cardId,
+        actor: defaultUser,
+      });
+      await loadDetail(workItemId);
+      setNotice("已关联依据");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "关联失败");
     } finally {
       setLoading(false);
     }
@@ -273,7 +403,7 @@ export default function KnowledgePage() {
             </div>
           )}
 
-          <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
+          <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
             <section className="space-y-5 min-w-0">
               <CardList hits={hits} query={query} />
               <CapturePanel
@@ -294,16 +424,30 @@ export default function KnowledgePage() {
 
             <div className="lg:sticky lg:top-6">
               <div className="surface-card p-4">
-                <ActionSuggestions
-                  actions={actions}
+                <WorkItemsPanel
+                  items={actions}
+                  selectedId={selectedId}
+                  detail={detail}
                   suggestions={suggestions}
-                  onStatusChange={(id, status) => void handleStatusChange(id, status)}
-                  onRefreshSuggestions={() => void refreshSuggestions()}
+                  filterMine={filterMine}
+                  defaultUser={defaultUser}
                   loading={loading}
+                  onSelect={(id) => void handleSelect(id)}
+                  onFilterMineChange={setFilterMine}
+                  onRefreshSuggestions={() => void refreshSuggestions()}
+                  onCreate={(input) => void handleCreate(input)}
+                  onPatch={(id, patch) => void handlePatch(id, patch)}
+                  onAddEvent={(id, type, body) =>
+                    void handleAddEvent(id, type, body)
+                  }
+                  onLinkEvidence={(wid, cid) =>
+                    void handleLinkEvidence(wid, cid)
+                  }
+                  linkableCards={hits}
                 />
               </div>
               <p className="mono-label mt-2 px-1 text-center lg:text-left">
-                MCP · /api/knowledge/mcp
+                API · /api/knowledge/work-items
               </p>
             </div>
           </div>
