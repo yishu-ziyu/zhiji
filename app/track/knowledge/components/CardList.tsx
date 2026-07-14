@@ -8,6 +8,8 @@ type Props = {
   hits: KnowledgeSearchHit[];
   emptyHint?: string;
   query?: string;
+  selectedCardId?: string | null;
+  onSelectCard?: (cardId: string) => void;
 };
 
 const sourceLabel: Record<KnowledgeSource, string> = {
@@ -51,7 +53,13 @@ function matchHint(hit: KnowledgeSearchHit, query?: string): string {
 /** Slight collage tilt for paper cards only (DESIGN.md ±2–3°). */
 const tilts = ["-rotate-[1.2deg]", "rotate-[1.5deg]", "-rotate-[0.8deg]", "rotate-[2deg]"];
 
-export function CardList({ hits, emptyHint, query }: Props) {
+export function CardList({
+  hits,
+  emptyHint,
+  query,
+  selectedCardId,
+  onSelectCard,
+}: Props) {
   if (hits.length === 0) {
     return (
       <div className="rounded-[20px] border border-dashed border-border p-10 text-center animate-rise">
@@ -78,13 +86,16 @@ export function CardList({ hits, emptyHint, query }: Props) {
             <article
               key={hit.id}
               data-testid="knowledge-card"
+              data-card-id={hit.id}
+              onClick={() => onSelectCard?.(hit.id)}
               className={cn(
-                "p-4 animate-rise no-shadow paper-grain",
+                "p-4 animate-rise no-shadow paper-grain cursor-pointer",
                 usePaper ? "paper-card" : "surface-card",
                 usePaper && tilts[index % tilts.length],
                 index === 0 && "animate-rise-delay-1",
                 index === 1 && "animate-rise-delay-2",
                 index >= 2 && "animate-rise-delay-3",
+                selectedCardId === hit.id && "ring-1 ring-primary/60",
               )}
             >
               <div className="flex items-start gap-3">

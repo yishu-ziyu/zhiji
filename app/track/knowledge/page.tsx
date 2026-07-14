@@ -6,14 +6,18 @@ import type {
   ActionItem,
   ActionStatus,
   ActionSuggestion,
+  FootprintLitEntry,
+  FootprintViewMode,
   KnowledgeCard,
   KnowledgeSearchHit,
   KnowledgeSource,
+  LibraryNode,
   WorkEvent,
 } from "@/shared/types/knowledge";
 import { DEFAULT_ACTOR } from "@/shared/types/knowledge";
 import { CapturePanel } from "./components/CapturePanel";
 import { CardList } from "./components/CardList";
+import { KnowledgeFootprintMap } from "./components/KnowledgeFootprintMap";
 import { KnowledgeSearch } from "./components/KnowledgeSearch";
 import { WorkItemsPanel } from "./components/WorkItemsPanel";
 
@@ -65,6 +69,61 @@ export default function KnowledgePage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [searchedOnce, setSearchedOnce] = useState(false);
+  const [querySessionId, setQuerySessionId] = useState<string | null>(null);
+  const [footprintMode, setFootprintMode] =
+    useState<FootprintViewMode>("current_query");
+  const [libraryNodes, setLibraryNodes] = useState<LibraryNode[]>([]);
+  const [footprintLit, setFootprintLit] = useState<FootprintLitEntry[]>([]);
+  const [litCount, setLitCount] = useState(0);
+  const [dimCount, setDimCount] = useState(0);
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+
+  const refreshLibraryMap = useCallback(async () => {
+    const res = await fetch("/api/knowledge/library-map");
+    if (!res.ok) return;
+    const data = (await res.json()) as { nodes?: LibraryNode[] };
+    setLibraryNodes(data.nodes ?? []);
+  }, []);
+
+  const refreshFootprint = useCallback(
+    async (
+      mode: FootprintViewMode,
+      sessionId?: string | null,
+      workId?: string | null,
+    ) => {
+      const params = new URLSearchParams({ mode });
+      if (mode === "current_query") {
+        const sid = sessionId ?? querySessionId;
+        if (!sid) {
+          setFootprintLit([]);
+          setLitCount(0);
+          return;
+        }
+        params.set("querySessionId", sid);
+      }
+      if (mode === "work_item") {
+        const wid = workId ?? selectedId;
+        if (!wid) {
+          setFootprintLit([]);
+          setLitCount(0);
+          return;
+        }
+        params.set("workItemId", wid);
+      }
+      if (mode === "window") params.set("sinceDays", "7");
+      const res = await fetch(`/api/knowledge/footprint?${params}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        lit?: FootprintLitEntry[];
+        litCount?: number;
+        dimCount?: number;
+      };
+      setFootprintLit(data.lit ?? []);
+      setLitCount(data.litCount ?? data.lit?.length ?? 0);
+      setDimCount(data.dimCount ?? 0);
+    },
+    [querySessionId, selectedId],
+  );
 
   const refreshActions = useCallback(async () => {
     const qs = filterMine
@@ -93,24 +152,30 @@ export default function KnowledgePage() {
       const nextQuery = q ?? query;
       const nextSource = source ?? sourceFilter;
       try {
-        const data = await postJson<{ hits: KnowledgeSearchHit[] }>(
-          "/api/knowledge/search",
-          {
-            query: nextQuery,
-            filters:
-              nextSource === "all"
-                ? { limit: 20 }
-                : { source: nextSource, limit: 20 },
-          },
-        );
+        const data = await postJson<{
+          hits: KnowledgeSearchHit[];
+          querySessionId?: string;
+        }>("/api/knowledge/search", {
+          query: nextQuery,
+          filters:
+            nextSource === "all"
+              ? { limit: 20 }
+              : { source: nextSource, limit: 20 },
+        });
         setHits(data.hits);
+        if (data.querySessionId) {
+          setQuerySessionId(data.querySessionId);
+          setFootprintMode("current_query");
+          await refreshLibraryMap();
+          await refreshFootprint("current_query", data.querySessionId);
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : "检索失败");
       } finally {
         setLoading(false);
       }
     },
-    [query, sourceFilter],
+    [query, sourceFilter, refreshLibraryMap, refreshFootprint],
   );
 
   const refreshSuggestions = useCallback(async () => {
@@ -133,8 +198,11 @@ export default function KnowledgePage() {
     let alive = true;
     (async () => {
       try {
-        const [searchData, itemsRes, suggestData] = await Promise.all([
-          postJson<{ hits: KnowledgeSearchHit[] }>("/api/knowledge/search", {
+        const [searchData, itemsRes, suggestData, mapRes] = await Promise.all([
+          postJson<{
+            hits: KnowledgeSearchHit[];
+            querySessionId?: string;
+          }>("/api/knowledge/search", {
             query: "检索 来源",
           }),
           fetch("/api/knowledge/work-items").then((r) => r.json()) as Promise<{
@@ -144,12 +212,25 @@ export default function KnowledgePage() {
             action: "suggest",
             context: "检索 来源",
           }),
+          fetch("/api/knowledge/library-map").then((r) => r.json()) as Promise<{
+            nodes?: LibraryNode[];
+          }>,
         ]);
         if (!alive) return;
         setHits(searchData.hits);
         setActions(itemsRes.items ?? []);
         setSuggestions(suggestData.suggestions ?? []);
+        setLibraryNodes(mapRes.nodes ?? []);
         setSearchedOnce(true);
+        if (searchData.querySessionId) {
+          setQuerySessionId(searchData.querySessionId);
+          const fp = await fetch(
+            `/api/knowledge/footprint?mode=current_query&querySessionId=${searchData.querySessionId}`,
+          ).then((r) => r.json());
+          setFootprintLit(fp.lit ?? []);
+          setLitCount(fp.litCount ?? 0);
+          setDimCount(fp.dimCount ?? 0);
+        }
         const first = itemsRes.items?.[0];
         if (first) {
           setSelectedId(first.id);
@@ -352,11 +433,22 @@ export default function KnowledgePage() {
         actor: defaultUser,
       });
       await loadDetail(workItemId);
+      await refreshFootprint(footprintMode, querySessionId, workItemId);
       setNotice("已关联依据");
     } catch (e) {
       setError(e instanceof Error ? e.message : "关联失败");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleFootprintMode(mode: FootprintViewMode) {
+    setFootprintMode(mode);
+    setError(null);
+    try {
+      await refreshFootprint(mode, querySessionId, selectedId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "足迹加载失败");
     }
   }
 
@@ -403,9 +495,27 @@ export default function KnowledgePage() {
             </div>
           )}
 
+          <KnowledgeFootprintMap
+            nodes={libraryNodes}
+            lit={footprintLit}
+            mode={footprintMode}
+            litCount={litCount}
+            dimCount={dimCount}
+            selectedCardId={selectedCardId}
+            loading={loading}
+            workItemModeAvailable={Boolean(selectedId)}
+            onModeChange={(m) => void handleFootprintMode(m)}
+            onSelectCard={setSelectedCardId}
+          />
+
           <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
             <section className="space-y-5 min-w-0">
-              <CardList hits={hits} query={query} />
+              <CardList
+                hits={hits}
+                query={query}
+                selectedCardId={selectedCardId}
+                onSelectCard={setSelectedCardId}
+              />
               <CapturePanel
                 loading={loading}
                 newContent={newContent}
