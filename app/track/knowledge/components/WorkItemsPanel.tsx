@@ -16,9 +16,11 @@ import type {
   ActionStatus,
   ActionSuggestion,
   KnowledgeCard,
+  KnowledgeRelation,
   WorkEvent,
 } from "@/shared/types/knowledge";
 import { STATUS_LABELS } from "@/shared/types/knowledge";
+import { EvidenceIslandList } from "./CardRelationsPanel";
 
 type Detail = {
   item: ActionItem;
@@ -58,6 +60,7 @@ type Props = {
   ) => void;
   onLinkEvidence: (workItemId: string, cardId: string) => void;
   linkableCards: KnowledgeCard[];
+  islandEdges?: KnowledgeRelation[];
 };
 
 const statusOrder: ActionStatus[] = [
@@ -111,6 +114,7 @@ export function WorkItemsPanel({
   onAddEvent,
   onLinkEvidence,
   linkableCards,
+  islandEdges = [],
 }: Props) {
   const [title, setTitle] = useState("");
   const [nextStep, setNextStep] = useState("确认下一步并开始推进");
@@ -376,6 +380,15 @@ export function WorkItemsPanel({
                     挂 {c.title?.slice(0, 12) || c.id.slice(0, 6)}
                   </button>
                 ))}
+              </div>
+            )}
+            {detail.evidence.length >= 2 && (
+              <div className="mt-2 space-y-1">
+                <p className="mono-label">依据怎么连</p>
+                <EvidenceIslandList
+                  edges={islandEdges}
+                  cards={detail.evidence}
+                />
               </div>
             )}
           </div>
