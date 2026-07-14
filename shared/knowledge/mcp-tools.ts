@@ -36,6 +36,7 @@ export const KNOWLEDGE_MCP_TOOLS: McpToolDefinition[] = [
             source: { type: "string" },
             tags: { type: "array", items: { type: "string" } },
             limit: { type: "number" },
+            projectId: { type: "string" },
           },
         },
       },
@@ -53,6 +54,7 @@ export const KNOWLEDGE_MCP_TOOLS: McpToolDefinition[] = [
         tags: { type: "array", items: { type: "string" } },
         title: { type: "string" },
         links: { type: "array", items: { type: "string" } },
+        projectId: { type: "string" },
       },
       required: ["content"],
     },
@@ -64,6 +66,7 @@ export const KNOWLEDGE_MCP_TOOLS: McpToolDefinition[] = [
       type: "object",
       properties: {
         goal: { type: "string" },
+        projectId: { type: "string" },
       },
       required: ["goal"],
     },
@@ -90,12 +93,13 @@ export const KNOWLEDGE_MCP_TOOLS: McpToolDefinition[] = [
       type: "object",
       properties: {
         context: { type: "string" },
+        projectId: { type: "string" },
       },
     },
   },
 ];
 
-function offlineDissect(goal: string): ActionItem[] {
+function offlineDissect(goal: string, projectId?: string): ActionItem[] {
   const clean = goal.trim();
   const chunks = clean
     .split(/[；;。\n]|然后|并且|以及|再/)
@@ -125,13 +129,17 @@ function offlineDissect(goal: string): ActionItem[] {
       status: "todo",
       nextStep: `推进：${description.slice(0, 40)}`,
       verificationCriteria: `子任务「${description.slice(0, 40)}」可核对完成`,
+      projectId,
     }),
   );
 }
 
-function offlineSuggestions(context?: string): ActionSuggestion[] {
-  const open = listActions().filter((a) => a.status !== "done");
-  const cards = listCards().slice(0, 5);
+function offlineSuggestions(
+  context?: string,
+  projectId?: string,
+): ActionSuggestion[] {
+  const open = listActions({ projectId }).filter((a) => a.status !== "done");
+  const cards = listCards({ projectId }).slice(0, 5);
   const suggestions: ActionSuggestion[] = [];
 
   for (const item of open.slice(0, 3)) {
@@ -201,13 +209,17 @@ export function invokeKnowledgeMcpTool(
           links: Array.isArray(args.links)
             ? args.links.map(String)
             : undefined,
+          projectId: args.projectId ? String(args.projectId) : undefined,
         });
         return { ok: true, tool: name, result: { card } };
       }
       case "dissect_task": {
         const goal = String(args.goal ?? "");
         if (!goal.trim()) throw new Error("goal 不能为空");
-        const actionItems = offlineDissect(goal);
+        const actionItems = offlineDissect(
+          goal,
+          args.projectId ? String(args.projectId) : undefined,
+        );
         return {
           ok: true,
           tool: name,
@@ -228,7 +240,12 @@ export function invokeKnowledgeMcpTool(
         return {
           ok: true,
           tool: name,
-          result: { suggestions: offlineSuggestions(context) },
+          result: {
+            suggestions: offlineSuggestions(
+              context,
+              args.projectId ? String(args.projectId) : undefined,
+            ),
+          },
         };
       }
       default:

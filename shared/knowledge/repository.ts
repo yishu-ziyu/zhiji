@@ -708,12 +708,14 @@ export function getCard(id: string): KnowledgeCard | null {
 export function addCard(input: NewCardInput): KnowledgeCard {
   const content = input.content?.trim();
   if (!content) throw new Error("卡片内容不能为空");
+  const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+  if (!getProject(projectId)) throw new Error("项目不存在");
 
   const cards = workingCards();
   const now = new Date().toISOString();
   const card: KnowledgeCard = {
     id: input.id ?? randomUUID(),
-    projectId: input.projectId ?? DEFAULT_PROJECT_ID,
+    projectId,
     content,
     source: input.source ?? "manual",
     tags: (input.tags ?? []).map((t) => t.trim()).filter(Boolean),
@@ -789,11 +791,13 @@ export function getWorkItemDetail(id: string): {
 export function addAction(input: NewActionInput): ActionItem {
   const description = input.description?.trim();
   if (!description) throw new Error("工作项描述不能为空");
+  const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+  if (!getProject(projectId)) throw new Error("项目不存在");
 
   const now = new Date().toISOString();
   const item = normalizeAction({
     id: input.id ?? randomUUID(),
-    projectId: input.projectId ?? DEFAULT_PROJECT_ID,
+    projectId,
     title: input.title,
     description,
     assignee: input.assignee,
