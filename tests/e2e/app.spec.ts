@@ -11,7 +11,7 @@ test("home only offers knowledge workbench", async ({ page }) => {
   await expect(page).toHaveURL(/\/track\/knowledge/);
 });
 
-test("knowledge demo: search source cards then advance a task", async ({
+test("knowledge demo: search, work item timeline, advance", async ({
   page,
 }) => {
   await page.goto("/track/knowledge");
@@ -26,46 +26,54 @@ test("knowledge demo: search source cards then advance a task", async ({
     page.getByText(/Meeting|Doc|Note|Chat|Email|会议|文档|手记/i).first(),
   ).toBeVisible();
 
-  // Prefer a Todo row (button → Doing); else first row with a next-status button
-  let action = page
+  await expect(page.getByTestId("work-items-panel")).toBeVisible();
+
+  // Create a clean work item for deterministic advance
+  await page.getByLabel("工作项标题", { exact: true }).fill("e2e 验收工作项");
+  await page.getByLabel("下一步", { exact: true }).fill("点状态推进");
+  await page.getByRole("button", { name: "创建", exact: true }).click();
+  await expect(page.getByTestId("work-item-detail")).toBeVisible({
+    timeout: 10000,
+  });
+  await expect(page.getByTestId("work-item-detail")).toContainText(
+    "e2e 验收工作项",
+  );
+
+  // Comment on timeline
+  await page.getByLabel("工作项评论").fill("演示：写回时间线");
+  await page.getByRole("button", { name: "评论", exact: true }).click();
+  await expect(page.getByTestId("work-item-timeline")).toContainText(
+    "演示：写回时间线",
+    { timeout: 10000 },
+  );
+
+  // Advance todo → doing (has assignee + nextStep)
+  const action = page
     .getByTestId("action-item")
-    .filter({ has: page.getByRole("button", { name: "Doing", exact: true }) })
+    .filter({ hasText: "e2e 验收工作项" })
     .first();
-  if (!(await action.isVisible().catch(() => false))) {
-    action = page.getByTestId("action-item").first();
-  }
-  await expect(action).toBeVisible({ timeout: 15000 });
-
-  const description = (await action.locator("p").first().innerText()).trim();
-  expect(description.length).toBeGreaterThan(0);
-
+  await expect(action).toBeVisible();
   const advance = action.getByRole("button").first();
-  await expect(advance).toBeVisible();
   const labelBefore = (await advance.innerText()).replace(/\s+/g, " ").trim();
-
   const updateResponse = page.waitForResponse(
     (r) =>
-      r.url().includes("/api/knowledge/state") &&
-      r.request().method() === "POST" &&
+      r.url().includes("/api/knowledge/work-items/") &&
+      r.request().method() === "PATCH" &&
       r.ok(),
   );
   await advance.click();
   await updateResponse;
 
-  const same = page
-    .getByTestId("action-item")
-    .filter({ hasText: description })
-    .first();
-  await expect(same).toBeVisible({ timeout: 10000 });
-
   await expect
     .poll(
       async () => {
-        const btn = same.getByRole("button");
+        const btn = action.getByRole("button");
         if ((await btn.count()) === 0) return "__done__";
         return (await btn.first().innerText()).replace(/\s+/g, " ").trim();
       },
       { timeout: 15000 },
     )
     .not.toBe(labelBefore);
+
+  await expect(page.getByTestId("work-item-timeline")).toContainText(/状态|进行中|doing/i);
 });
