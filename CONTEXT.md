@@ -1,57 +1,58 @@
-# CONTEXT — Knowledge Loop Agent
+# CONTEXT — 知识工作助手
 
-Shared language for this delivery cycle (freeze 2026-07-14 → submit ~7/18).
+本轮交付（约到 7/18 提交）共用的说法。
 
-## Communication rules
+## 怎么说话
 
-1. Speak in direct, ordinary Chinese. Do not use industry shorthand or invented labels.
-2. Never say “比赛第一刀”, “楔子”, “侧车” or “建账”.
-3. State the conclusion, then the evidence, then the consequence. Keep the causal link explicit.
-4. If a technical term is unavoidable, explain it in plain Chinese before using the code name.
-5. No slogans, filler, vague claims or a question without explaining why the decision matters.
-6. Research before claiming facts. 事事有调研.
+1. 用平常中文。不要行业黑话、自己发明的标签。
+2. 禁止黑话：金路径、黄金路径、金脚本、知识经、任何「路径+经」自造名、主线/闭环（当产品名吹）、比赛第一刀、楔子、侧车、建账、下沉、压成、场景钉死。用平常中文说步骤和结果。
+3. 先结论，再证据，再结果。因果说清楚。
+4. 不得不用技术词时，先用白话解释。
+5. 不要空口号。事事有调研，有疑问就查。
 
-## Mainline (frozen)
+## 我们在做什么
 
-**主线 = 知识闭环。**  
-路径：`/track/knowledge`  
-一句话：搜得到 → 收成卡 → 能推进。  
-不是编辑器，不是微信 CRM，不是客户变更主 demo。
+**做：** 资料检索 + 知识卡片 + 待办行动（对应效率赛道里检索、知识、协作那一块）。
 
-## Domain terms
+页面：`/track/knowledge`
 
-| Term | Canonical meaning | Avoid saying |
-|---|---|---|
-| Knowledge worker | 用检索、笔记、会议材料推进工作的人；首要用自身 | 「所有一人公司」空泛画像 |
-| Knowledge card | 一条可复用、可溯源的事实或结论 | 随便一篇长笔记 |
-| Source | meeting / email / chat / doc / manual | 无来源的「AI 总结」当事实 |
-| Action item | 可执行任务 + 验收标准 + 状态 | 空待办标题 |
-| Action status | todo → doing → confirmed → done | 任意自定义状态迷宫 |
-| Knowledge loop | 检索 → 沉淀 → 行动 →（再检索） | 第二个 Notion |
-| Gold script | 固定演示步骤，可重复 | 每次随机点 |
-| Failure | 无来源结果、重启丢数据、状态推不动、与 Notion 说不清差异 | 仅 UI 报错码 |
-| Legacy customer-change | `/track/efficiency` 已有代码；路演一句带过 | 主叙事 |
+一句话：
 
-## Hard decisions
+> 搜得到、卡片带来源、下一步能勾掉。
 
-1. Track = **efficiency only**（电商已删）。
-2. **Main product = knowledge loop**（用户 2026-07-14 冻结）。
-3. Customer-change = **legacy**，不投入主 pitch。
-4. 不主打个人微信私聊深度对接。
-5. Agent = 理解/拆解候选；系统 = 保存事实；人 = 推进状态。
-6. Visual: DESIGN.md（真黑 + 蜡笔红 + 暖纸 + 手写/mono）。
-7. Quality: yishuship lite freeze + unit tests；E2E 金路径覆盖知识主流程。
-8. Submit ~7/18，pitch ~7/19。
-9. **2026-07-14 已从运行时删除**客户变更整线与电商入口；仓库只保留知识闭环可执行代码。
+**不做：** 当编辑器卖；接微信私聊；再做客户改约定那一套产品。
 
-## Active task
+客户变更相关代码 **2026-07-14 已从运行时删掉**。旧调研文档可当档案，不当产品说明书。
+
+## 词怎么用
+
+| 说法 | 意思 | 别说成 |
+|------|------|--------|
+| 知识工作者 | 靠检索、笔记、会议材料干活的人；先服务你自己 | 空泛「所有一人公司」 |
+| 知识卡片 | 一条能以后再用、能说来源的记录 | 随便一篇长文 |
+| 来源 | 会议 / 邮件 / 聊天 / 文档 / 手记 | 没有出处的「AI 总结」当事实 |
+| 行动 / 待办 | 能做完的事 + 怎样算做完 + 状态 | 空待办标题 |
+| 状态 | 待开始 → 进行中 → 已确认 → 完成 | 一堆自定义状态 |
+| 演示步骤 | 固定几步，方便重复演示和验收 | 金路径、黄金路径、金脚本 |
+| 失败 | 结果没来源、重启丢数据、状态点不动、和记笔记软件说不清差别 | 只报个错误码 |
+
+## 已定的事
+
+1. 只做效率赛道里「检索 / 知识 / 协作」相关能力。
+2. 产品就是上面那一套；客户改约定不再当产品。
+3. 不主打微信私聊对接。
+4. 模型可以帮理解、拆任务；**写进库的卡片和状态算数**；人点状态。
+5. 视觉跟 DESIGN.md（真黑、蜡笔红、暖纸、手写/等宽标签）。
+6. 有单测；浏览器里要能走通演示步骤。
+
+## 任务目录
 
 `.ship/tasks/knowledge-mainline-20260714-174246/`
 
-## Gold script (short)
+## 演示时怎么走（平常话）
 
-1. 打开 `/track/knowledge`  
-2. 搜「检索 来源」→ 看带来源的卡片  
-3. 推进一条行动状态  
-4. （可选）手记或粘贴会议入库  
-5. 对评委：搜得到、收成卡、能推进。
+1. 打开 `/track/knowledge`
+2. 搜「检索 来源」→ 看到带来源的卡片
+3. 在行动区推进一条状态
+4. （可选）写一条手记或粘贴一段会议
+5. 对评委说：搜得到、卡片有来源、下一步能勾掉。

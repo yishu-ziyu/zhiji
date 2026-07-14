@@ -1,41 +1,46 @@
-# FC-OPC iBot · Knowledge Loop
+# FC-OPC iBot · 知识工作助手
 
-效率赛道 · **知识闭环**（资料检索 · 知识管理 · 协作工作流）
+效率赛道里做三件事：**资料检索、知识卡片、待办行动**。
 
-> 搜得到 → 收成卡 → 能推进。不是编辑器，不是交付 CRM，不是电商。
+> 搜得到、卡片带来源、下一步能勾掉。  
+> 不是编辑器，不是客户改约定工具，不是电商。
 
-## Run
+## 怎么跑
 
 ```bash
 npm install
 npm run dev
-# open http://localhost:3000/track/knowledge
+# 打开 http://localhost:3000/track/knowledge
 ```
 
-## Main path
+## 页面和接口
 
-| Path | Role |
-|------|------|
-| `/` | 入口，只进知识库 |
-| `/track/knowledge` | 主产品：检索 / 卡片 / 行动 |
-| `/api/knowledge/*` | search, add, minutes, dissect, state, mcp |
-| `data/knowledge/*.json` | 本地持久化（gitignore 内容） |
+| 地址 | 做什么 |
+|------|--------|
+| `/` | 进知识工作台 |
+| `/track/knowledge` | 检索 / 卡片 / 行动 |
+| `/api/knowledge/*` | 搜、加卡、纪要、拆任务、改状态、工具列表 |
+| `data/knowledge/*.json` | 本地存盘（内容不进 git） |
 
-## Explicitly removed
+## 已删掉的
 
-- 客户变更 / 交付约定整条线（`/track/efficiency`, `/api/efficiency`, `/c/*`, `shared/delivery`）
-- 电商赛道目录与入口
+- 客户改约定整条产品（页面、接口、领域代码、相关测试）
+- 电商入口
 
-历史说明仍可在 `docs/research/` 查阅，**不进运行时**。
+旧调研在 `docs/research/`，只当档案。
 
-## Test
+## 测试
 
 ```bash
 npm run test:unit
-# e2e needs build; optional:
-# PLAYWRIGHT_REUSE_SERVER=1 npm run test:e2e
+# 浏览器演示步骤（另起端口，避免占用 3000）
+PORT=3011 BASE_URL=http://127.0.0.1:3011 npm run test:e2e
 ```
 
-## Product freeze
+手测：打开知识页 → 搜「检索 来源」→ 改一条待办状态。
 
-`.ship/tasks/knowledge-mainline-20260714-174246/` + `CONTEXT.md`
+## 产品说明 / 交件
+
+- `CONTEXT.md` — 本轮说法  
+- `.ship/tasks/knowledge-mainline-20260714-174246/product/08-prd.md` — 验收  
+- `docs/demo/SUBMIT_PACK.md` — 使用说明 · 演示 · ≤5 页路演 · 链接位
