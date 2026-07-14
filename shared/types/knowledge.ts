@@ -155,3 +155,78 @@ export const KNOWLEDGE_SOURCES: KnowledgeSource[] = [
 ];
 
 export const DEFAULT_ACTOR = "自己";
+
+/** Knowledge footprint (search/use touch on the library map). */
+export type FootprintKind =
+  | "listed"
+  | "retrieved"
+  | "opened"
+  | "linked"
+  | "cited";
+
+/** 0 = not lit; 1 seen; 2 read; 3 used; 4 cited */
+export type TouchDepth = 0 | 1 | 2 | 3 | 4;
+
+export type FootprintEvent = {
+  id: string;
+  cardId: string;
+  at: string;
+  kind: FootprintKind;
+  depth: TouchDepth;
+  querySessionId?: string;
+  workItemId?: string;
+  score?: number;
+  actor: string;
+  meta?: Record<string, unknown>;
+};
+
+export type QuerySession = {
+  id: string;
+  query: string;
+  filters?: KnowledgeSearchFilters;
+  at: string;
+  hitCardIds: string[];
+  scores?: Record<string, number>;
+};
+
+export type LibraryNode = {
+  cardId: string;
+  title: string;
+  source: KnowledgeSource;
+  x: number;
+  y: number;
+  clusterKey: string;
+};
+
+export type FootprintViewMode = "current_query" | "window" | "work_item";
+
+export type FootprintLitEntry = {
+  cardId: string;
+  depth: TouchDepth;
+  score?: number;
+  touchCount: number;
+};
+
+export const FOOTPRINT_KIND_DEPTH: Record<FootprintKind, TouchDepth> = {
+  listed: 0,
+  retrieved: 1,
+  opened: 2,
+  linked: 3,
+  cited: 4,
+};
+
+export const SOURCE_CLUSTER_ORDER: KnowledgeSource[] = [
+  "meeting",
+  "doc",
+  "chat",
+  "email",
+  "manual",
+];
+
+export const SOURCE_CLUSTER_LABELS: Record<KnowledgeSource, string> = {
+  meeting: "会议",
+  doc: "文档",
+  chat: "聊天",
+  email: "邮件",
+  manual: "手记",
+};
