@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { FileText, ListTree, PenLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -25,9 +24,9 @@ type Props = {
 };
 
 const tabs: { id: Tab; label: string; icon: typeof PenLine }[] = [
-  { id: "note", label: "手记入库", icon: PenLine },
-  { id: "minutes", label: "粘贴纪要", icon: FileText },
-  { id: "dissect", label: "拆解目标", icon: ListTree },
+  { id: "note", label: "手记", icon: PenLine },
+  { id: "minutes", label: "纪要", icon: FileText },
+  { id: "dissect", label: "拆解", icon: ListTree },
 ];
 
 export function CapturePanel({
@@ -47,14 +46,13 @@ export function CapturePanel({
   const [tab, setTab] = useState<Tab>("note");
 
   return (
-    <Card className="p-4 border-border/70 space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold">沉淀入口</h2>
-          <p className="text-[11px] text-muted-foreground mt-0.5">
-            次级能力：写卡 · 会议入库 · 拆任务（不抢检索主入口）
-          </p>
-        </div>
+    <section className="surface-card p-4 space-y-3 animate-rise">
+      <div>
+        <p className="mono-label">Capture · Secondary</p>
+        <h2 className="font-hand text-[24px] leading-none mt-1">沉淀入口</h2>
+        <p className="font-serif-cn text-[12px] text-muted-foreground mt-2">
+          次级能力：不抢检索主路径。写卡 · 会议入库 · 拆任务。
+        </p>
       </div>
 
       <div className="flex flex-wrap gap-1.5">
@@ -67,9 +65,9 @@ export function CapturePanel({
               type="button"
               onClick={() => setTab(t.id)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors",
+                "inline-flex items-center gap-1.5 rounded-[60px] border px-3 py-1.5 text-xs transition-colors",
                 active
-                  ? "border-primary/40 bg-primary/10 text-primary"
+                  ? "border-primary bg-primary/15 text-primary"
                   : "border-border text-muted-foreground hover:text-foreground",
               )}
             >
@@ -87,12 +85,13 @@ export function CapturePanel({
             onChange={(e) => onNewContentChange(e.target.value)}
             placeholder="一条可复用的事实、结论或约定（短比长好）…"
             rows={3}
+            className="rounded-[12px] border-border bg-background font-serif-cn"
           />
           <input
             value={newTags}
             onChange={(e) => onNewTagsChange(e.target.value)}
             placeholder="标签，逗号分隔 · 如：产品, 验收"
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            className="w-full rounded-[12px] border border-border bg-background px-3 py-2 text-sm"
           />
           <Button
             type="button"
@@ -109,8 +108,9 @@ export function CapturePanel({
           <Textarea
             value={transcript}
             onChange={(e) => onTranscriptChange(e.target.value)}
-            placeholder="粘贴会议/聊天原文…"
+            placeholder="粘贴会议或聊天原文…"
             rows={5}
+            className="rounded-[12px] border-border bg-background font-serif-cn"
           />
           <Button
             type="button"
@@ -129,6 +129,7 @@ export function CapturePanel({
             onChange={(e) => onGoalChange(e.target.value)}
             placeholder="一个目标，拆成可验收子任务…"
             rows={3}
+            className="rounded-[12px] border-border bg-background font-serif-cn"
           />
           <Button
             type="button"
@@ -139,6 +140,6 @@ export function CapturePanel({
           </Button>
         </div>
       )}
-    </Card>
+    </section>
   );
 }

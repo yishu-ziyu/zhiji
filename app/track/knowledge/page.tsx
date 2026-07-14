@@ -249,10 +249,10 @@ export default function KnowledgePage() {
 
           {(error || notice) && (
             <div
-              className={`rounded-xl border px-3 py-2 text-sm max-w-3xl mx-auto ${
+              className={`rounded-[12px] border px-3 py-2 text-sm max-w-3xl mx-auto font-serif-cn ${
                 error
-                  ? "border-red-500/30 bg-red-500/10 text-red-200"
-                  : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                  ? "border-destructive/50 bg-destructive/10 text-[#f5c4c0]"
+                  : "border-primary/40 bg-primary/10 text-foreground"
               }`}
             >
               {error || notice}
@@ -260,21 +260,21 @@ export default function KnowledgePage() {
           )}
 
           {answerLine && (
-            <div className="max-w-3xl mx-auto rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/10 via-card to-card p-4">
-              <p className="text-[11px] font-medium text-primary mb-1">
-                简答 · 依据 {answerLine.count} 条 · 首要来源 {answerLine.source}
+            <div className="max-w-3xl mx-auto paper-card paper-grain p-4 animate-rise no-shadow">
+              <p className="mono-label text-[#1a1a1a]/70 mb-2">
+                Answer · {answerLine.count} sources · {answerLine.source}
               </p>
-              <p className="text-sm font-semibold text-foreground">
+              <p className="font-hand text-[28px] leading-tight text-[#1a1a1a]">
                 {answerLine.title}
               </p>
-              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              <p className="font-serif-cn text-[13px] text-[#1a1a1a]/80 mt-2 leading-relaxed">
                 {answerLine.blurb}
               </p>
             </div>
           )}
 
           <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
-            <section className="space-y-4 min-w-0">
+            <section className="space-y-5 min-w-0">
               <CardList hits={hits} query={query} />
               <CapturePanel
                 loading={loading}
@@ -293,7 +293,7 @@ export default function KnowledgePage() {
             </section>
 
             <div className="lg:sticky lg:top-6">
-              <div className="rounded-2xl border border-border/70 bg-card/50 p-3.5">
+              <div className="surface-card p-4">
                 <ActionSuggestions
                   actions={actions}
                   suggestions={suggestions}
@@ -302,8 +302,8 @@ export default function KnowledgePage() {
                   loading={loading}
                 />
               </div>
-              <p className="text-[10px] text-muted-foreground mt-2 px-1 text-center lg:text-left">
-                MCP：GET /api/knowledge/mcp
+              <p className="mono-label mt-2 px-1 text-center lg:text-left">
+                MCP · /api/knowledge/mcp
               </p>
             </div>
           </div>
