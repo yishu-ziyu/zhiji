@@ -2,10 +2,11 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import {
   Zap,
-  FileText,
-  KanbanSquare,
   ArrowRight,
   Target,
+  BookOpen,
+  FileText,
+  KanbanSquare,
 } from "lucide-react";
 
 export default function HomePage() {
@@ -58,23 +59,47 @@ export default function HomePage() {
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 mb-14">
               <Link
-                href="/track/efficiency"
+                href="/track/knowledge"
                 className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90 transition-colors"
               >
-                打开客户变化处理
+                打开知识库工作台
                 <ArrowRight className="w-4 h-4" />
+              </Link>
+              <Link
+                href="/track/efficiency"
+                className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-5 py-2.5 text-sm font-semibold text-foreground hover:bg-muted transition-colors"
+              >
+                客户变化处理
               </Link>
             </div>
 
-            <div className="max-w-xl mx-auto text-left">
-              <Link href="/track/efficiency" className="block group">
+            <div className="max-w-3xl mx-auto grid md:grid-cols-2 gap-4 text-left">
+              <Link href="/track/knowledge" className="block group">
                 <Card className="p-6 h-full border-primary/40 bg-gradient-to-br from-primary/10 via-card to-card hover:border-primary/70 transition-all shadow-xl shadow-primary/5">
                   <div className="flex items-start justify-between mb-4">
                     <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500/30 to-cyan-500/20 flex items-center justify-center ring-1 ring-primary/30">
-                      <Target className="w-6 h-6 text-indigo-300" />
+                      <BookOpen className="w-6 h-6 text-indigo-300" />
                     </div>
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/15 border border-primary/25 px-2 py-1 rounded-full">
-                      当前演示
+                      主路径
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-semibold text-foreground mb-2 group-hover:text-primary transition-colors">
+                    知识库闭环
+                  </h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    资料检索、卡片沉淀、任务拆解与协作状态。面向知识工作者，可演示、可 MCP 调用。
+                  </p>
+                </Card>
+              </Link>
+              <Link href="/track/efficiency" className="block group">
+                <Card className="p-6 h-full border-border bg-card hover:border-primary/40 transition-all">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
+                      <Target className="w-6 h-6 text-muted-foreground" />
+                    </div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted px-2 py-1 rounded-full">
+                      已有能力
                     </span>
                   </div>
                   <h3 className="text-lg font-semibold text-foreground mb-2 group-hover:text-primary transition-colors">
