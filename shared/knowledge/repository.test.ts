@@ -125,5 +125,44 @@ describe("knowledge repository persistence", () => {
     const events = repo.listEventsForWorkItem(item.id);
     expect(events.some((e) => e.type === "evidence_link")).toBe(true);
   });
+
+  it("records search footprint and conserves lit set", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const { searchKnowledge } = await import("./search");
+    const hits = searchKnowledge("检索 来源");
+    expect(hits.length).toBeGreaterThan(0);
+    const { querySessionId } = repo.recordSearchFootprint("检索 来源", hits);
+    const fp = repo.getFootprintData({
+      mode: "current_query",
+      querySessionId,
+    });
+    const litIds = fp.lit.map((e) => e.cardId).sort();
+    const hitIds = hits.map((h) => h.id).sort();
+    expect(litIds).toEqual(hitIds);
+    expect(fs.existsSync(path.join(tmpDir, "footprint-events.json"))).toBe(
+      true,
+    );
+  });
+
+  it("link evidence deepens footprint for work_item mode", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const card = repo.listCards()[0];
+    const item = repo.addAction({
+      description: "足迹工作项",
+      assignee: "自己",
+      nextStep: "挂卡",
+    });
+    repo.linkEvidence(item.id, card.id);
+    const fp = repo.getFootprintData({
+      mode: "work_item",
+      workItemId: item.id,
+    });
+    expect(fp.lit.some((e) => e.cardId === card.id && e.depth >= 3)).toBe(
+      true,
+    );
+  });
 });
+
 

@@ -4,8 +4,15 @@ import path from "node:path";
 import type {
   ActionItem,
   ActionStatus,
+  FootprintEvent,
+  FootprintLitEntry,
+  FootprintViewMode,
   KnowledgeCard,
+  KnowledgeSearchFilters,
+  KnowledgeSearchHit,
   KnowledgeSource,
+  LibraryNode,
+  QuerySession,
   WorkEvent,
   WorkEventType,
 } from "@/shared/types/knowledge";
@@ -15,6 +22,13 @@ import {
   assertWorkItemForStatus,
   WorkItemValidationError,
 } from "@/shared/knowledge/work-item-rules";
+import {
+  aggregateLit,
+  buildLibraryMap,
+  daysAgoIso,
+  depthForKind,
+  litFromHits,
+} from "@/shared/knowledge/footprint";
 
 type NewCardInput = {
   content: string;
@@ -78,6 +92,14 @@ function eventsPath(): string {
   return path.join(resolveDataDir(), "events.json");
 }
 
+function footprintEventsPath(): string {
+  return path.join(resolveDataDir(), "footprint-events.json");
+}
+
+function querySessionsPath(): string {
+  return path.join(resolveDataDir(), "query-sessions.json");
+}
+
 function ensureDataDir(): void {
   const dir = resolveDataDir();
   if (!fs.existsSync(dir)) {
@@ -136,6 +158,24 @@ function saveActions(actions: Map<string, ActionItem>): void {
 
 function saveEvents(events: Map<string, WorkEvent>): void {
   writeJsonMap(eventsPath(), events);
+}
+
+function loadFootprintEvents(): Map<string, FootprintEvent> {
+  ensureDataDir();
+  return readJsonMap<FootprintEvent>(footprintEventsPath());
+}
+
+function saveFootprintEvents(map: Map<string, FootprintEvent>): void {
+  writeJsonMap(footprintEventsPath(), map);
+}
+
+function loadQuerySessions(): Map<string, QuerySession> {
+  ensureDataDir();
+  return readJsonMap<QuerySession>(querySessionsPath());
+}
+
+function saveQuerySessions(map: Map<string, QuerySession>): void {
+  writeJsonMap(querySessionsPath(), map);
 }
 
 function copyCard(card: KnowledgeCard): KnowledgeCard {
@@ -670,6 +710,7 @@ export function linkEvidence(
   });
   saveActions(actions);
   saveEvents(events);
+  recordLinkedFootprint(cardId, workItemId, actor);
   return copyAction(updated);
 }
 
@@ -707,7 +748,13 @@ export function unlinkEvidence(
  */
 export function resetKnowledgeStoreForTests(): void {
   ensureDataDir();
-  for (const p of [cardsPath(), actionsPath(), eventsPath()]) {
+  for (const p of [
+    cardsPath(),
+    actionsPath(),
+    eventsPath(),
+    footprintEventsPath(),
+    querySessionsPath(),
+  ]) {
     if (fs.existsSync(p)) fs.unlinkSync(p);
   }
   const cards = new Map<string, KnowledgeCard>();
@@ -718,6 +765,147 @@ export function resetKnowledgeStoreForTests(): void {
 
 export function getKnowledgeDataDirForTests(): string {
   return resolveDataDir();
+}
+
+/** After search: persist query session + retrieved footprint events. */
+export function recordSearchFootprint(
+  query: string,
+  hits: KnowledgeSearchHit[],
+  filters?: KnowledgeSearchFilters,
+  actor: string = DEFAULT_ACTOR,
+): { querySessionId: string } {
+  const sessions = loadQuerySessions();
+  const fp = loadFootprintEvents();
+  const now = new Date().toISOString();
+  const querySessionId = randomUUID();
+  const scores: Record<string, number> = {};
+  for (const h of hits) {
+    scores[h.id] = h.score;
+  }
+  const session: QuerySession = {
+    id: querySessionId,
+    query,
+    filters,
+    at: now,
+    hitCardIds: hits.map((h) => h.id),
+    scores,
+  };
+  sessions.set(querySessionId, session);
+
+  for (const h of hits) {
+    const ev: FootprintEvent = {
+      id: randomUUID(),
+      cardId: h.id,
+      at: now,
+      kind: "retrieved",
+      depth: depthForKind("retrieved"),
+      querySessionId,
+      score: h.score,
+      actor,
+      meta: { query: query.slice(0, 80) },
+    };
+    fp.set(ev.id, ev);
+  }
+  saveQuerySessions(sessions);
+  saveFootprintEvents(fp);
+  return { querySessionId };
+}
+
+export function recordLinkedFootprint(
+  cardId: string,
+  workItemId: string,
+  actor: string = DEFAULT_ACTOR,
+): void {
+  const fp = loadFootprintEvents();
+  const ev: FootprintEvent = {
+    id: randomUUID(),
+    cardId,
+    at: new Date().toISOString(),
+    kind: "linked",
+    depth: depthForKind("linked"),
+    workItemId,
+    actor,
+  };
+  fp.set(ev.id, ev);
+  saveFootprintEvents(fp);
+}
+
+export function getLibraryMapData(): {
+  nodes: LibraryNode[];
+  layout: string;
+} {
+  return buildLibraryMap(listCards());
+}
+
+export function getFootprintData(options: {
+  mode: FootprintViewMode;
+  querySessionId?: string;
+  workItemId?: string;
+  sinceDays?: number;
+}): {
+  mode: FootprintViewMode;
+  querySessionId?: string;
+  workItemId?: string;
+  lit: FootprintLitEntry[];
+  litCount: number;
+  dimCount: number;
+} {
+  const cards = listCards();
+  const allIds = new Set(cards.map((c) => c.id));
+  const events = [...loadFootprintEvents().values()];
+
+  if (options.mode === "current_query" && options.querySessionId) {
+    const session = loadQuerySessions().get(options.querySessionId);
+    if (session) {
+      const lit = litFromHits(
+        session.hitCardIds.map((id) => ({
+          id,
+          score: session.scores?.[id],
+        })),
+      ).filter((e) => allIds.has(e.cardId));
+      return {
+        mode: options.mode,
+        querySessionId: options.querySessionId,
+        lit,
+        litCount: lit.length,
+        dimCount: Math.max(0, cards.length - lit.length),
+      };
+    }
+  }
+
+  let evidenceIds: string[] | undefined;
+  if (options.mode === "work_item" && options.workItemId) {
+    const item = getAction(options.workItemId);
+    evidenceIds = item?.evidenceIds ?? [];
+  }
+
+  const since =
+    options.mode === "window"
+      ? daysAgoIso(options.sinceDays ?? 7)
+      : undefined;
+
+  const map = aggregateLit(events, {
+    mode: options.mode,
+    querySessionId: options.querySessionId,
+    workItemId: options.workItemId,
+    evidenceIds,
+    since,
+  });
+
+  const lit = [...map.values()].filter((e) => allIds.has(e.cardId) && e.depth > 0);
+  return {
+    mode: options.mode,
+    querySessionId: options.querySessionId,
+    workItemId: options.workItemId,
+    lit,
+    litCount: lit.length,
+    dimCount: Math.max(0, cards.length - lit.length),
+  };
+}
+
+export function getQuerySession(id: string): QuerySession | null {
+  const s = loadQuerySessions().get(id);
+  return s ? structuredClone(s) : null;
 }
 
 export { WorkItemValidationError };
