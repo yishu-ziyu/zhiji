@@ -9,14 +9,20 @@ import type {
   FootprintLitEntry,
   FootprintViewMode,
   KnowledgeCard,
+  KnowledgeRelation,
   KnowledgeSearchHit,
   KnowledgeSource,
   LibraryNode,
+  RelationNeighborEdge,
+  RelationType,
   WorkEvent,
 } from "@/shared/types/knowledge";
 import { DEFAULT_ACTOR } from "@/shared/types/knowledge";
 import { CapturePanel } from "./components/CapturePanel";
 import { CardList } from "./components/CardList";
+import {
+  CardRelationsPanel,
+} from "./components/CardRelationsPanel";
 import { KnowledgeFootprintMap } from "./components/KnowledgeFootprintMap";
 import { KnowledgeSearch } from "./components/KnowledgeSearch";
 import { WorkItemsPanel } from "./components/WorkItemsPanel";
@@ -77,6 +83,15 @@ export default function KnowledgePage() {
   const [litCount, setLitCount] = useState(0);
   const [dimCount, setDimCount] = useState(0);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [relationEdges, setRelationEdges] = useState<RelationNeighborEdge[]>(
+    [],
+  );
+  const [islandEdges, setIslandEdges] = useState<KnowledgeRelation[]>([]);
+  const [pathHint, setPathHint] = useState<{
+    nodes: string[];
+    length: number;
+  } | null>(null);
+  const [allCards, setAllCards] = useState<KnowledgeCard[]>([]);
 
   const refreshLibraryMap = useCallback(async () => {
     const res = await fetch("/api/knowledge/library-map");
@@ -138,11 +153,37 @@ export default function KnowledgePage() {
     const res = await fetch(`/api/knowledge/work-items/${id}`);
     if (!res.ok) {
       setDetail(null);
+      setIslandEdges([]);
       return;
     }
     const data = (await res.json()) as WorkDetail;
     setDetail(data);
+    const islandRes = await fetch(`/api/knowledge/work-items/${id}/island`);
+    if (islandRes.ok) {
+      const island = (await islandRes.json()) as {
+        edges?: KnowledgeRelation[];
+      };
+      setIslandEdges(island.edges ?? []);
+    } else {
+      setIslandEdges([]);
+    }
   }, []);
+
+  const loadNeighbors = useCallback(async (cardId: string | null) => {
+    if (!cardId) {
+      setRelationEdges([]);
+      setPathHint(null);
+      return;
+    }
+    const res = await fetch(`/api/knowledge/cards/${cardId}/neighbors`);
+    if (!res.ok) {
+      setRelationEdges([]);
+      return;
+    }
+    const data = (await res.json()) as { edges?: RelationNeighborEdge[] };
+    setRelationEdges(data.edges ?? []);
+  }, []);
+
 
   const runSearch = useCallback(
     async (q?: string, source?: KnowledgeSource | "all") => {
@@ -163,6 +204,11 @@ export default function KnowledgePage() {
               : { source: nextSource, limit: 20 },
         });
         setHits(data.hits);
+        setAllCards((prev) => {
+          const map = new Map(prev.map((c) => [c.id, c]));
+          for (const h of data.hits) map.set(h.id, h);
+          return [...map.values()];
+        });
         if (data.querySessionId) {
           setQuerySessionId(data.querySessionId);
           setFootprintMode("current_query");
@@ -218,6 +264,7 @@ export default function KnowledgePage() {
         ]);
         if (!alive) return;
         setHits(searchData.hits);
+        setAllCards(searchData.hits);
         setActions(itemsRes.items ?? []);
         setSuggestions(suggestData.suggestions ?? []);
         setLibraryNodes(mapRes.nodes ?? []);
@@ -231,6 +278,11 @@ export default function KnowledgePage() {
           setLitCount(fp.litCount ?? 0);
           setDimCount(fp.dimCount ?? 0);
         }
+        const firstCard = searchData.hits[0];
+        if (firstCard) {
+          setSelectedCardId(firstCard.id);
+          await loadNeighbors(firstCard.id);
+        }
         const first = itemsRes.items?.[0];
         if (first) {
           setSelectedId(first.id);
@@ -243,11 +295,15 @@ export default function KnowledgePage() {
     return () => {
       alive = false;
     };
-  }, [loadDetail]);
+  }, [loadDetail, loadNeighbors]);
 
   useEffect(() => {
     void refreshActions();
   }, [filterMine, refreshActions]);
+
+  useEffect(() => {
+    void loadNeighbors(selectedCardId);
+  }, [selectedCardId, loadNeighbors]);
 
   const answerLine = useMemo(() => {
     if (!searchedOnce || hits.length === 0) return null;
@@ -452,6 +508,78 @@ export default function KnowledgePage() {
     }
   }
 
+  async function handleCreateRelation(input: {
+    fromCardId: string;
+    toCardId: string;
+    relationType: RelationType;
+    evidenceSentence: string;
+  }) {
+    setLoading(true);
+    setError(null);
+    try {
+      await postJson("/api/knowledge/relations", {
+        ...input,
+        createdBy: defaultUser,
+      });
+      await loadNeighbors(input.fromCardId);
+      if (selectedId) await loadDetail(selectedId);
+      setNotice("已保存关系");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "创建关系失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRelationStatus(
+    relationId: string,
+    status: "confirmed" | "rejected",
+  ) {
+    setLoading(true);
+    setError(null);
+    try {
+      await patchJson(`/api/knowledge/relations/${relationId}`, { status });
+      await loadNeighbors(selectedCardId);
+      if (selectedId) await loadDetail(selectedId);
+      setNotice(status === "confirmed" ? "已确认关系" : "已否决建议");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "更新关系失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSelectCard(cardId: string) {
+    setSelectedCardId(cardId);
+    // After neighbors load (effect), optionally compute path to first neighbor.
+    // Here: path to first island peer if any.
+    const islandPeer = islandEdges.find(
+      (e) => e.fromCardId === cardId || e.toCardId === cardId,
+    );
+    const other = islandPeer
+      ? islandPeer.fromCardId === cardId
+        ? islandPeer.toCardId
+        : islandPeer.fromCardId
+      : null;
+    if (!other) {
+      setPathHint(null);
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/knowledge/path?from=${encodeURIComponent(cardId)}&to=${encodeURIComponent(other)}&maxDepth=3`,
+      );
+      if (res.ok) {
+        const data = (await res.json()) as {
+          path?: { nodes: string[]; length: number } | null;
+        };
+        setPathHint(data.path ?? null);
+      }
+    } catch {
+      setPathHint(null);
+    }
+  }
+
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar />
@@ -505,7 +633,7 @@ export default function KnowledgePage() {
             loading={loading}
             workItemModeAvailable={Boolean(selectedId)}
             onModeChange={(m) => void handleFootprintMode(m)}
-            onSelectCard={setSelectedCardId}
+            onSelectCard={(id) => void handleSelectCard(id)}
           />
 
           <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
@@ -514,7 +642,18 @@ export default function KnowledgePage() {
                 hits={hits}
                 query={query}
                 selectedCardId={selectedCardId}
-                onSelectCard={setSelectedCardId}
+                onSelectCard={(id) => void handleSelectCard(id)}
+              />
+              <CardRelationsPanel
+                cardId={selectedCardId}
+                edges={relationEdges}
+                linkableCards={allCards.length > 0 ? allCards : hits}
+                loading={loading}
+                onSelectCard={(id) => void handleSelectCard(id)}
+                onCreate={(input) => void handleCreateRelation(input)}
+                onConfirm={(id) => void handleRelationStatus(id, "confirmed")}
+                onReject={(id) => void handleRelationStatus(id, "rejected")}
+                pathHint={pathHint}
               />
               <CapturePanel
                 loading={loading}
@@ -554,6 +693,7 @@ export default function KnowledgePage() {
                     void handleLinkEvidence(wid, cid)
                   }
                   linkableCards={hits}
+                  islandEdges={islandEdges}
                 />
               </div>
               <p className="mono-label mt-2 px-1 text-center lg:text-left">
