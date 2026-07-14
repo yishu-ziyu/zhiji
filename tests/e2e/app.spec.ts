@@ -84,3 +84,33 @@ test("knowledge demo: search, work item timeline, advance", async ({
 
   await expect(page.getByTestId("work-item-timeline")).toContainText(/状态|进行中|doing/i);
 });
+
+test("knowledge relations: type + evidence sentence visible", async ({
+  page,
+}) => {
+  await page.goto("/track/knowledge");
+  await expect(page.getByTestId("card-relations")).toBeVisible({
+    timeout: 15000,
+  });
+
+  // Seed selects first hit; relations panel should show at least one edge
+  const edges = page.getByTestId("relation-edge");
+  await expect(edges.first()).toBeVisible({ timeout: 10000 });
+  await expect(edges.first()).toContainText(/支持|依赖|同题|出自|后续|矛盾/);
+  // Source sentence from seed (must not be empty decoration)
+  await expect(edges.first()).toContainText(/来源|材料|状态|检索|卡片|下一步/);
+
+  // Open add form and require sentence
+  await page.getByRole("button", { name: "添加关系" }).click();
+  await expect(page.getByTestId("relation-form")).toBeVisible();
+  await expect(page.getByLabel("来源句")).toBeVisible();
+
+  // Work item with multi evidence shows island when detail open
+  const island = page.getByTestId("evidence-island");
+  if ((await island.count()) > 0) {
+    await expect(island.first()).toBeVisible();
+    await expect(page.getByTestId("island-edge").first()).toContainText(
+      /支持|依赖/,
+    );
+  }
+});

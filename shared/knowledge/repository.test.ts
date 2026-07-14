@@ -163,6 +163,95 @@ describe("knowledge repository persistence", () => {
       true,
     );
   });
+
+  it("seeds confirmed relations with evidence sentences", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const rels = repo.listRelations({ status: "confirmed" });
+    expect(rels.length).toBeGreaterThanOrEqual(2);
+    expect(rels.every((r) => r.evidenceSentence.trim().length > 0)).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "relations.json"))).toBe(true);
+  });
+
+  it("creates relation and returns neighbors", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const cards = repo.listCards();
+    const a = cards[0];
+    const b = cards[1];
+    const created = repo.createRelation({
+      fromCardId: a.id,
+      toCardId: b.id,
+      relationType: "same_topic",
+      evidenceSentence: "单测：两卡同属演示种子。",
+      status: "confirmed",
+      source: "manual",
+    });
+    expect(created.evidenceSentence).toContain("单测");
+    const neighbors = repo.getNeighbors(a.id);
+    expect(neighbors.edges.some((e) => e.otherCard.id === b.id)).toBe(true);
+  });
+
+  it("rejects relation without evidence sentence", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const cards = repo.listCards();
+    expect(() =>
+      repo.createRelation({
+        fromCardId: cards[0].id,
+        toCardId: cards[1].id,
+        relationType: "supports",
+        evidenceSentence: "",
+      }),
+    ).toThrow(/来源句/);
+  });
+
+  it("path between seed cards", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    // seed: seed-2 -> seed-1 <- seed-4
+    const path = repo.getPathBetween("kc-seed-2", "kc-seed-4", {
+      maxDepth: 3,
+    });
+    expect(path).not.toBeNull();
+    expect(path!.nodes[0]).toBe("kc-seed-2");
+    expect(path!.nodes[path!.nodes.length - 1]).toBe("kc-seed-4");
+    expect(path!.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("reject suggested removes from default neighbors", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const cards = repo.listCards();
+    const rel = repo.createRelation({
+      fromCardId: cards[0].id,
+      toCardId: cards[1].id,
+      relationType: "mentions",
+      evidenceSentence: "建议边原文。",
+      status: "suggested",
+      source: "rule",
+    });
+    expect(
+      repo.getNeighbors(cards[0].id).edges.some((e) => e.id === rel.id),
+    ).toBe(true);
+    repo.patchRelation(rel.id, { status: "rejected" });
+    expect(
+      repo.getNeighbors(cards[0].id).edges.some((e) => e.id === rel.id),
+    ).toBe(false);
+  });
+
+  it("evidence island only includes edges inside evidence set", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const island = repo.getEvidenceIsland("ka-seed-1");
+    expect(island.cardIds).toContain("kc-seed-2");
+    expect(island.cardIds).toContain("kc-seed-1");
+    for (const e of island.edges) {
+      expect(island.cardIds).toContain(e.fromCardId);
+      expect(island.cardIds).toContain(e.toCardId);
+    }
+    expect(island.edges.length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 
