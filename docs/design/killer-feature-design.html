@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>杀手锏功能设计文档 · FC-OPC iBot 2026 · 2026-07-04</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --bg-base: #0a0a0a;
+    --bg-elevated: #141414;
+    --bg-card: #1a1a1a;
+    --border-subtle: #262626;
+    --border-default: #333333;
+    --text-primary: #f5f5f5;
+    --text-secondary: #a3a3a3;
+    --text-muted: #6b6b6b;
+    --accent: #f97316;
+    --accent-soft: #fb923c;
+    --accent-faded: rgba(249, 115, 22, 0.12);
+    --good: #10b981;
+    --warn: #eab308;
+    --bad: #ef4444;
+  }
+  * { font-feature-settings: "ss01"; -webkit-font-smoothing: antialiased; }
+  html, body { background: var(--bg-base); color: var(--text-primary); }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.75;
+    letter-spacing: 0.005em;
+  }
+  .font-serif { font-family: "Source Serif Pro", "Songti SC", "STSong", Georgia, serif; }
+  .font-mono { font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+
+  /* Layout: deck 1920×1080 reference; responsive down to 1024 width */
+  .slide {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 64px 48px;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .slide:first-child { border-top: none; }
+  .slide-num {
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-family: ui-monospace, monospace;
+  }
+  h1.display {
+    font-size: clamp(40px, 5vw, 64px);
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin-bottom: 24px;
+  }
+  h2.section {
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 16px;
+  }
+  .lead {
+    font-size: 18px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+  .accent-bar {
+    display: inline-block;
+    width: 32px; height: 2px;
+    background: var(--accent);
+    margin-bottom: 16px;
+  }
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 24px;
+  }
+  .card-elevated {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+  }
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 500;
+    text-transform: uppercase;
+    font-family: ui-monospace, monospace;
+  }
+  .badge-accent { background: var(--accent-faded); color: var(--accent-soft); }
+  .badge-good { background: rgba(16, 185, 129, 0.12); color: #34d399; }
+  .badge-warn { background: rgba(234, 179, 8, 0.12); color: #facc15; }
+  .badge-bad { background: rgba(239, 68, 68, 0.12); color: #f87171; }
+  .badge-mute { background: #262626; color: var(--text-secondary); }
+
+  /* Comparison table */
+  table.matrix { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.matrix th, table.matrix td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--border-subtle); }
+  table.matrix th { background: var(--bg-elevated); font-weight: 500; color: var(--text-secondary); letter-spacing: 0.04em; font-size: 12px; text-transform: uppercase; }
+  table.matrix tbody tr:hover { background: var(--bg-elevated); }
+  table.matrix th:first-child { border-top-left-radius: 6px; }
+  table.matrix th:last-child { border-top-right-radius: 6px; }
+
+  /* Quote block */
+  blockquote.mark {
+    border-left: 2px solid var(--accent);
+    padding: 4px 0 4px 20px;
+    margin: 24px 0;
+    font-style: normal;
+    color: var(--text-secondary);
+  }
+  blockquote.mark p { margin: 8px 0; }
+
+  /* Code-like token */
+  .token {
+    background: #262626;
+    color: #fb923c;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: ui-monospace, monospace;
+    font-size: 13px;
+  }
+
+  /* TOC sticky */
+  .toc-sticky {
+    position: sticky;
+    top: 0;
+    background: rgba(10, 10, 10, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-subtle);
+    z-index: 50;
+  }
+
+  /* Trace panel mock */
+  .trace-step {
+    display: flex; gap: 16px; padding: 14px 16px;
+    border-left: 2px solid var(--border-default);
+    position: relative;
+  }
+  .trace-step.thought { border-left-color: #8b5cf6; }
+  .trace-step.tool { border-left-color: var(--accent); }
+  .trace-step.obs { border-left-color: var(--good); }
+  .trace-step.decision { border-left-color: var(--bad); }
+  .trace-icon {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; font-size: 14px;
+    background: var(--bg-elevated);
+  }
+
+  /* Mini agent avatar */
+  .shopkeeper-mini {
+    width: 48px; height: 48px; border-radius: 50%;
+    background: linear-gradient(135deg, #f97316, #c2410c);
+    position: relative;
+    box-shadow: 0 0 0 2px #0a0a0a, 0 0 0 4px rgba(249, 115, 22, 0.3);
+  }
+  .shopkeeper-mini::after {
+    content: ''; position: absolute;
+    right: -2px; bottom: -2px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--good);
+    border: 2px solid #0a0a0a;
+  }
+
+  /* Demo screen mock */
+  .screen {
+    background: #0d0d0d;
+    border: 1px solid var(--border-default);
+    border-radius: 10px;
+    padding: 16px;
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+  }
+
+  /* TOC navigation */
+  nav.toc a {
+    display: block;
+    padding: 6px 0;
+    color: var(--text-secondary);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    padding-left: 12px;
+    font-size: 13px;
+  }
+  nav.toc a:hover { color: var(--text-primary); border-left-color: var(--accent); }
+
+  /* Section divider */
+  .sec-divider {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  /* Print-friendly */
+  @media print {
+    .no-print { display: none !important; }
+    .slide { page-break-after: always; }
+  }
+
+  /* Hero glow */
+  .hero-glow {
+    position: absolute;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(249, 115, 22, 0.12), transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .content-relative { position: relative; z-index: 1; }
+
+  /* Decision action mock */
+  .decision-card {
+    background: linear-gradient(180deg, rgba(249, 115, 22, 0.06), transparent);
+    border: 1px solid rgba(249, 115, 22, 0.4);
+  }
+
+  /* inline flow */
+  .flow-arrow {
+    color: var(--text-muted);
+    margin: 0 8px;
+    font-family: ui-monospace, monospace;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============== TOC NAVIGATION ============== -->
+<div class="toc-sticky">
+  <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-2 h-2 rounded-full" style="background: var(--accent);"></div>
+      <span class="font-mono text-xs tracking-widest text-neutral-400">FC-OPC iBot 2026 · KILLER FEATURE DESIGN</span>
+    </div>
+    <div class="text-xs text-neutral-500 font-mono hidden md:block">2026-07-04 · v1 draft · pending user approval</div>
+  </div>
+</div>
+
+<!-- ============== HERO ============== -->
+<section class="slide" style="padding-top: 96px; padding-bottom: 96px;">
+  <div class="hero-glow" style="top: -200px; right: -200px;"></div>
+  <div class="content-relative">
+    <div class="slide-num mb-4">FC-OPC iBot 2026 / 杀手锏功能 · 设计文档</div>
+    <h1 class="display">
+      从 Chat 到 Agent 的最后一公里
+    </h1>
+    <p class="lead" style="max-width: 720px; margin-bottom: 40px;">
+      一份基于 3-Agent 调研 + 3-Agent 互相质询的设计决议。<br>
+      目标:在 48 小时评审现场,把现有 4 个 chat 功能升维成一个有<strong style="color: var(--accent);">真决策 + 可追溯</strong>的统一 Agent 形态。
+    </p>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-12" style="max-width: 720px;">
+      <div class="card"><div class="text-xs text-neutral-500 mb-1">距黑客松</div><div class="font-mono text-lg">7 天</div></div>
+      <div class="card"><div class="text-xs text-neutral-500 mb-1">需 ship</div><div class="font-mono text-lg">+ 1 模块</div></div>
+      <div class="card"><div class="text-xs text-neutral-500 mb-1">新依赖</div><div class="font-mono text-lg" style="color: var(--good);">0 个</div></div>
+      <div class="card"><div class="text-xs text-neutral-500 mb-1">状态</div><div class="font-mono text-lg" style="color: var(--accent);">草案 v1</div></div>
+    </div>
+
+    <div class="text-xs text-neutral-500 leading-relaxed" style="max-width: 720px;">
+      <strong style="color: var(--text-primary); font-family: ui-monospace, monospace;">文档结构 →</strong>
+      1. 问题陈述 ·
+      2. 调研流程 ·
+      3. 三个候选 ·
+      4. 互相质询 ·
+      5. 最终方案 ·
+      6. Demo 走查 ·
+      7. 评审得分 ·
+      8. 实施计划 ·
+      9. Open Questions
+    </div>
+  </div>
+</section>
+
+<!-- ============== SECTION 1: 问题陈述 ============== -->
+<section class="slide" id="problem">
+  <div class="slide-num">01 · 问题陈述</div>
+  <div class="accent-bar"></div>
+  <h2 class="section">现有 4 个功能是 chat 包壳,不是 Agent</h2>
+
+  <p class="lead mb-8">
+    你已经做到了 DEMO_SCRIPT.md 的 90%——5 个 API、3 个 prompt、11/11 E2E 测试。<strong style="color: var(--text-primary);">但资深评审 5 秒就能看穿这是 prompt wrapper:</strong>用户输入一段 → 模型回一段,没有任何自主性。
+  </p>
+
+  <div class="grid md:grid-cols-3 gap-4 mb-8">
+    <div class="card">
+      <div class="sec-divider">项目时间线</div>
+      <div class="space-y-2 text-sm">
+        <div class="flex justify-between"><span class="text-neutral-400">启动</span><span class="font-mono">2026-07-03</span></div>
+        <div class="flex justify-between"><span class="text-neutral-400">今日</span><span class="font-mono">2026-07-04</span></div>
+        <div class="flex justify-between"><span class="text-neutral-400">比赛</span><span class="font-mono">07-11 ~ 07-12</span></div>
+        <div class="flex justify-between"><span class="text-neutral-400">状态</span><span class="font-mono" style="color: var(--good);">Day 0 完成</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="sec-divider">现有 4 个 Must 功能</div>
+      <div class="space-y-1.5 text-sm">
+        <div>· <span class="text-neutral-300">电商 · 选品分析</span></div>
+        <div>· <span class="text-neutral-300">电商 · 短视频脚本</span></div>
+        <div>· <span class="text-neutral-300">电商 · 私域话术</span></div>
+        <div>· <span class="text-neutral-300">效率 · 会议纪要</span></div>
+        <div>· <span class="text-neutral-300">效率 · 项目看板</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="sec-divider">评审维度</div>
+      <div class="space-y-1.5 text-sm">
+        <div class="flex justify-between"><span class="text-neutral-300">完成度</span><span class="font-mono text-neutral-400">25%</span></div>
+        <div class="flex justify-between"><span class="text-neutral-300">应用价值</span><span class="font-mono text-neutral-400">25%</span></div>
+        <div class="flex justify-between"><span class="text-neutral-300">商业潜力</span><span class="font-mono text-neutral-400">20%</span></div>
+        <div class="flex justify-between"><span class="text-neutral-300">创新性</span><span class="font-mono text-neutral-400" style="color: var(--accent);">20% ← 杀手锏战场</span></div>
+        <div class="flex justify-between"><span class="text-neutral-300">安全性</span><span class="font-mono text-neutral-400">10%</span></div>
+      </div>
+    </div>
+  </div>
+
+  <blockquote class="mark">
+    <p style="color: var(--text-primary);">用户原始诉求:</p>
+    <p style="font-size: 17px;">"加一个杀手锏功能。需要充分调研和讨论。"</p>
+    <p style="color: var(--text-muted); font-size: 13px;">→ 核心需求解读:在 7 天窗口内,通过 1 个新能力让 demo 从 chat 升维到 Agent,同时不破坏已有投入。</p>
+  </blockquote>
+</section>
+
+<!-- ============== SECTION 2: 调研流程 ============== -->
+<section class="slide" id="research">
+  <div class="slide-num">02 · 调研流程</div>
+  <div class="accent-bar"></div>
+  <h2 class="section">三路 Agent 调研 + 三路互相质询</h2>
+
+  <p class="lead mb-10">
+    没有让一个 Agent 兼三路。先 3 路并行出候选,再让 3 路互相挑刺 — 这是你想要的"2-3 Agent 互相辩论"的标准打法。
+  </p>
+
+  <!-- 流程图 -->
+  <div class="card mb-8">
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="text-center">
+        <div class="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center font-mono" style="background: var(--accent-faded); color: var(--accent-soft);">①</div>
+        <div class="font-medium mb-1">第一波 · 并行调研</div>
+        <div class="text-xs text-neutral-400">3 个 Agent 各从一种立场出发,<br>产出 1 份候选方案</div>
+      </div>
+      <div class="text-center">
+        <div class="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center font-mono" style="background: var(--accent-faded); color: var(--accent-soft);">②</div>
+        <div class="font-medium mb-1">第二波 · 互相质询</div>
+        <div class="text-xs text-neutral-400">3 个 Agent 各拿 1 份质询 prompt,<br>直接攻击另外两路</div>
+      </div>
+      <div class="text-center">
+        <div class="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center font-mono" style="background: var(--good); color: #34d399;">③</div>
+        <div class="font-medium mb-1">第三步 · 综合诊断</div>
+        <div class="text-xs text-neutral-400">提炼共识信号 + 弱点暴露,<br>组合出最终方案</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 三个立场 -->
+  <div class="grid md:grid-cols-3 gap-4">
+    <div class="card-elevated card">
+      <div class="flex items-center gap-2 mb-3"><span class="badge badge-accent">A</span><span class="font-medium">实战派黑客松老兵</span></div>
+      <p class="text-sm text-neutral-300 leading-relaxed">只关心:评审 3 分钟 demo 现场会眼前一亮的东西。<br>不在乎工程杰作,在乎差异化冲击。</p>
+    </div>
+    <div class="card-elevated card">
+      <div class="flex items-center gap-2 mb-3"><span class="badge badge-accent">B</span><span class="font-medium">OPC 叙事派 PM</span></div>
+      <p class="text-sm text-neutral-300 leading-relaxed">只关心:让"一人公司"叙事从口号变成画面。<br>杀手锏必须对应某个真实岗位。</p>
+    </div>
+    <div class="card-elevated card">
+      <div class="flex items-center gap-2 mb-3"><span class="badge badge-accent">C</span><span class="font-medium">Agent 形态派架构师</span></div>
+      <p class="text-sm text-neutral-300 leading-relaxed">只关心:这必须是 Agent,不是 Chat。<br>体现自主性 / 工具调用 / 多步推理。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============== SECTION 3: 三个候选 ============== -->
+<section class="slide" id="candidates">
+  <div class="slide-num">03 · 三个候选方案</div>
+  <div class="accent-bar"></div>
+  <h2 class="section">每路 Agent 各自交了一份答卷</h2>
+
+  <p class="lead mb-8">
+    三份方案方向完全不同。下表是横向对比 —— 关键是看它们的<strong style="color: var(--text-primary);">核心画面 + 风险 + 对应评分项</strong>。
+  </p>
+
+  <div class="grid md:grid-cols-3 gap-5">
+    <!-- A -->
+    <div class="card-elevated card">
+      <div class="flex items-center justify-between mb-3">
+        <span class="badge badge-accent">A · 实战派</span>
+        <span class="text-xs font-mono text-neutral-500">6 人天</span>
+      </div>
+      <h3 class="text-lg font-medium mb-2">Agent Loop Live</h3>
+      <p class="text-xs text-neutral-400 mb-3">ReAct 范式 · 思考/调用/观察实时卡片流</p>
+      <div class="text-sm space-y-2">
+        <div><strong class="text-neutral-300">核心画面:</strong>Thought → Tool → Observation 卡片流实时滚动</div>
+        <div><strong class="text-neutral-300">主攻评分:</strong><span class="badge badge-accent ml-1">创新性 20%</span></div>
+        <div><strong class="text-neutral-300">最大风险:</strong><span class="badge badge-bad ml-1">LLM 崩</span> tool_call JSON 不稳定</div>
+      </div>
+    </div>
+
+    <!-- B -->
+    <div class="card-elevated card">
+      <div class="flex items-center justify-between mb-3">
+        <span class="badge badge-accent">B · 叙事派</span>
+        <span class="text-xs font-mono text-neutral-500">4-6 人天</span>
+      </div>
+      <h3 class="text-lg font-medium mb-2">AI 团队作战室</h3>
+      <p class="text-xs text-neutral-400 mb-3">多 Agent 编排 · 大楼 + 工位视觉</p>
+      <div class="text-sm space-y-2">
+        <div><strong class="text-neutral-300">核心画面:</strong>三楼 + 3 个 Agent 工位 + 任务派发动效</div>
+        <div><strong class="text-neutral-300">主攻评分:</strong><span class="badge badge-accent ml-1">创新 + 商业潜力</span></div>
+        <div><strong class="text-neutral-300">最大风险:</strong><span class="badge badge-bad ml-1">复杂度</span> 12+ 人天才能稳</div>
+      </div>
+    </div>
+
+    <!-- C -->
+    <div class="card-elevated card">
+      <div class="flex items-center justify-between mb-3">
+        <span class="badge badge-accent">C · 形态派</span>
+        <span class="text-xs font-mono text-neutral-500">3-4 人天</span>
+      </div>
+      <h3 class="text-lg font-medium mb-2">小掌柜日报</h3>
+      <p class="text-xs text-neutral-400 mb-3">单 Agent · 拟人化 + 跨模块串联</p>
+      <div class="text-sm space-y-2">
+        <div><strong class="text-neutral-300">核心画面:</strong>早 9 点推送 + 客服自动回 + 决策回流</div>
+        <div><strong class="text-neutral-300">主攻评分:</strong><span class="badge badge-accent ml-1">商业 + 应用价值</span></div>
+        <div><strong class="text-neutral-300">最大风险:</strong><span class="badge badge-warn ml-1">无真决策</span> 只是建议</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="mt-8 text-sm text-neutral-400">
+    <strong class="text-neutral-200">下一步</strong>:每个方案都有致命弱点。派 3 个 Agent 互相质询,逼他们暴露。
+  </p>
+</section>
+
+<!-- ============== SECTION 4: 互相质询 ============== -->
+<section class="slide" id="critique">
+  <div class="slide-num">04 · 互相质询的关键攻击</div>
+  <div class="accent-bar"></div>
+  <h2 class="section">把每个方案的弱点打到见骨</h2>
+
+  <p class="lead mb-8">
+    下面是质询后提炼出来的<strong style="color: var(--text-primary);">最致命</strong>的攻击点,每个都附了"防御/不防御"的判断。
+  </p>
+
+  <!-- 对 A 的攻击 -->
+  <div class="card mb-6" style="border-left: 3px solid #8b5cf6;">
+    <div class="flex items-center gap-3 mb-4">
+      <span class="badge" style="background: rgba(139,92,246,0.15); color: #a78bfa;">对方案 A</span>
+      <span class="font-medium">Agent Loop Live</span>
+      <span class="text-xs text-neutral-500 ml-auto">被 3 个 Agent 同时质疑</span>
+    </div>
+
+    <div class="space-y-3 text-sm">
+      <div class="flex gap-3">
+        <div class="text-red-400 font-bold shrink-0 w-6">①</div>
+        <div><strong>金句空白</strong> — Thought 卡片流没有故事性、没有拟人化、没法形成金句传播。这是创新性 20% 的减分项。</div>
+      </div>
+      <div class="flex gap-3">
+        <div class="text-red-400 font-bold shrink-0 w-6">②</div>
+        <div><strong>风险最高</strong> — tool_call JSON 调试是真的无底洞,2.5 天估算是低估。LLM 崩一次整盘崩。</div>
+      </div>
+      <div class="flex gap-3">
+        <div class="text-red-400 font-bold shrink-0 w-6">③</div>
+        <div><strong>评审看不懂</strong> — 普通评审看 Thought 卡片流 = "这给我看一堆日志干啥"。只有 tech 评审 buy in。</div>
+      </div>
+      <div class="mt-3 p-3 rounded" style="background: rgba(16, 185, 129, 0.08);">
+        <span class="badge badge-good">取舍 · 保留 process visible,但作为审计能力而非核心卖点</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 对 B 的攻击 -->
+  <div class="card mb-6" style="border-left: 3px solid var(--accent);">
+    <div class="flex items-center gap-3 mb-4">
+      <span class="badge badge-accent">对方案 B</span>
+      <span class="font-medium">AI 团队作战室</span>
+      <span class="text-xs text-neutral-500 ml-auto">3 个 Agent 全部同意砍看板不对</span>
+    </div>
+
+    <div class="space-y-3 text-sm">
+      <div class="flex gap-3">
+        <div class="text-red-400 font-bold shrink-0 w-6">①</div>
+        <div><strong>复杂度失控</strong> — framer-motion + 3-Agent 状态机 + 事件总线,估 6 人天实际 12+ 人天。动画掉帧 2 次体验塌方。</div>
+      </div>
+      <div class="flex gap-3">
+        <div class="text-red-400 font-bold shrink-0 w-6">②</div>
+        <div><strong>是 Flowith 简化版</strong> — Flowith 2026-07-02 才发布"Owner/Lead/Worker"多 Agent 部门。比它少 80% 功能,会被认成复刻。</div>
+      </div>
+      <div class="flex gap-3">
+        <div class="text-red-400 font-bold shrink-0 w-6">③</div>
+        <div><strong>砍看板是砍错了</strong> — OPC 看板是任务管理的最小可用单元,作战室里的 Agent 再热闹老板也不知道"今天推进了什么"。</div>
+      </div>
+      <div class="mt-3 p-3 rounded" style="background: rgba(16, 185, 129, 0.08);">
+        <span class="badge badge-good">取舍 · 不画大楼,看板升级为决策落地载体</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 对 C 的攻击 -->
+  <div class="card mb-6" style="border-left: 3px solid var(--good);">
+    <div class="flex items-center gap-3 mb-4">
+      <span class="badge badge-good">对方案 C</span>
+      <span class="font-medium">小掌柜日报</span>
+      <span class="text-xs text-neutral-500 ml-auto">商业故事最完整但内核被质疑</span>
+    </div>
+
+    <div class="space-y-3 text-sm">
+      <div class="flex gap-3">
+        <div class="text-red-400 font-bold shrink-0 w-6">①</div>
+        <div><strong>"AI 运营总监"是过度承诺</strong>(3 个 Agent 都同意) — 真正的运营总监有决策权/跨部门协调/KPI 背数,小掌柜没有。</div>
+      </div>
+      <div class="flex gap-3">
+        <div class="text-red-400 font-bold shrink-0 w-6">②</div>
+        <div><strong>没有"哇时刻"</strong> — 日报 + 自动回复 + 跳转,听 30 秒就完了。后 2 分半拿什么填?</div>
+      </div>
+      <div class="flex gap-3">
+        <div class="text-red-400 font-bold shrink-0 w-6">③</div>
+        <div><strong>复用是减分项</strong> — 把 4 个旧功能包装 = 资深评审一眼看穿"prompt wrapper"。</div>
+      </div>
+      <div class="mt-3 p-3 rounded" style="background: rgba(16, 185, 129, 0.08);">
+        <span class="badge badge-good">取舍 · 补 1 个真决策动作(自动执行 + 确认按钮)</span>
+      </div>
+    </div>
+  </div>
+
+  <blockquote class="mark">
+    <p><strong style="color: var(--text-primary);">三个 Agent 的共识信号</strong>(这些是最强的):</p>
+    <p>① 真的 Agent 必须能"做决策",不只是给建议</p>
+    <p>② 复用在 2026 黑客松是减分项,必须有真新东西</p>
+    <p>③ 48h 内不能花 > 6 人天</p>
+  </blockquote>
+</section>
+
+<!-- ============== SECTION 5: 最终方案 ============== -->
+<section class="slide" id="solution">
+  <div class="slide-num">05 · 最终方案</div>
+  <div class="accent-bar"></div>
+  <h2 class="section">「小掌柜」AI 运营总监 + Agent 实时追溯</h2>
+
+  <p class="lead mb-8">
+    不是替代现有 4 个功能,是<strong style="color: var(--text-primary);">嫁接 + 加深 + 升维</strong>。
+    用 C 的商业叙事(风险最低 / 完成度最稳),用 A 的 process visibility(审计能力),加上一个真决策动作(弥补 C 的最大弱点)。
+  </p>
+
+  <!-- 三个组件 -->
+  <div class="space-y-4 mb-8">
+    <div class="card">
+      <div class="grid md:grid-cols-12 gap-4 items-start">
+        <div class="md:col-span-3 flex items-center gap-3">
+          <div class="shopkeeper-mini"></div>
+          <div>
+            <div class="badge badge-mute mb-1">COMPONENT 1</div>
+            <div class="font-medium">侧边栏常驻</div>
+          </div>
+        </div>
+        <div class="md:col-span-9">
+          <div class="text-sm text-neutral-300 leading-relaxed">
+            任何页面右下角小掌柜头像 + 状态灯(绿/黄/红)。点开 = 早 9 点推送(进入页面时第一眼看到的)。
+            <strong style="color: var(--text-primary);">不是 push notification</strong>(push 通知 Day 30 留存 < 5%),是"session 启动 = 智能体已经在岗"。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="grid md:grid-cols-12 gap-4 items-start">
+        <div class="md:col-span-3 flex items-center gap-3">
+          <div class="w-12 h-12 rounded flex items-center justify-center text-xl" style="background: var(--accent-faded); border: 1px solid rgba(249,115,22,0.3);">⏱</div>
+          <div>
+            <div class="badge badge-mute mb-1">COMPONENT 2</div>
+            <div class="font-medium">Trace Panel</div>
+          </div>
+        </div>
+        <div class="md:col-span-9">
+          <div class="text-sm text-neutral-300 leading-relaxed">
+            小掌柜执行任何决策时,自动展开实时追溯面板。
+            四类卡片:<span class="token">💭 Thought</span> · <span class="token">🔧 Tool Call</span> · <span class="token">📊 Observation</span> · <span class="token">✅ Decision</span>。
+            <strong style="color: var(--text-primary);">核心金句</strong>:"Agent 不是黑盒,我每一步怎么想、怎么干、为什么这个结论,都看得到。"
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card decision-card">
+      <div class="grid md:grid-cols-12 gap-4 items-start">
+        <div class="md:col-span-3 flex items-center gap-3">
+          <div class="w-12 h-12 rounded flex items-center justify-center text-xl" style="background: var(--accent); color: #0a0a0a;">⚡</div>
+          <div>
+            <div class="badge badge-accent mb-1">COMPONENT 3 · 关键</div>
+            <div class="font-medium">真决策动作</div>
+          </div>
+        </div>
+        <div class="md:col-span-9">
+          <div class="text-sm text-neutral-300 leading-relaxed">
+            <strong style="color: var(--accent-soft);">这是 chat 升维到 Agent 的关键</strong>。Agent 不是替老板决定,而是把"建议"变成"可一键批准的执行"。
+            至少 1 个决策动作:自动加入看板 / 自动生成私域话术 / 自动上架 SKU — 每个都有<strong style="color: var(--text-primary);">"确认按钮" + "撤回机制"</strong>。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trace Panel 示意 -->
+  <div class="card mb-8" style="background: #0d0d0d;">
+    <div class="sec-divider">Trace Panel 实时追溯示例 · 自动加入看板</div>
+
+    <div class="space-y-3 mt-4">
+      <div class="trace-step thought">
+        <div class="trace-icon">💭</div>
+        <div class="flex-1">
+          <div class="text-xs text-neutral-500 mb-1">STEP 1 · THOUGHT</div>
+          <div class="text-sm">用户接受早报建议"今日主推 SKU-12"。我需要准备发布任务,在看板上建立可追踪的卡片。</div>
+        </div>
+      </div>
+
+      <div class="trace-step tool">
+        <div class="trace-icon">🔧</div>
+        <div class="flex-1">
+          <div class="text-xs text-neutral-500 mb-1">STEP 2 · TOOL CALL</div>
+          <div class="text-sm"><span class="token">create_task()</span></div>
+          <div class="text-xs text-neutral-400 mt-1 font-mono">
+            { title: "发布 SKU-12 短视频", owner: "小掌柜 Agent", priority: "P0", due: "today 23:59" }
+          </div>
+        </div>
+      </div>
+
+      <div class="trace-step obs">
+        <div class="trace-icon">📊</div>
+        <div class="flex-1">
+          <div class="text-xs text-neutral-500 mb-1">STEP 3 · OBSERVATION</div>
+          <div class="text-sm">任务已创建到 Kanban"今日必做"列 · task_id = #T-2407-0042</div>
+        </div>
+      </div>
+
+      <div class="trace-step decision">
+        <div class="trace-icon">✅</div>
+        <div class="flex-1">
+          <div class="text-xs text-neutral-500 mb-1">STEP 4 · DECISION</div>
+          <div class="text-sm">已自动加入看板,截止时间今天 23:59。<span style="color: var(--accent-soft);">老板可点击"撤回"</span>。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <blockquote class="mark" style="border-left-color: var(--accent);">
+    <p style="color: var(--text-primary); font-size: 19px;">核心金句</p>
+    <p style="font-size: 20px; color: var(--accent-soft);">"我不是在用 5 个 AI 工具,我雇了 1 个 AI 运营总监。"</p>
+    <p style="font-size: 13px; color: var(--text-muted);">备选:"以前一人公司雇不起运营总监,现在 99 元/月就能雇一个——他叫小掌柜。"</p>
+  </blockquote>
+</section>
+
+<!-- ============== SECTION 6: Demo 走查 ============== -->
+<section class="slide" id="demo">
+  <div class="slide-num">06 · 3 分钟 Demo 走查</div>
+  <div class="accent-bar"></div>
+  <h2 class="section">评审现场 3 分钟看到的画面</h2>
+
+  <div class="space-y-6">
+    <!-- 画面 1 -->
+    <div class="card">
+      <div class="flex items-center gap-3 mb-4">
+        <span class="badge" style="background: var(--accent-faded); color: var(--accent-soft);">画面 1 · 0-60 秒</span>
+        <span class="font-medium">早晨 · 小掌柜自动出现</span>
+      </div>
+      <div class="screen">
+        <div class="flex items-start gap-3">
+          <div class="shopkeeper-mini" style="width: 36px; height: 36px;"></div>
+          <div class="flex-1">
+            <div class="text-xs text-neutral-500 mb-1">小掌柜 · 09:00</div>
+            <div class="text-sm leading-relaxed">
+              老板,昨晚 23:40 用户 @林小姐 私信问 XX 蓝牙耳机续航,已用话术库 #EP-07 自动回复;<br>
+              今早淘宝热搜新词「骨传导耳机 2026 款」匹配你的选品库 SKU-12,建议今日主推;<br>
+              昨天上线 3 个 SKU 中,SKU-09 加购率 2.1% 远高于平均 0.8%,建议今晚追加投放 50 元。
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-neutral-400 mt-3">→ 评审看到:这不是 chat,这是有"组织"的 AI 员工主动推送情报。</p>
+    </div>
+
+    <!-- 画面 2 -->
+    <div class="card">
+      <div class="flex items-center gap-3 mb-4">
+        <span class="badge" style="background: var(--accent-faded); color: var(--accent-soft);">画面 2 · 60-120 秒</span>
+        <span class="font-medium">决策 · Trace Panel 展开</span>
+      </div>
+      <p class="text-sm text-neutral-300 mb-3">
+        用户点"采纳建议" → 小掌柜自动展开 Trace Panel → 卡片依次出现 Thought → Tool → Observation → Decision。
+      </p>
+      <div class="grid grid-cols-4 gap-2 text-xs font-mono">
+        <div class="trace-step thought" style="padding: 10px 12px;"><div class="trace-icon" style="width:24px;height:24px;font-size:11px;">💭</div><div>分析热度数据</div></div>
+        <div class="trace-step tool" style="padding: 10px 12px;"><div class="trace-icon" style="width:24px;height:24px;font-size:11px;">🔧</div><div>fetch_taobao_hot</div></div>
+        <div class="trace-step obs" style="padding: 10px 12px;"><div class="trace-icon" style="width:24px;height:24px;font-size:11px;">📊</div><div>返回 SKU 候选</div></div>
+        <div class="trace-step decision" style="padding: 10px 12px;"><div class="trace-icon" style="width:24px;height:24px;font-size:11px;">✅</div><div>主推建议</div></div>
+      </div>
+      <p class="text-xs text-neutral-400 mt-3">→ 评审看到:这有过程、有工具、有状态流转 = 这是 Agent,不是聊天框。</p>
+    </div>
+
+    <!-- 画面 3 -->
+    <div class="card">
+      <div class="flex items-center gap-3 mb-4">
+        <span class="badge" style="background: var(--accent-faded); color: var(--accent-soft);">画面 3 · 120-180 秒</span>
+        <span class="font-medium">落地 · 跨轨道串联</span>
+      </div>
+      <div class="flex items-center flex-wrap gap-2 text-sm font-mono text-neutral-300">
+        <div class="px-3 py-2 rounded" style="background: var(--bg-elevated); border: 1px solid var(--border-default);">选品分析</div>
+        <span class="flow-arrow">→</span>
+        <div class="px-3 py-2 rounded" style="background: var(--bg-elevated); border: 1px solid var(--border-default);">短视频脚本</div>
+        <span class="flow-arrow">→</span>
+        <div class="px-3 py-2 rounded decision-card text-orange-300">加入今日待办</div>
+        <span class="flow-arrow">→</span>
+        <div class="px-3 py-2 rounded" style="background: var(--bg-elevated); border: 1px solid var(--border-default);">看板卡片</div>
+      </div>
+      <p class="text-xs text-neutral-400 mt-3">→ 评审看到:跨轨道、跨工作流、有 deliverable,不是孤立的 5 个 prompt。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============== SECTION 7: 评审得分 ============== -->
+<section class="slide" id="scoring">
+  <div class="slide-num">07 · 评审维度得分预测</div>
+  <div class="accent-bar"></div>
+  <h2 class="section">为什么这个方案能赢评审</h2>
+
+  <p class="lead mb-8">基于项目材料(尤其 narrative-framework.md 的失败模式清单)的得分预测。</p>
+
+  <table class="matrix mb-8">
+    <thead>
+      <tr>
+        <th style="width: 20%;">维度</th>
+        <th style="width: 10%;">权重</th>
+        <th style="width: 50%;">这个方案怎么打</th>
+        <th style="width: 20%;">预测</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong style="color: var(--text-primary);">完成度</strong></td>
+        <td><span class="font-mono">25%</span></td>
+        <td>只加 1 个新模块(小掌柜 + trace 面板 + 1 个决策动作),风险最低,48h 必交付</td>
+        <td><span class="badge badge-good">拉满</span></td>
+      </tr>
+      <tr>
+        <td><strong style="color: var(--text-primary);">应用价值</strong></td>
+        <td><span class="font-mono">25%</span></td>
+        <td>"AI 替我做决策 + 我看得到它怎么决策" 是 OPC 真实头号痛点(信任问题)</td>
+        <td><span class="badge badge-good">高</span></td>
+      </tr>
+      <tr>
+        <td><strong style="color: var(--text-primary);">商业潜力</strong></td>
+        <td><span class="font-mono">20%</span></td>
+        <td>99 元/月锚点完整(对标钉钉悟空);金句最强:"我雇了 1 个 AI 运营总监"</td>
+        <td><span class="badge badge-good">高</span></td>
+      </tr>
+      <tr>
+        <td><strong style="color: var(--text-primary);">创新性</strong></td>
+        <td><span class="font-mono">20%</span></td>
+        <td>真决策 + 可追溯,不是 chat wrapper;不花哨、不等于"抄袭 Flowith"</td>
+        <td><span class="badge badge-accent">中等偏上</span></td>
+      </tr>
+      <tr>
+        <td><strong style="color: var(--text-primary);">安全性</strong></td>
+        <td><span class="font-mono">10%</span></td>
+        <td>决策动作有"确认按钮 + 撤回"机制,可审计 = 安心</td>
+        <td><span class="badge badge-mute">稳</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <blockquote class="mark">
+    <p><strong class="text-neutral-100">回应 narrative-framework.md 的 6 大失败模式:</strong></p>
+    <p>① ChatGPT Wrapper 陷阱 →<span class="badge badge-good">突破</span> 决策动作 + Trace Panel</p>
+    <p>② 功能堆砌陷阱 →<span class="badge badge-good">不堆</span> 只加 1 个模块</p>
+    <p>③ 技术自嗨陷阱 →<span class="badge badge-good">避开</span> 不展开 LangGraph 实现细节</p>
+    <p>④ 没有痛点陷阱 →<span class="badge badge-good">站稳</span> "AI 替你雇运营总监 6000/月"</p>
+    <p>⑤ 空愿景陷阱 →<span class="badge badge-good">不空</span> 数字具体(99/月替代月薪 6000)</p>
+    <p>⑥ Demo 翻车陷阱 →<span class="badge badge-good">可控</span> LLM fallback + 4 段录像兜底</p>
+  </blockquote>
+</section>
+
+<!-- ============== SECTION 8: 实施计划 ============== -->
+<section class="slide" id="plan">
+  <div class="slide-num">08 · 7 天实施计划</div>
+  <div class="accent-bar"></div>
+  <h2 class="section">倒计时:今天决定,明天开始写</h2>
+
+  <table class="matrix">
+    <thead>
+      <tr>
+        <th style="width: 12%;">日期</th>
+        <th style="width: 10%;">Day</th>
+        <th style="width: 50%;">任务</th>
+        <th style="width: 28%;">产出</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong style="color: var(--accent-soft);">07-04 今天</strong></td>
+        <td><span class="font-mono">D1</span></td>
+        <td>写 spec + HTML 设计文档 → 用户拍板</td>
+        <td><span class="text-neutral-400 text-xs">你在看的这份</span></td>
+      </tr>
+      <tr>
+        <td>07-05</td>
+        <td><span class="font-mono">D2</span></td>
+        <td>写「小掌柜」侧边栏组件 + 状态管理(zustand)</td>
+        <td><span class="text-neutral-400 text-xs">lib/components/shopkeeper/</span></td>
+      </tr>
+      <tr>
+        <td>07-06</td>
+        <td><span class="font-mono">D3</span></td>
+        <td>简化版 Agent Loop(不依赖 tool_use,只分析 CoT 文本)+ Trace Panel</td>
+        <td><span class="text-neutral-400 text-xs">lib/agent/ + TracePanel</span></td>
+      </tr>
+      <tr>
+        <td>07-07</td>
+        <td><span class="font-mono">D4</span></td>
+        <td>把现有 4 个 API 接入作为 agent tools + mock 决策数据</td>
+        <td><span class="text-neutral-400 text-xs">lib/agent/tools.ts</span></td>
+      </tr>
+      <tr>
+        <td>07-08</td>
+        <td><span class="font-mono">D5</span></td>
+        <td>第一个真决策动作:自动加入看板 + UI 流程跑通</td>
+        <td><span class="text-neutral-400 text-xs">end-to-end demo</span></td>
+      </tr>
+      <tr>
+        <td>07-09</td>
+        <td><span class="font-mono">D6</span></td>
+        <td>第二个真决策动作 + 早报数据模型 + 进入页面时序</td>
+        <td><span class="text-neutral-400 text-xs">full agent runtime</span></td>
+      </tr>
+      <tr>
+        <td>07-10</td>
+        <td><span class="font-mono">D7</span></td>
+        <td>UI polish + 录 4 段 demo 视频兜底 + 演练 DEMO_SCRIPT 三次</td>
+        <td><span class="text-neutral-400 text-xs">ship-ready</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="card mt-8" style="background: rgba(234, 179, 8, 0.05); border-color: rgba(234, 179, 8, 0.3);">
+    <div class="flex items-start gap-3">
+      <div class="text-yellow-400 text-xl">⚠</div>
+      <div>
+        <div class="font-medium mb-1">风险预案</div>
+        <p class="text-sm text-neutral-300 leading-relaxed">
+          现场 LLM 慢(40% 概率):跑过一遍的 demo query 结果缓存到 <span class="token">lib/demo-cache/</span>,网络好时实时跑,网络炸了按"Replay Demo"按钮走缓存路径。这条单独多花 0.5 人天,但能救命。
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== SECTION 9: Open Questions ============== -->
+<section class="slide" id="questions">
+  <div class="slide-num">09 · 需要你拍板的 3 个问题</div>
+  <div class="accent-bar"></div>
+  <h2 class="section">Open Questions</h2>
+
+  <p class="lead mb-8">
+    这 3 个决策会影响实现细节,请选你倾向的方向(或者"我自己想想")。
+  </p>
+
+  <div class="space-y-5">
+    <div class="card-elevated card">
+      <div class="flex items-start gap-3 mb-3">
+        <span class="badge badge-accent">Q1</span>
+        <div class="font-medium flex-1">真决策动作选哪个?(3 选 1)</div>
+      </div>
+      <div class="grid md:grid-cols-3 gap-3 text-sm">
+        <div class="card">
+          <div class="font-medium mb-1">自动加入看板</div>
+          <div class="text-xs text-neutral-400"><span class="badge badge-good">推荐</span></div>
+          <div class="text-xs text-neutral-300 mt-2">风险最低,有 Kanban UI 兜底,不涉及资金/客户</div>
+        </div>
+        <div class="card">
+          <div class="font-medium mb-1">自动发私域话术</div>
+          <div class="text-xs text-neutral-400">demo 价值高</div>
+          <div class="text-xs text-neutral-300 mt-2">需要模拟收件人反馈,可能要在前端做假聊天框</div>
+        </div>
+        <div class="card">
+          <div class="font-medium mb-1">自动上架 SKU</div>
+          <div class="text-xs text-neutral-400">决策感最强</div>
+          <div class="text-xs text-neutral-300 mt-2">涉及"商品上架"操作,需要 mock 淘宝界面</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card-elevated card">
+      <div class="flex items-start gap-3 mb-3">
+        <span class="badge badge-accent">Q2</span>
+        <div class="font-medium flex-1">小掌柜的视觉形象?</div>
+      </div>
+      <div class="text-sm text-neutral-300">
+        推荐: <strong style="color: var(--text-primary);">CSS 简约剪影 + 状态灯</strong>(无版权风险、不用图标库)。避免:用 emoji 头像(廉价感)、用通用 AI 剪影(识别度低)。
+      </div>
+    </div>
+
+    <div class="card-elevated card">
+      <div class="flex items-start gap-3 mb-3">
+        <span class="badge badge-accent">Q3</span>
+        <div class="font-medium flex-1">Trace Panel 显示多少细节?</div>
+      </div>
+      <div class="text-sm text-neutral-300">
+        推荐: <strong style="color: var(--text-primary);">显示关键决策点(3-5 句)</strong>,不显示 LLM 全文 CoT。避免评审看到一堆 token 噪声反而显得啰嗦。
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-8" style="background: var(--accent-faded); border-color: rgba(249,115,22,0.4);">
+    <div class="flex items-start gap-3">
+      <div class="text-2xl">→</div>
+      <div>
+        <div class="font-medium mb-1" style="color: var(--accent-soft);">下一步</div>
+        <p class="text-sm text-neutral-200 leading-relaxed">
+          1) 你给我 Q1/Q2/Q3 答案 → 我更新 spec 进入实现<br>
+          2) 你对方向本身有疑问 → 我们继续聊(回到 brainstorming Step 3)<br>
+          3) 你拒绝当前方向 → 重新调研 3 个方案
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== FOOTER ============== -->
+<section class="slide" style="border-bottom: none;">
+  <div class="text-center text-neutral-500 text-xs font-mono">
+    <div class="mb-3">END OF DOCUMENT</div>
+    <div>FC-OPC iBot 2026 · 杀手锏功能设计 · 草案 v1</div>
+    <div class="mt-2">2026-07-04 · 待用户拍板</div>
+    <div class="mt-6 text-neutral-600 text-[10px]">
+      基于 3-Agent 调研 + 3-Agent 互相质询的事实综合<br>
+      配套 spec: docs/superpowers/specs/2026-07-04-killer-feature-design.md
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

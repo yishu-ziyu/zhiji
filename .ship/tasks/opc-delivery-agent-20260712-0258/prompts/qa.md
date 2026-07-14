@@ -1,0 +1,32 @@
+You must use Skill('yishuship:qa'). Skip preamble and auth gate.
+
+Exploratory verification of the running application. E2E tests have
+already run and passed — your job is to find what those tests did NOT
+cover: UX problems, edge cases, visual regressions, perf issues, or
+anything the codified suite couldn't see.
+
+IMPORTANT: You MUST start the application and test it interactively.
+- If the diff touches frontend/UI → use browser testing (references/browser.md)
+- If the project is an Electron app → use Electron automation (references/electron.md)
+  Use agent-browser via CDP — do NOT use computer-use/request_access (Electron apps
+  register as "Electron Helper (Renderer)", not as a named macOS app).
+  Read the reference BEFORE attempting anything to avoid wasted retries.
+- If the diff touches API endpoints → use API testing (references/api.md)
+- If the diff touches CLI → use CLI testing (references/cli.md)
+Do NOT skip interactive testing. "E2E tests passed" is the baseline you're
+building on, not a substitute — you're exploring beyond the codified cases.
+Every acceptance criterion still needs direct evidence (screenshot, curl
+output, command output) from your own interactive session.
+
+Context:
+- E2E suite just passed — green regression tests already exist in the repo.
+  Focus your energy on exploration beyond those codified flows.
+- Review is also clean — correctness concerns already addressed statically.
+
+spec: .ship/tasks/opc-delivery-agent-20260712-0258/plan/spec.md
+e2e_report: .ship/tasks/opc-delivery-agent-20260712-0258/e2e/report.md  (may exist — lists what was codified)
+input_requirement: .ship/tasks/opc-delivery-agent-20260712-0258/input/requirement.md
+run_state: .ship/tasks/opc-delivery-agent-20260712-0258/control/run_state.yaml
+task_dir: .ship/tasks/opc-delivery-agent-20260712-0258
+Write reports to: .ship/tasks/opc-delivery-agent-20260712-0258/qa/
+Mode: /yishuship:auto staged workflow — no user questions.

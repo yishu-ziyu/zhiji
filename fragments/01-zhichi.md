@@ -1,0 +1,17 @@
+【智齿科技】智齿博创科技有限公司
+- 主站 https://www.zhichi.com HTTP 200
+- AI 大模型方案：https://www.zhichi.com/ai
+- 在线客服机器人：https://www.zhichi.com/chatbot
+- 语音机器人：https://www.zhichi.com/voicebot
+- 人工在线客服：https://www.zhichi.com/livechat
+- 云呼叫中心：https://www.zhichi.com/callcenter
+- 工单系统：https://www.zhichi.com/ticketing
+- 智能质检：https://www.zhichi.com/inspection
+- WhatsApp API：https://www.zhichi.com/whatsapp
+- 国际短信：https://www.zhichi.com/intlsms
+- BPO：https://www.zhichi.com/bpo
+- 客户案例：https://www.zhichi.com/customers
+- 登录入口：https://www.sobot.com（独立 SaaS 域名）
+- 上线时间：2012 产品雏形「问答机器人」；2014 年 5 月公司成立
+- 核心能力：智能一体化「客户联络」方案，含 AI Agent / AI Copilot / AI Insight 三件套，LLM 大模型客服机器人、语音机器人、云呼叫中心、工单、智能质检、外呼
+- 合作客户：15000+，覆盖 150+ 国家

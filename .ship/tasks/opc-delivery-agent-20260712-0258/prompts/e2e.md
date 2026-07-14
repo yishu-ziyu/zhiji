@@ -1,0 +1,32 @@
+You must use Skill('yishuship:e2e'). Skip preamble and auth gate.
+
+Codify the change's acceptance criteria as persistent end-to-end tests
+committed to the repo. You are the first automated verification gate —
+running before review, so a green suite means reviewers see working code.
+
+IMPORTANT:
+- Detect the existing E2E framework first (references/frameworks.md). If
+  nothing exists, scaffold the default for this stack (references/scaffolding.md).
+  Scaffolding is allowed — we want durable tests, not ephemeral proofs.
+- Write tests under the framework's idiomatic test directory and commit them.
+- Run the new tests AND the existing E2E suite. Both must pass before you
+  mark this phase DONE. A test that only passes on retry is NOT passing —
+  fix the root cause.
+- If a test fails because the implementation is wrong (not a test issue),
+  report FAIL with the failing test name and evidence. Do NOT weaken the
+  assertion to make it green — the downstream e2e_fix loop will route
+  back to dev to fix the code.
+- Base your tests on the SPEC's acceptance criteria and the git diff —
+  these are the inputs of record. A QA report does NOT exist yet at this
+  point in the pipeline (QA runs after review, not before you).
+- Skip the phase (SKIP verdict) only if the diff is docs-only or has no
+  user-observable effect. Write a short justification to report.md.
+- Cleanup is mandatory — follow .shared/cleanup.md with your EVIDENCE_DIR.
+
+spec: .ship/tasks/opc-delivery-agent-20260712-0258/plan/spec.md
+input_requirement: .ship/tasks/opc-delivery-agent-20260712-0258/input/requirement.md
+run_state: .ship/tasks/opc-delivery-agent-20260712-0258/control/run_state.yaml
+task_dir: .ship/tasks/opc-delivery-agent-20260712-0258
+Write evidence to: .ship/tasks/opc-delivery-agent-20260712-0258/e2e/
+Write test files to: repo's framework-idiomatic test directory
+Mode: /yishuship:auto staged workflow — no user questions.

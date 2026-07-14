@@ -11,5 +11,11 @@ export default defineConfig({
   use: { baseURL, trace: "on-first-retry", screenshot: "only-on-failure", video: "retain-on-failure" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   timeout: 60000,
-  webServer: { command: "npm run dev", url: baseURL, reuseExistingServer: !!process.env.PLAYWRIGHT_REUSE_SERVER, timeout: 30000 },
+  // 用生产 build 跑 e2e（Turbopack dev server 在 React 19 + Next.js 16 下 hydration 不工作）
+  webServer: {
+    command: "npm run build && npm run start",
+    url: baseURL,
+    reuseExistingServer: !!process.env.PLAYWRIGHT_REUSE_SERVER,
+    timeout: 120000,
+  },
 });

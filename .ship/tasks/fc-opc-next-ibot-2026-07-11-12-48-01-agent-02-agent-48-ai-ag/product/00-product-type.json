@@ -1,0 +1,28 @@
+{
+  "product_type": "hybrid",
+  "primary_user": "project-based solo operator or micro-studio serving multiple clients",
+  "buyer_or_user": "the operator is the buyer; the client may participate as an external guest",
+  "core_scene": "a client message changes an existing commercial or delivery fact, and the operator must understand and propagate its impact across work state",
+  "workflow_weight": {
+    "strategy": "required",
+    "research": "required",
+    "data_model": "required",
+    "permission": "required",
+    "report": "optional",
+    "analytics": "required"
+  },
+  "skip_rules": [
+    {
+      "checkpoint": "ecommerce_track",
+      "reason": "explicitly out of scope for the current competition entry"
+    },
+    {
+      "checkpoint": "experience_and_implementation",
+      "reason": "deferred until scene value, commercial potential, and innovation are evidence-backed"
+    },
+    {
+      "checkpoint": "growth_loop",
+      "reason": "post-cycle; requires real usage"
+    }
+  ]
+}
