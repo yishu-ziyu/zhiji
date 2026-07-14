@@ -230,3 +230,110 @@ export const SOURCE_CLUSTER_LABELS: Record<KnowledgeSource, string> = {
   email: "邮件",
   manual: "手记",
 };
+
+/** Explicit card↔card relation (first-class edge). */
+export type RelationType =
+  | "supports"
+  | "contradicts"
+  | "depends_on"
+  | "derived_from"
+  | "same_topic"
+  | "follows"
+  | "mentions"
+  | "custom";
+
+export type RelationStatus = "confirmed" | "suggested" | "rejected";
+
+export type RelationSource = "manual" | "rule" | "import" | "model";
+
+export type KnowledgeRelation = {
+  id: string;
+  fromCardId: string;
+  toCardId: string;
+  relationType: RelationType;
+  evidenceSentence: string;
+  anchorCardId?: string;
+  status: RelationStatus;
+  directed: boolean;
+  confidence?: number;
+  source: RelationSource;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  workItemId?: string;
+  meta?: Record<string, unknown>;
+};
+
+export type RelationNeighborEdge = {
+  id: string;
+  relationType: RelationType;
+  direction: "out" | "in" | "both";
+  evidenceSentence: string;
+  status: RelationStatus;
+  otherCard: {
+    id: string;
+    title: string;
+    source: KnowledgeSource;
+  };
+};
+
+export type NeighborView = {
+  cardId: string;
+  edges: RelationNeighborEdge[];
+};
+
+export type PathView = {
+  nodes: string[];
+  edges: string[];
+  length: number;
+};
+
+export const RELATION_TYPES: RelationType[] = [
+  "supports",
+  "contradicts",
+  "depends_on",
+  "derived_from",
+  "same_topic",
+  "follows",
+  "mentions",
+  "custom",
+];
+
+/** P0 selectable types in UI */
+export const RELATION_TYPES_P0: RelationType[] = [
+  "supports",
+  "contradicts",
+  "depends_on",
+  "derived_from",
+  "same_topic",
+  "follows",
+];
+
+export const RELATION_TYPE_LABELS: Record<RelationType, string> = {
+  supports: "支持",
+  contradicts: "矛盾",
+  depends_on: "依赖",
+  derived_from: "出自",
+  same_topic: "同题",
+  follows: "后续",
+  mentions: "提及",
+  custom: "其他",
+};
+
+export const RELATION_STATUSES: RelationStatus[] = [
+  "confirmed",
+  "suggested",
+  "rejected",
+];
+
+export const RELATION_SOURCES: RelationSource[] = [
+  "manual",
+  "rule",
+  "import",
+  "model",
+];
+
+/** Undirected types: store one edge, query expands both ways. */
+export const UNDIRECTED_RELATION_TYPES: RelationType[] = ["same_topic"];
+
+export const EVIDENCE_SENTENCE_MAX = 280;

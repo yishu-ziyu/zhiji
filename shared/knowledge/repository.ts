@@ -8,11 +8,16 @@ import type {
   FootprintLitEntry,
   FootprintViewMode,
   KnowledgeCard,
+  KnowledgeRelation,
   KnowledgeSearchFilters,
   KnowledgeSearchHit,
   KnowledgeSource,
   LibraryNode,
+  NeighborView,
+  PathView,
   QuerySession,
+  RelationStatus,
+  RelationType,
   WorkEvent,
   WorkEventType,
 } from "@/shared/types/knowledge";
@@ -29,6 +34,17 @@ import {
   depthForKind,
   litFromHits,
 } from "@/shared/knowledge/footprint";
+import {
+  assertRelationShape,
+  buildNeighborView,
+  CreateRelationInput,
+  extractRelationCandidates,
+  filterRelationsForQuery,
+  findPath,
+  islandEdges,
+  relationDedupKey,
+  RelationValidationError,
+} from "@/shared/knowledge/relations";
 
 type NewCardInput = {
   content: string;
@@ -98,6 +114,10 @@ function footprintEventsPath(): string {
 
 function querySessionsPath(): string {
   return path.join(resolveDataDir(), "query-sessions.json");
+}
+
+function relationsPath(): string {
+  return path.join(resolveDataDir(), "relations.json");
 }
 
 function ensureDataDir(): void {
@@ -176,6 +196,19 @@ function loadQuerySessions(): Map<string, QuerySession> {
 
 function saveQuerySessions(map: Map<string, QuerySession>): void {
   writeJsonMap(querySessionsPath(), map);
+}
+
+function loadRelations(): Map<string, KnowledgeRelation> {
+  ensureDataDir();
+  return readJsonMap<KnowledgeRelation>(relationsPath());
+}
+
+function saveRelations(map: Map<string, KnowledgeRelation>): void {
+  writeJsonMap(relationsPath(), map);
+}
+
+function copyRelation(rel: KnowledgeRelation): KnowledgeRelation {
+  return structuredClone(rel);
 }
 
 function copyCard(card: KnowledgeCard): KnowledgeCard {
@@ -288,7 +321,7 @@ function buildSeedActions(now: string): ActionItem[] {
       nextStep: "搜索「检索 来源」并确认来源标签可见",
       verificationCriteria: "搜索结果至少 1 条相关卡片且能点开看全文",
       cardId: "kc-seed-2",
-      evidenceIds: ["kc-seed-2"],
+      evidenceIds: ["kc-seed-2", "kc-seed-1"],
       createdAt: now,
       updatedAt: now,
     }),
@@ -306,6 +339,57 @@ function buildSeedActions(now: string): ActionItem[] {
       createdAt: now,
       updatedAt: now,
     }),
+  ];
+}
+
+function buildSeedRelations(now: string): KnowledgeRelation[] {
+  return [
+    {
+      id: "rel-seed-1",
+      fromCardId: "kc-seed-2",
+      toCardId: "kc-seed-1",
+      relationType: "supports",
+      evidenceSentence:
+        "好的检索结果必须带来源：路径、链接或会议原文片段；没有来源的摘要不当成事实。",
+      status: "confirmed",
+      directed: true,
+      confidence: 1,
+      source: "manual",
+      createdBy: "system",
+      createdAt: now,
+      updatedAt: now,
+      workItemId: "ka-seed-1",
+    },
+    {
+      id: "rel-seed-2",
+      fromCardId: "kc-seed-4",
+      toCardId: "kc-seed-1",
+      relationType: "supports",
+      evidenceSentence:
+        "不是再做一个全能笔记，而是让找过的材料下次还能用，并且能变成可勾选的下一步。",
+      status: "confirmed",
+      directed: true,
+      confidence: 1,
+      source: "manual",
+      createdBy: "system",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "rel-seed-3",
+      fromCardId: "kc-seed-3",
+      toCardId: "kc-seed-1",
+      relationType: "depends_on",
+      evidenceSentence:
+        "状态：待开始 → 进行中 → 待确认 → 完成；可标阻塞。进行中须有负责人与下一步。",
+      status: "confirmed",
+      directed: true,
+      confidence: 1,
+      source: "manual",
+      createdBy: "system",
+      createdAt: now,
+      updatedAt: now,
+    },
   ];
 }
 
@@ -335,6 +419,34 @@ function seedIfEmpty(
   saveCards(cards);
   saveActions(actions);
   saveEvents(events);
+  const relations = loadRelations();
+  if (relations.size === 0) {
+    for (const rel of buildSeedRelations(now)) {
+      relations.set(rel.id, rel);
+    }
+    saveRelations(relations);
+  }
+}
+
+/** Ensure demo relations exist when cards already seeded without relations file. */
+function ensureSeedRelations(): void {
+  const relations = loadRelations();
+  if (relations.size > 0) return;
+  const cards = loadCards();
+  if (!cards.has("kc-seed-1") || !cards.has("kc-seed-2")) return;
+  const now = new Date().toISOString();
+  for (const rel of buildSeedRelations(now)) {
+    if (cards.has(rel.fromCardId) && cards.has(rel.toCardId)) {
+      relations.set(rel.id, rel);
+    }
+  }
+  if (relations.size > 0) saveRelations(relations);
+}
+
+function workingRelations(): Map<string, KnowledgeRelation> {
+  workingCards();
+  ensureSeedRelations();
+  return loadRelations();
 }
 
 function workingCards(): Map<string, KnowledgeCard> {
@@ -754,6 +866,7 @@ export function resetKnowledgeStoreForTests(): void {
     eventsPath(),
     footprintEventsPath(),
     querySessionsPath(),
+    relationsPath(),
   ]) {
     if (fs.existsSync(p)) fs.unlinkSync(p);
   }
@@ -908,4 +1021,190 @@ export function getQuerySession(id: string): QuerySession | null {
   return s ? structuredClone(s) : null;
 }
 
-export { WorkItemValidationError };
+// --- Knowledge relations ---
+
+export function listRelations(filter?: {
+  cardId?: string;
+  status?: RelationStatus | RelationStatus[];
+  type?: RelationType | RelationType[];
+  workItemId?: string;
+  includeRejected?: boolean;
+}): KnowledgeRelation[] {
+  const all = [...workingRelations().values()];
+  return filterRelationsForQuery(all, filter).map(copyRelation);
+}
+
+export function getRelation(id: string): KnowledgeRelation | null {
+  const rel = workingRelations().get(id);
+  return rel ? copyRelation(rel) : null;
+}
+
+export function createRelation(
+  input: CreateRelationInput,
+  actor: string = DEFAULT_ACTOR,
+): KnowledgeRelation {
+  const cards = workingCards();
+  const cardIds = new Set(cards.keys());
+  const shape = assertRelationShape(input, cardIds);
+  const relations = workingRelations();
+  const key = relationDedupKey(shape);
+  for (const existing of relations.values()) {
+    if (existing.status === "rejected") continue;
+    if (relationDedupKey(existing) === key && existing.status === "confirmed") {
+      throw new RelationValidationError("相同确认关系已存在");
+    }
+  }
+
+  const now = new Date().toISOString();
+  const rel: KnowledgeRelation = {
+    id: input.id ?? randomUUID(),
+    fromCardId: shape.fromCardId,
+    toCardId: shape.toCardId,
+    relationType: shape.relationType,
+    evidenceSentence: shape.evidenceSentence,
+    anchorCardId: input.anchorCardId?.trim() || shape.fromCardId,
+    status: shape.status,
+    directed: shape.directed,
+    confidence: input.confidence,
+    source: shape.source,
+    createdBy: input.createdBy?.trim() || actor,
+    createdAt: input.createdAt ?? now,
+    updatedAt: input.updatedAt ?? now,
+    workItemId: input.workItemId,
+    meta: input.meta,
+  };
+  relations.set(rel.id, rel);
+  saveRelations(relations);
+  return copyRelation(rel);
+}
+
+export function patchRelation(
+  id: string,
+  patch: Partial<{
+    status: RelationStatus;
+    relationType: RelationType;
+    evidenceSentence: string;
+    workItemId: string | null;
+  }>,
+): KnowledgeRelation {
+  const relations = workingRelations();
+  const rel = relations.get(id);
+  if (!rel) throw new RelationValidationError("关系不存在");
+
+  const next: KnowledgeRelation = {
+    ...rel,
+    updatedAt: new Date().toISOString(),
+  };
+  if (patch.status) {
+    if (
+      patch.status !== "confirmed" &&
+      patch.status !== "suggested" &&
+      patch.status !== "rejected"
+    ) {
+      throw new RelationValidationError("关系状态无效");
+    }
+    next.status = patch.status;
+  }
+  if (patch.relationType) {
+    next.relationType = patch.relationType;
+  }
+  if (patch.evidenceSentence !== undefined) {
+    const sentence = patch.evidenceSentence.replace(/\s+/g, " ").trim();
+    if (!sentence) {
+      throw new RelationValidationError("来源句不能为空");
+    }
+    next.evidenceSentence = sentence.slice(0, 280);
+  }
+  if (patch.workItemId === null) {
+    next.workItemId = undefined;
+  } else if (patch.workItemId !== undefined) {
+    next.workItemId = patch.workItemId;
+  }
+
+  relations.set(id, next);
+  saveRelations(relations);
+  return copyRelation(next);
+}
+
+export function deleteRelation(id: string): boolean {
+  const relations = workingRelations();
+  if (!relations.has(id)) return false;
+  relations.delete(id);
+  saveRelations(relations);
+  return true;
+}
+
+export function getNeighbors(
+  cardId: string,
+  options?: { status?: RelationStatus | RelationStatus[] },
+): NeighborView {
+  if (!getCard(cardId)) {
+    throw new RelationValidationError("卡不存在");
+  }
+  const cards = new Map(listCards().map((c) => [c.id, c]));
+  return buildNeighborView(
+    cardId,
+    [...workingRelations().values()],
+    cards,
+    options,
+  );
+}
+
+export function getPathBetween(
+  fromCardId: string,
+  toCardId: string,
+  options?: {
+    maxDepth?: number;
+    status?: RelationStatus | RelationStatus[];
+  },
+): PathView | null {
+  if (!getCard(fromCardId) || !getCard(toCardId)) {
+    throw new RelationValidationError("起点或终点卡不存在");
+  }
+  return findPath(fromCardId, toCardId, [...workingRelations().values()], options);
+}
+
+export function getEvidenceIsland(
+  workItemId: string,
+): {
+  workItemId: string;
+  cardIds: string[];
+  edges: KnowledgeRelation[];
+} {
+  const item = getAction(workItemId);
+  if (!item) throw new Error("工作项不存在");
+  const cardIds = item.evidenceIds;
+  const edges = islandEdges(cardIds, [...workingRelations().values()]).map(
+    copyRelation,
+  );
+  return { workItemId, cardIds, edges };
+}
+
+export function extractRelations(options?: {
+  cardId?: string;
+}): { created: KnowledgeRelation[]; count: number } {
+  const pool = listCards();
+  const existing = [...workingRelations().values()];
+  const candidates = extractRelationCandidates(pool, existing).filter((c) => {
+    if (!options?.cardId) return true;
+    return c.fromCardId === options.cardId || c.toCardId === options.cardId;
+  });
+  const created: KnowledgeRelation[] = [];
+  for (const c of candidates) {
+    try {
+      created.push(
+        createRelation({
+          ...c,
+          status: "suggested",
+          source: "rule",
+          createdBy: "system:rule",
+        }),
+      );
+    } catch {
+      // skip duplicates / invalid
+    }
+  }
+  return { created, count: created.length };
+}
+
+export { WorkItemValidationError, RelationValidationError };
