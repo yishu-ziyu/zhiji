@@ -1,148 +1,144 @@
-# PRD - Knowledge Loop Agent (mainline)
+# 产品说明 · 知识工作助手
 
-**Version:** 0.2 freeze  
-**Date:** 2026-07-14  
-**Task:** `knowledge-mainline-20260714-174246`  
-**Canonical product path:** `/track/knowledge`
+**版本：** 0.3  
+**日期：** 2026-07-14  
+**任务目录：** `knowledge-mainline-20260714-174246`  
+**页面：** `/track/knowledge`
 
-## Product Requirements
+## 一句话
 
-### One-liner
+面向知识工作者：零散材料变成**带来源的卡片**和**能推进状态的待办**，以后能搜回来。
 
-面向知识工作者：把零散材料变成**可溯源的卡片**和**可推进状态的行动**，检索时能找回来。
+## 用户
 
-### User
+- 先：你自己（知识工作者）
+- 叙事可扩到同赛道一人公司 / 小团队知识岗；验收不扩
 
-- Primary: 用户本人（知识工作者）
-- Secondary: 同赛道一人公司 / 小团队知识岗（叙事可扩，验收不扩）
+## 核心对象
 
-### Core objects
+| 对象 | 意思 |
+|------|------|
+| KnowledgeCard | 一条能再用的事实/结论；含 content, source, tags, timestamp, links |
+| ActionItem | 能做完的事；状态：todo → doing → confirmed → done；含怎样算做完 |
+| SearchHit | 卡片 + 相关度；结果必须带来源 |
 
-| Object | Meaning |
-|--------|---------|
-| KnowledgeCard | 一条可复用事实/结论；含 content, source, tags, timestamp, links |
-| ActionItem | 可执行任务；status: todo → doing → confirmed → done；含验收标准 |
-| SearchHit | Card + score；结果必须带来源 |
+## 怎么用
 
-### Core flows
+1. **检索：** 输入问题 → 可选过滤来源 → 卡片列表 + 简答（首条依据）
+2. **写入：** 手记 / 粘贴会议 / 拆目标 → 写入卡片和/或待办
+3. **推进：** 行动板上改状态；建议区可刷新
 
-1. **检索：** 输入问题 → 过滤来源（可选）→ 卡片列表 + 简答条（首条依据）
-2. **沉淀：** 手记 / 粘贴会议 / 拆目标 → 写入 cards 和/或 actions
-3. **推进：** 行动板上一点改状态；建议区可刷新
+## Agent 和系统各干什么
 
-### Agent participation (honest)
+| 步骤 | Agent / LLM | 确定性系统 |
+|------|-------------|------------|
+| 检索 | 以后可做排序 | 关键词/标签打分 + 过滤 |
+| 会议 / 拆目标 | 有 key 时用 LLM | 无网规则兜底 + 写入 JSON |
+| 改状态 | 不用 | 写入存储 |
+| 建议 | LLM 可选 | 无网时从未完成待办生成 |
 
-| Step | Agent / LLM | Deterministic system |
-|------|-------------|----------------------|
-| Search | optional ranking later | keyword/tag score + filters |
-| Minutes / dissect | LLM when key present | offline rule fallback + JSON write |
-| Status update | no | state write to store |
-| Suggest | LLM optional | offline from open actions |
+对评委：模型帮理解和拆候选；**库里的卡片和状态算数**；人点状态。
 
-**Pitch rule:** Agent 负责理解与拆解候选；**系统保存事实**；人推进状态。
+## 怎样算做完
 
-## Acceptance Criteria
+### A1 检索（必做）
 
-### A1 - 检索可体验（P0）
+- [ ] 打开 `/track/knowledge`，默认或搜「检索 来源」能看到 ≥1 条卡片
+- [ ] 每条能看到 **source** 和正文
+- [ ] 换来源筛选后结果对得上（或合法空态）
 
-- [ ] 打开 `/track/knowledge`，默认或输入「检索 来源」能返回 ≥1 条卡片
-- [ ] 每条可见 **source**（会议/文档/手记等）与正文
-- [ ] 来源筛选切换后结果符合过滤（或合法空态）
+### A2 写入（必做）
 
-### A2 - 沉淀可体验（P0）
+- [ ] 手记保存后，用相关词能搜到新卡
+- [ ] 进程重启后新卡还在（除非清空 `data`）
 
-- [ ] 手记保存后再次检索相关词能命中新卡
-- [ ] 进程重启后（JSON 持久化）新卡仍在（除非清空 data 目录）
+### A3 待办（必做）
 
-### A3 - 行动可体验（P0）
+- [ ] 行动板至少 1 条
+- [ ] 点状态推进后刷新仍保持
 
-- [ ] 行动板展示至少 1 条行动
-- [ ] 点击推进：todo→doing 或 doing→confirmed 或 confirmed→done，刷新后状态保持
+### A4 会议入库（次要）
 
-### A4 - 会议入库（P1）
+- [ ] 粘贴示例会议 → ≥1 卡或 ≥1 待办（LLM 或 offline，须标明 offline）
 
-- [ ] 粘贴示例会议文本 → 生成 ≥1 卡 或 ≥1 行动（LLM 或 offline 均可，须标注 offline）
-
-### A5 - 工具面（P1）
+### A5 工具接口（次要）
 
 - [ ] `GET /api/knowledge/mcp` 返回 5 个工具定义
 - [ ] `POST` 可 `search_knowledge` / `update_collaboration_state`
 
-### A6 - 主线叙事（P0 路演）
+### A6 入口与说法（路演必做）
 
-- [ ] 首页与侧栏主 CTA 指向知识库，不把客户变更当主标题
-- [ ] 30 秒口述不出现「我们是第二个 Notion / 微信 CRM」
+- [ ] 首页与侧栏主入口指向知识工作台，不当成客户改约定产品
+- [ ] 30 秒口述不出现「第二个 Notion / 微信 CRM」
 
-## Success Metrics
+## 指标
 
-| Metric | Hackathon bar | How to measure |
-|--------|---------------|----------------|
-| Demo complete rate | 1 次不中断走完 A1–A3 | 手测 / 未来 E2E |
-| Source visibility | 100% hits show source | UI checklist |
-| Persistence | add card survives restart | file in `data/knowledge/` |
-| Time-to-first-hit | < 10s from page load | stopwatch |
-| Judge comprehension | 评委能复述闭环三步 | 路演后自检 |
+| 指标 | 交件门槛 | 怎么量 |
+|------|----------|--------|
+| 演示一次走通 | A1–A3 不中断 | 手测 / 以后 E2E |
+| 来源可见 | 命中结果 100% 有 source | 页面检查 |
+| 持久化 | 新卡重启后还在 | `data/knowledge/` 文件 |
+| 首条命中时间 | 打开页后 < 10s | 秒表 |
+| 评委能复述 | 能说出：搜、卡、推进 | 路演后自检 |
 
-North-star (post-hackathon, not required to ship): **second-session reuse** - 用户隔天用同一库解决新问题的次数。
+交件后才看的方向（不挡提交）：隔天用同一库解决新问题的次数。
 
-## Assumptions
+## 假设（怎样算证伪）
 
-| Assumption | How to falsify |
-|------------|----------------|
-| 用户愿意粘贴/手记喂库 | 金脚本里拒绝粘贴 → 冷启动失败 |
-| 关键词检索够 demo | 语义问法零命中且 soft fallback 被评委质疑 |
-| offline 可当 Agent 演示 | 评委要求看 tool_use 轨迹且没有 → 降级为工具站 |
-| DESIGN 不伤可读 | 路演投影看不清 → 减弱装饰 |
+| 假设 | 怎样算错了 |
+|------|------------|
+| 用户愿意粘贴/手记喂库 | 演示时拒绝粘贴，库冷启动失败 |
+| 关键词检索够演示 | 语义问法零命中，评委不信 |
+| offline 可当演示 | 评委要看 tool_use 轨迹且没有 |
+| DESIGN 投影可读 | 投影看不清 |
 
-## Kill Criteria
+## 何时停加功能、改方向或降叙事
 
-出现任一条，**停止加功能，先改方向或诚实降级叙事**：
+1. 演示步骤 3 次都无法在 2 分钟内完成 A1–A3  
+2. 评委/用户认为与 Notion 没差别，又说不清「有来源 + 能推进状态」  
+3. 无持久化、重启即空（已修；若回退则停）  
+4. 又改回客户改约定当产品，却不更新本文件与 CONTEXT  
 
-1. 金脚本 3 次无法在 2 分钟内完成 A1–A3
-2. 评委/用户认为与 Notion 无差异且无法用「溯源+状态闭环」一句打掉
-3. 无任何持久化，重启即空（已修；若回退则 kill）
-4. 主线重新改回客户变更而未更新本文件与 CONTEXT
+## 测试
 
-## Testing Seams
+| 缝 | 有没有 | 备注 |
+|----|--------|------|
+| 单测 repository / search / mcp-tools | 有 | `shared/knowledge/*.test.ts` |
+| API search/add/state | 手测 / curl | 下一步补 E2E |
+| Playwright 演示步骤 | **缺** | 交件前尽量补 |
+| LLM 路径 | 可选 | CI 优先 fixture offline |
 
-| Seam | Exists | Note |
-|------|--------|------|
-| Unit: repository / search / mcp-tools | Yes | `shared/knowledge/*.test.ts` |
-| API: search/add/state | Manual / curl | Add E2E next |
-| Playwright knowledge gold path | **Missing** | Must add before submit if possible |
-| LLM path | Optional | Prefer fixture offline for CI |
+## 分片
 
-## Vertical Slice Candidates
+1. **现在：** 种子检索 + 点状态 + JSON 落盘  
+2. **下一步：** Playwright 覆盖 A1–A3  
+3. **演示机：** 一条真 LLM 会议路径（可选）  
+4. **以后再说：** 真连接器 / 向量  
 
-1. **Slice 0 (now):** seed search + status click + JSON persist  
-2. **Slice 1:** Playwright A1–A3  
-3. **Slice 2:** one live LLM minutes path with key (demo machine only)  
-4. **Slice 3 (defer):** real connectors / vector
+## 边界情况
 
-## Edge Cases
+- 清空库后 → 重新 seed  
+- 未知查询 → 弱回退最近内容（不能装成高相关）  
+- LLM 挂 → offline，UI 标明  
+- 多写者并发 → 不做  
 
-- Empty library after wipe → seed  
-- Unknown query → soft recent fallback (must not look like fake high relevance)  
-- LLM down → offline minutes/dissect, UI 标注  
-- Concurrent writers → out of scope (single user)
+## 不做
 
-## Out of Scope
+- 客户改约定当演示产品  
+- 微信同步  
+- 多租户权限  
+- 把 MCP 协议当卖点产品化  
+- 市场体量空口数字  
 
-- Customer-change main demo  
-- WeChat sync  
-- Multi-tenant ACL  
-- Full MCP stdio productization  
-- Market size claims
+## 演示时怎么走
 
-## Gold script (demo)
+1. 打开 `/track/knowledge`  
+2. 搜「检索 来源」→ 看到带来源的卡片  
+3. （可选）写手记「黑客松验收：卡片必须带来源」→ 再搜「验收」  
+4. 行动板推进一条状态  
+5. （可选）粘贴会议样例 → 生成卡片/待办  
+6. 对评委一句：搜得到、卡片有来源、下一步能勾掉。  
 
-1. Open `/track/knowledge`  
-2. Search「检索 来源」→ see cards with source chips  
-3. Optionally add a note「黑客松验收：卡片必须带来源」→ search「验收」  
-4. On action board, advance one item status  
-5. (Optional) Paste meeting sample → generate cards/actions  
-6. One line to judge: 「搜得到、收成卡、能推进；不是编辑器。」
+## 工程
 
-## Engineering Goal (bridge)
-
-Keep `/track/knowledge` as the only main demo path. Do not invest in efficiency-track pitch UI. Next eng: Playwright gold path; optional live LLM flag.
+只把 `/track/knowledge` 当演示页。不在客户改约定那套 UI 上再砸时间。下一步工程：Playwright 演示步骤；可选真 LLM 开关。
