@@ -21,11 +21,11 @@ export function Sidebar() {
           <div className="font-hand text-[28px] leading-none text-foreground">
             FC-OPC
           </div>
-          <div className="mono-label mt-2">Knowledge Loop</div>
+          <div className="mono-label mt-2">Knowledge work</div>
         </button>
       </div>
       <nav className="flex-1 px-3 py-4 overflow-y-auto">
-        <div className="mono-label px-2 mb-3">Nav</div>
+        <div className="mono-label px-2 mb-3">Menu</div>
         <button
           type="button"
           onClick={() => router.push("/track/knowledge")}
@@ -37,14 +37,14 @@ export function Sidebar() {
           )}
         >
           <BookOpen className="w-4 h-4 shrink-0" />
-          <span className="font-sans">知识库</span>
+          <span className="font-sans">知识工作台</span>
         </button>
       </nav>
       <div className="p-4 border-t border-border">
         <p className="font-hand text-base text-primary leading-tight">
           搜得到 · 收成卡
         </p>
-        <p className="mono-label mt-1">Only mainline</p>
+        <p className="mono-label mt-1">Source matters</p>
       </div>
     </aside>
   );

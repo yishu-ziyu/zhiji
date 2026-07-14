@@ -36,7 +36,7 @@ export default function KnowledgePage() {
   const [transcript, setTranscript] = useState(
     "今天对齐了知识工作者 demo：先检索再沉淀。小王负责补验收标准，本周五前完成。决定采用带来源的卡片列表。",
   );
-  const [goal, setGoal] = useState("48 小时内做出可演示的知识检索与行动闭环");
+  const [goal, setGoal] = useState("两天内做出能演示的检索、卡片和待办");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
