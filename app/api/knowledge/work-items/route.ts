@@ -12,12 +12,13 @@ export async function GET(req: NextRequest) {
   const assignee = searchParams.get("assignee") ?? undefined;
   const openOnly = searchParams.get("openOnly") === "1";
   const statusParam = searchParams.get("status");
+  const projectId = searchParams.get("projectId") ?? undefined;
   let status: ActionStatus | ActionStatus[] | undefined;
   if (statusParam) {
     const parts = statusParam.split(",").filter(Boolean) as ActionStatus[];
     status = parts.length === 1 ? parts[0] : parts;
   }
-  const items = listActions({ assignee, openOnly, status });
+  const items = listActions({ assignee, openOnly, status, projectId });
   return NextResponse.json({ items });
 }
 
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest) {
       verificationCriteria?: string;
       cardId?: string;
       deadline?: string;
+      projectId?: string;
     };
 
     const description =
@@ -56,6 +58,7 @@ export async function POST(req: NextRequest) {
       verificationCriteria: body.verificationCriteria,
       cardId: body.cardId,
       deadline: body.deadline,
+      projectId: body.projectId,
     });
 
     return NextResponse.json({ item }, { status: 201 });

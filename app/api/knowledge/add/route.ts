@@ -10,6 +10,7 @@ export async function POST(req: NextRequest) {
       tags?: string[];
       title?: string;
       links?: string[];
+      projectId?: string;
     };
 
     const card = addCard({
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
       tags: body.tags,
       title: body.title,
       links: body.links,
+      projectId: body.projectId,
     });
 
     return NextResponse.json({ card }, { status: 201 });
@@ -31,6 +33,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET() {
-  return NextResponse.json({ cards: listCards() });
+export async function GET(req: NextRequest) {
+  const projectId = req.nextUrl.searchParams.get("projectId") ?? undefined;
+  return NextResponse.json({ cards: listCards({ projectId }) });
 }

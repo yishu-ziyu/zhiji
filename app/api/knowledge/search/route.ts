@@ -41,8 +41,10 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   const query = req.nextUrl.searchParams.get("q") ?? "";
-  const hits = searchKnowledge(query);
-  const rec = recordSearchFootprint(query, hits);
+  const projectId = req.nextUrl.searchParams.get("projectId") ?? undefined;
+  const filters = projectId ? { projectId } : undefined;
+  const hits = searchKnowledge(query, filters);
+  const rec = recordSearchFootprint(query, hits, filters);
   return NextResponse.json({
     hits,
     count: hits.length,
