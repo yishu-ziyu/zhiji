@@ -2,7 +2,7 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
-  type?: "text" | "minutes" | "kanban" | "commitment";
+  type?: "text" | "knowledge" | "action";
   data?: Record<string, unknown>;
 }
 
@@ -12,6 +12,3 @@ export interface LLMConfig {
   model: string;
   timeout: number;
 }
-
-/** Efficiency workbench sections */
-export type EfficiencyMode = "capture" | "board";
