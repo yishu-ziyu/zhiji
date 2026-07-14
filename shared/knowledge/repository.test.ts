@@ -63,6 +63,7 @@ describe("knowledge repository persistence", () => {
     const item = repo.addAction({
       description: "完成状态落盘检查",
       assignee: "tester",
+      nextStep: "勾完成",
     });
     const updated = repo.updateActionStatus(item.id, "done");
     expect(updated.status).toBe("done");
@@ -73,4 +74,56 @@ describe("knowledge repository persistence", () => {
     expect(raw[item.id]?.status).toBe("done");
     expect(repo.getAction(item.id)?.status).toBe("done");
   });
+
+  it("writes timeline events on status change and comment", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const item = repo.addAction({
+      description: "时间线验收",
+      assignee: "自己",
+      nextStep: "写评论",
+      status: "todo",
+    });
+    repo.patchWorkItem(item.id, { status: "doing" });
+    repo.addWorkEvent(item.id, {
+      type: "comment",
+      body: "对齐验收口径",
+      actor: "自己",
+    });
+    const events = repo.listEventsForWorkItem(item.id);
+    expect(events.some((e) => e.type === "status_change")).toBe(true);
+    expect(events.some((e) => e.type === "comment" && e.body.includes("对齐"))).toBe(
+      true,
+    );
+    expect(fs.existsSync(path.join(tmpDir, "events.json"))).toBe(true);
+  });
+
+  it("rejects doing without assignee", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const item = repo.addAction({
+      description: "无负责人",
+      assignee: "待定",
+      nextStep: "开始",
+      status: "todo",
+    });
+    expect(() => repo.updateActionStatus(item.id, "doing")).toThrow(/负责人/);
+  });
+
+  it("links evidence and records event", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const cards = repo.listCards();
+    const card = cards[0];
+    const item = repo.addAction({
+      description: "挂依据",
+      assignee: "自己",
+      nextStep: "关联卡",
+    });
+    const linked = repo.linkEvidence(item.id, card.id);
+    expect(linked.evidenceIds).toContain(card.id);
+    const events = repo.listEventsForWorkItem(item.id);
+    expect(events.some((e) => e.type === "evidence_link")).toBe(true);
+  });
 });
+

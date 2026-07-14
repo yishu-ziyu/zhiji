@@ -6,7 +6,15 @@ import type {
   ActionStatus,
   KnowledgeCard,
   KnowledgeSource,
+  WorkEvent,
+  WorkEventType,
 } from "@/shared/types/knowledge";
+import { ACTION_STATUSES, DEFAULT_ACTOR } from "@/shared/types/knowledge";
+import {
+  assertCanPatchTo,
+  assertWorkItemForStatus,
+  WorkItemValidationError,
+} from "@/shared/knowledge/work-item-rules";
 
 type NewCardInput = {
   content: string;
@@ -20,12 +28,35 @@ type NewCardInput = {
 
 type NewActionInput = {
   description: string;
+  title?: string;
   assignee?: string;
   deadline?: string;
   status?: ActionStatus;
   verificationCriteria?: string;
   cardId?: string;
+  evidenceIds?: string[];
+  nextStep?: string;
+  blockedReason?: string;
   id?: string;
+};
+
+type PatchWorkItemInput = {
+  title?: string;
+  description?: string;
+  assignee?: string;
+  deadline?: string;
+  status?: ActionStatus;
+  verificationCriteria?: string;
+  nextStep?: string;
+  blockedReason?: string | null;
+  cardId?: string | null;
+};
+
+type NewEventInput = {
+  type: WorkEventType;
+  actor?: string;
+  body?: string;
+  meta?: Record<string, unknown>;
 };
 
 function resolveDataDir(): string {
@@ -41,6 +72,10 @@ function cardsPath(): string {
 
 function actionsPath(): string {
   return path.join(resolveDataDir(), "actions.json");
+}
+
+function eventsPath(): string {
+  return path.join(resolveDataDir(), "events.json");
 }
 
 function ensureDataDir(): void {
@@ -74,9 +109,21 @@ function loadCards(): Map<string, KnowledgeCard> {
   return readJsonMap<KnowledgeCard>(cardsPath());
 }
 
-function loadActions(): Map<string, ActionItem> {
+function loadActionsRaw(): Map<string, ActionItem> {
   ensureDataDir();
-  return readJsonMap<ActionItem>(actionsPath());
+  const raw = readJsonMap<Partial<ActionItem> & { description?: string}>(
+    actionsPath(),
+  );
+  const out = new Map<string, ActionItem>();
+  for (const [id, item] of raw) {
+    out.set(id, normalizeAction({ ...item, id: item.id ?? id }));
+  }
+  return out;
+}
+
+function loadEvents(): Map<string, WorkEvent> {
+  ensureDataDir();
+  return readJsonMap<WorkEvent>(eventsPath());
 }
 
 function saveCards(cards: Map<string, KnowledgeCard>): void {
@@ -87,6 +134,10 @@ function saveActions(actions: Map<string, ActionItem>): void {
   writeJsonMap(actionsPath(), actions);
 }
 
+function saveEvents(events: Map<string, WorkEvent>): void {
+  writeJsonMap(eventsPath(), events);
+}
+
 function copyCard(card: KnowledgeCard): KnowledgeCard {
   return structuredClone(card);
 }
@@ -95,15 +146,60 @@ function copyAction(item: ActionItem): ActionItem {
   return structuredClone(item);
 }
 
+function copyEvent(event: WorkEvent): WorkEvent {
+  return structuredClone(event);
+}
+
+/** Migrate legacy action JSON into full work item shape. */
+export function normalizeAction(
+  raw: Partial<ActionItem> & { description?: string; id?: string },
+): ActionItem {
+  const now = new Date().toISOString();
+  const description = (raw.description ?? raw.title ?? "").trim() || "未命名工作项";
+  const title = (raw.title ?? description).trim().slice(0, 80);
+  let status = raw.status ?? "todo";
+  if (!ACTION_STATUSES.includes(status)) {
+    status = "todo";
+  }
+  const evidenceIds = [
+    ...(raw.evidenceIds ?? []),
+    ...(raw.cardId && !(raw.evidenceIds ?? []).includes(raw.cardId)
+      ? [raw.cardId]
+      : []),
+  ];
+  const nextStep =
+    raw.nextStep?.trim() ||
+    (status === "done" || status === "cancelled"
+      ? ""
+      : "确认下一步并开始推进");
+
+  return {
+    id: raw.id ?? randomUUID(),
+    title,
+    description,
+    assignee: raw.assignee?.trim() || "待定",
+    deadline: raw.deadline?.trim() || "待确认",
+    status,
+    verificationCriteria:
+      raw.verificationCriteria?.trim() || "完成描述中的工作并可核对结果",
+    cardId: raw.cardId,
+    evidenceIds,
+    nextStep,
+    blockedReason: raw.blockedReason?.trim() || undefined,
+    createdAt: raw.createdAt ?? raw.updatedAt ?? now,
+    updatedAt: raw.updatedAt ?? now,
+  };
+}
+
 function buildSeedCards(now: string): KnowledgeCard[] {
   return [
     {
       id: "kc-seed-1",
-      title: "知识工作者主路径",
+      title: "知识工作者怎么推进",
       content:
-        "资料检索 → 沉淀成可复用卡片 → 接到协作动作。入口不必依赖个人微信私聊读取。",
+        "资料检索 → 沉淀成可复用卡片 → 接到可推进的工作项。入口不必依赖个人微信私聊读取。",
       source: "doc",
-      tags: ["产品", "知识工作", "主路径"],
+      tags: ["产品", "知识工作"],
       timestamp: now,
       links: [],
     },
@@ -119,17 +215,17 @@ function buildSeedCards(now: string): KnowledgeCard[] {
     },
     {
       id: "kc-seed-3",
-      title: "协作状态四态",
+      title: "工作项状态",
       content:
-        "行动项状态：todo → doing → confirmed → done。confirmed 表示对方或自己已确认验收标准。",
+        "状态：待开始 → 进行中 → 待确认 → 完成；可标阻塞。进行中须有负责人与下一步。",
       source: "manual",
-      tags: ["协作", "状态机", "行动项"],
+      tags: ["协作", "状态", "工作项"],
       timestamp: now,
       links: [],
     },
     {
       id: "kc-seed-4",
-      title: "Demo 金句",
+      title: "Demo 说法",
       content:
         "不是再做一个全能笔记，而是让找过的材料下次还能用，并且能变成可勾选的下一步。",
       source: "chat",
@@ -142,32 +238,41 @@ function buildSeedCards(now: string): KnowledgeCard[] {
 
 function buildSeedActions(now: string): ActionItem[] {
   return [
-    {
+    normalizeAction({
       id: "ka-seed-1",
+      title: "跑通检索并展示带来源的卡片",
       description: "用一条真实问题跑通知识检索并展示带来源的卡片",
       assignee: "自己",
       deadline: "待确认",
       status: "doing",
+      nextStep: "搜索「检索 来源」并确认来源标签可见",
       verificationCriteria: "搜索结果至少 1 条相关卡片且能点开看全文",
       cardId: "kc-seed-2",
+      evidenceIds: ["kc-seed-2"],
+      createdAt: now,
       updatedAt: now,
-    },
-    {
+    }),
+    normalizeAction({
       id: "ka-seed-2",
+      title: "会议文本生成卡片与工作项",
       description: "把会议粘贴文本整理成卡片并生成行动项",
       assignee: "自己",
       deadline: "待确认",
       status: "todo",
+      nextStep: "粘贴示例会议并生成至少一条工作项",
       verificationCriteria: "minutes 接口返回 cards 与 actionItems",
       cardId: "kc-seed-1",
+      evidenceIds: ["kc-seed-1"],
+      createdAt: now,
       updatedAt: now,
-    },
+    }),
   ];
 }
 
 function seedIfEmpty(
   cards: Map<string, KnowledgeCard>,
   actions: Map<string, ActionItem>,
+  events: Map<string, WorkEvent>,
 ): void {
   if (cards.size > 0) return;
   const now = new Date().toISOString();
@@ -176,24 +281,62 @@ function seedIfEmpty(
   }
   for (const item of buildSeedActions(now)) {
     actions.set(item.id, item);
+    const ev: WorkEvent = {
+      id: randomUUID(),
+      workItemId: item.id,
+      type: "status_change",
+      actor: "system",
+      body: `创建工作项，状态 ${item.status}`,
+      meta: { toStatus: item.status },
+      createdAt: now,
+    };
+    events.set(ev.id, ev);
   }
   saveCards(cards);
   saveActions(actions);
+  saveEvents(events);
 }
 
-/** Load cards from disk, seed when empty, return working map. */
 function workingCards(): Map<string, KnowledgeCard> {
   const cards = loadCards();
-  const actions = loadActions();
-  seedIfEmpty(cards, actions);
+  const actions = loadActionsRaw();
+  const events = loadEvents();
+  seedIfEmpty(cards, actions, events);
   return cards;
 }
 
 function workingActions(): Map<string, ActionItem> {
   const cards = loadCards();
-  const actions = loadActions();
-  seedIfEmpty(cards, actions);
+  const actions = loadActionsRaw();
+  const events = loadEvents();
+  seedIfEmpty(cards, actions, events);
   return actions;
+}
+
+function workingEvents(): Map<string, WorkEvent> {
+  const cards = loadCards();
+  const actions = loadActionsRaw();
+  const events = loadEvents();
+  seedIfEmpty(cards, actions, events);
+  return events;
+}
+
+function appendEvent(
+  events: Map<string, WorkEvent>,
+  workItemId: string,
+  input: NewEventInput,
+): WorkEvent {
+  const event: WorkEvent = {
+    id: randomUUID(),
+    workItemId,
+    type: input.type,
+    actor: input.actor?.trim() || DEFAULT_ACTOR,
+    body: input.body?.trim() || "",
+    meta: input.meta,
+    createdAt: new Date().toISOString(),
+  };
+  events.set(event.id, event);
+  return event;
 }
 
 export function listCards(): KnowledgeCard[] {
@@ -229,8 +372,27 @@ export function addCards(inputs: NewCardInput[]): KnowledgeCard[] {
   return inputs.map((input) => addCard(input));
 }
 
-export function listActions(): ActionItem[] {
-  return [...workingActions().values()].map(copyAction);
+export function listActions(filter?: {
+  assignee?: string;
+  status?: ActionStatus | ActionStatus[];
+  openOnly?: boolean;
+}): ActionItem[] {
+  let items = [...workingActions().values()].map(copyAction);
+  if (filter?.assignee) {
+    items = items.filter((a) => a.assignee === filter.assignee);
+  }
+  if (filter?.status) {
+    const set = new Set(
+      Array.isArray(filter.status) ? filter.status : [filter.status],
+    );
+    items = items.filter((a) => set.has(a.status));
+  }
+  if (filter?.openOnly) {
+    items = items.filter(
+      (a) => a.status !== "done" && a.status !== "cancelled",
+    );
+  }
+  return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function getAction(id: string): ActionItem | null {
@@ -238,25 +400,65 @@ export function getAction(id: string): ActionItem | null {
   return item ? copyAction(item) : null;
 }
 
+export function listEventsForWorkItem(workItemId: string): WorkEvent[] {
+  return [...workingEvents().values()]
+    .filter((e) => e.workItemId === workItemId)
+    .map(copyEvent)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function getWorkItemDetail(id: string): {
+  item: ActionItem;
+  events: WorkEvent[];
+  evidence: KnowledgeCard[];
+} | null {
+  const item = getAction(id);
+  if (!item) return null;
+  const events = listEventsForWorkItem(id);
+  const evidence = item.evidenceIds
+    .map((cid) => getCard(cid))
+    .filter((c): c is KnowledgeCard => c !== null);
+  return { item, events, evidence };
+}
+
 export function addAction(input: NewActionInput): ActionItem {
   const description = input.description?.trim();
-  if (!description) throw new Error("行动项描述不能为空");
+  if (!description) throw new Error("工作项描述不能为空");
+
+  const now = new Date().toISOString();
+  const item = normalizeAction({
+    id: input.id ?? randomUUID(),
+    title: input.title,
+    description,
+    assignee: input.assignee,
+    deadline: input.deadline,
+    status: input.status ?? "todo",
+    verificationCriteria: input.verificationCriteria,
+    cardId: input.cardId,
+    evidenceIds: input.evidenceIds,
+    nextStep: input.nextStep,
+    blockedReason: input.blockedReason,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  if (item.status !== "todo") {
+    assertWorkItemForStatus(item, item.status);
+  } else if (!item.nextStep.trim()) {
+    item.nextStep = "确认下一步并开始推进";
+  }
 
   const actions = workingActions();
-  const now = new Date().toISOString();
-  const item: ActionItem = {
-    id: input.id ?? randomUUID(),
-    description,
-    assignee: input.assignee?.trim() || "待定",
-    deadline: input.deadline?.trim() || "待确认",
-    status: input.status ?? "todo",
-    verificationCriteria:
-      input.verificationCriteria?.trim() || "完成描述中的工作并可核对结果",
-    cardId: input.cardId,
-    updatedAt: now,
-  };
+  const events = workingEvents();
   actions.set(item.id, item);
+  appendEvent(events, item.id, {
+    type: "status_change",
+    actor: "system",
+    body: `创建工作项「${item.title}」`,
+    meta: { toStatus: item.status },
+  });
   saveActions(actions);
+  saveEvents(events);
   return copyAction(item);
 }
 
@@ -267,17 +469,235 @@ export function addActions(inputs: NewActionInput[]): ActionItem[] {
 export function updateActionStatus(
   id: string,
   status: ActionStatus,
+  options?: { blockedReason?: string; actor?: string },
+): ActionItem {
+  return patchWorkItem(id, {
+    status,
+    blockedReason: options?.blockedReason,
+  }, options?.actor);
+}
+
+export function patchWorkItem(
+  id: string,
+  patch: PatchWorkItemInput,
+  actor: string = DEFAULT_ACTOR,
 ): ActionItem {
   const actions = workingActions();
+  const events = workingEvents();
   const item = actions.get(id);
-  if (!item) throw new Error("行动项不存在");
-  const updated: ActionItem = {
+  if (!item) throw new Error("工作项不存在");
+
+  const next: ActionItem = {
     ...item,
-    status,
+    title: patch.title?.trim() || item.title,
+    description: patch.description?.trim() || item.description,
+    assignee:
+      patch.assignee !== undefined
+        ? patch.assignee.trim() || "待定"
+        : item.assignee,
+    deadline:
+      patch.deadline !== undefined
+        ? patch.deadline.trim() || "待确认"
+        : item.deadline,
+    status: patch.status ?? item.status,
+    verificationCriteria:
+      patch.verificationCriteria?.trim() || item.verificationCriteria,
+    nextStep:
+      patch.nextStep !== undefined ? patch.nextStep.trim() : item.nextStep,
+    blockedReason:
+      patch.blockedReason === null
+        ? undefined
+        : patch.blockedReason !== undefined
+          ? patch.blockedReason.trim()
+          : item.blockedReason,
+    cardId:
+      patch.cardId === null
+        ? undefined
+        : patch.cardId !== undefined
+          ? patch.cardId
+          : item.cardId,
     updatedAt: new Date().toISOString(),
   };
-  actions.set(id, updated);
+
+  if (next.status === "done" || next.status === "cancelled") {
+    // allow empty nextStep on terminal
+  } else if (!next.nextStep) {
+    next.nextStep = item.nextStep || "确认下一步";
+  }
+
+  if (next.status === "blocked" && !next.blockedReason) {
+    throw new WorkItemValidationError("阻塞状态必须填写原因");
+  }
+  if (next.status !== "blocked") {
+    next.blockedReason = next.status === item.status ? next.blockedReason : undefined;
+    if (patch.status && patch.status !== "blocked") {
+      next.blockedReason = undefined;
+    }
+  }
+
+  try {
+    assertCanPatchTo(item, {
+      status: next.status,
+      assignee: next.assignee,
+      nextStep: next.nextStep,
+      blockedReason: next.blockedReason,
+    });
+  } catch (e) {
+    if (e instanceof WorkItemValidationError) throw e;
+    throw e;
+  }
+
+  if (item.status !== next.status) {
+    appendEvent(events, id, {
+      type: next.status === "blocked" ? "block" : item.status === "blocked" ? "unblock" : "status_change",
+      actor,
+      body:
+        next.status === "blocked"
+          ? next.blockedReason || "标记阻塞"
+          : `状态 ${item.status} → ${next.status}`,
+      meta: { fromStatus: item.status, toStatus: next.status },
+    });
+  }
+  if (item.assignee !== next.assignee) {
+    appendEvent(events, id, {
+      type: "assign",
+      actor,
+      body: `负责人 ${item.assignee} → ${next.assignee}`,
+      meta: { from: item.assignee, to: next.assignee },
+    });
+  }
+  if (item.nextStep !== next.nextStep) {
+    appendEvent(events, id, {
+      type: "next_step_change",
+      actor,
+      body: next.nextStep || "（清空下一步）",
+      meta: { from: item.nextStep, to: next.nextStep },
+    });
+  }
+
+  actions.set(id, next);
   saveActions(actions);
+  saveEvents(events);
+  return copyAction(next);
+}
+
+export function addWorkEvent(
+  workItemId: string,
+  input: NewEventInput,
+): WorkEvent {
+  const actions = workingActions();
+  if (!actions.has(workItemId)) throw new Error("工作项不存在");
+
+  if (
+    input.type === "block" &&
+    !input.body?.trim() &&
+    !input.meta?.reason
+  ) {
+    throw new WorkItemValidationError("阻塞事件需要说明原因");
+  }
+
+  const events = workingEvents();
+  const event = appendEvent(events, workItemId, input);
+
+  if (input.type === "block") {
+    const item = actions.get(workItemId)!;
+    const reason =
+      input.body?.trim() || String(input.meta?.reason ?? "阻塞");
+    const updated: ActionItem = {
+      ...item,
+      status: "blocked",
+      blockedReason: reason,
+      nextStep: item.nextStep.startsWith("等待")
+        ? item.nextStep
+        : `等待：${reason}`,
+      updatedAt: new Date().toISOString(),
+    };
+    actions.set(workItemId, updated);
+    saveActions(actions);
+  }
+
+  if (input.type === "unblock") {
+    const item = actions.get(workItemId)!;
+    if (item.status === "blocked") {
+      const updated: ActionItem = {
+        ...item,
+        status: "doing",
+        blockedReason: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      assertWorkItemForStatus(updated, "doing");
+      actions.set(workItemId, updated);
+      saveActions(actions);
+    }
+  }
+
+  const item = actions.get(workItemId)!;
+  item.updatedAt = new Date().toISOString();
+  actions.set(workItemId, item);
+  saveActions(actions);
+  saveEvents(events);
+  return copyEvent(event);
+}
+
+export function linkEvidence(
+  workItemId: string,
+  cardId: string,
+  actor: string = DEFAULT_ACTOR,
+): ActionItem {
+  const card = getCard(cardId);
+  if (!card) throw new Error("依据卡不存在");
+  const actions = workingActions();
+  const events = workingEvents();
+  const item = actions.get(workItemId);
+  if (!item) throw new Error("工作项不存在");
+
+  if (item.evidenceIds.includes(cardId)) {
+    return copyAction(item);
+  }
+
+  const updated: ActionItem = {
+    ...item,
+    evidenceIds: [...item.evidenceIds, cardId],
+    cardId: item.cardId ?? cardId,
+    updatedAt: new Date().toISOString(),
+  };
+  actions.set(workItemId, updated);
+  appendEvent(events, workItemId, {
+    type: "evidence_link",
+    actor,
+    body: `关联依据：${card.title || card.content.slice(0, 40)}`,
+    meta: { cardId, source: card.source },
+  });
+  saveActions(actions);
+  saveEvents(events);
+  return copyAction(updated);
+}
+
+export function unlinkEvidence(
+  workItemId: string,
+  cardId: string,
+  actor: string = DEFAULT_ACTOR,
+): ActionItem {
+  const actions = workingActions();
+  const events = workingEvents();
+  const item = actions.get(workItemId);
+  if (!item) throw new Error("工作项不存在");
+
+  const updated: ActionItem = {
+    ...item,
+    evidenceIds: item.evidenceIds.filter((id) => id !== cardId),
+    cardId: item.cardId === cardId ? undefined : item.cardId,
+    updatedAt: new Date().toISOString(),
+  };
+  actions.set(workItemId, updated);
+  appendEvent(events, workItemId, {
+    type: "evidence_link",
+    actor,
+    body: `取消关联依据 ${cardId}`,
+    meta: { cardId, unlinked: true },
+  });
+  saveActions(actions);
+  saveEvents(events);
   return copyAction(updated);
 }
 
@@ -287,15 +707,17 @@ export function updateActionStatus(
  */
 export function resetKnowledgeStoreForTests(): void {
   ensureDataDir();
-  const cPath = cardsPath();
-  const aPath = actionsPath();
-  if (fs.existsSync(cPath)) fs.unlinkSync(cPath);
-  if (fs.existsSync(aPath)) fs.unlinkSync(aPath);
+  for (const p of [cardsPath(), actionsPath(), eventsPath()]) {
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
   const cards = new Map<string, KnowledgeCard>();
   const actions = new Map<string, ActionItem>();
-  seedIfEmpty(cards, actions);
+  const events = new Map<string, WorkEvent>();
+  seedIfEmpty(cards, actions, events);
 }
 
 export function getKnowledgeDataDirForTests(): string {
   return resolveDataDir();
 }
+
+export { WorkItemValidationError };
