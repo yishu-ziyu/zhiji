@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   ActionItem,
   ActionStatus,
+  CanvasNodeRef,
   FootprintEvent,
   FootprintLitEntry,
   FootprintViewMode,
@@ -16,6 +17,8 @@ import type {
   NeighborView,
   PathView,
   Project,
+  ProjectCanvasSnapshot,
+  ProjectCheckpoint,
   QuerySession,
   RelationStatus,
   RelationType,
@@ -52,6 +55,7 @@ import {
   relationDedupKey,
   RelationValidationError,
 } from "@/shared/knowledge/relations";
+import { buildProjectCanvasSnapshot } from "@/shared/knowledge/project-canvas";
 
 type NewCardInput = {
   content: string;
@@ -111,6 +115,10 @@ function cardsPath(): string {
 
 function projectsPath(): string {
   return path.join(resolveDataDir(), "projects.json");
+}
+
+function projectCheckpointsPath(): string {
+  return path.join(resolveDataDir(), "project-checkpoints.json");
 }
 
 function actionsPath(): string {
@@ -174,6 +182,11 @@ function loadProjects(): Map<string, Project> {
   return readJsonMap<Project>(projectsPath());
 }
 
+function loadProjectCheckpoints(): Map<string, ProjectCheckpoint> {
+  ensureDataDir();
+  return readJsonMap<ProjectCheckpoint>(projectCheckpointsPath());
+}
+
 function loadActionsRaw(): Map<string, ActionItem> {
   ensureDataDir();
   const raw = readJsonMap<Partial<ActionItem> & { description?: string}>(
@@ -197,6 +210,12 @@ function saveCards(cards: Map<string, KnowledgeCard>): void {
 
 function saveProjects(projects: Map<string, Project>): void {
   writeJsonMap(projectsPath(), projects);
+}
+
+function saveProjectCheckpoints(
+  checkpoints: Map<string, ProjectCheckpoint>,
+): void {
+  writeJsonMap(projectCheckpointsPath(), checkpoints);
 }
 
 function saveActions(actions: Map<string, ActionItem>): void {
@@ -240,6 +259,12 @@ function copyRelation(rel: KnowledgeRelation): KnowledgeRelation {
 
 function copyProject(project: Project): Project {
   return structuredClone(project);
+}
+
+function copyProjectCheckpoint(
+  checkpoint: ProjectCheckpoint,
+): ProjectCheckpoint {
+  return structuredClone(checkpoint);
 }
 
 function copyCard(card: KnowledgeCard): KnowledgeCard {
@@ -595,12 +620,84 @@ export function addProject(input: {
   return copyProject(project);
 }
 
+export function addProjectCheckpoint(
+  projectId: string,
+  input: Omit<ProjectCheckpoint, "id" | "projectId" | "createdAt">,
+): ProjectCheckpoint {
+  if (!getProject(projectId)) throw new Error("项目不存在");
+  const goal = input.goal?.trim();
+  const nextStep = input.nextStep?.trim();
+  if (!goal || !nextStep) throw new Error("目标和下一步不能为空");
+  const checkpoint: ProjectCheckpoint = {
+    id: randomUUID(),
+    projectId,
+    goal,
+    completed: input.completed.map((item) => item.trim()).filter(Boolean),
+    unresolved: input.unresolved.map((item) => item.trim()).filter(Boolean),
+    nextStep,
+    confirmedBy: input.confirmedBy?.trim() || DEFAULT_ACTOR,
+    createdAt: new Date().toISOString(),
+  };
+  const checkpoints = loadProjectCheckpoints();
+  checkpoints.set(checkpoint.id, checkpoint);
+  saveProjectCheckpoints(checkpoints);
+  return copyProjectCheckpoint(checkpoint);
+}
+
+export function getLatestProjectCheckpoint(
+  projectId: string,
+): ProjectCheckpoint | null {
+  const checkpoint = [...loadProjectCheckpoints().values()]
+    .filter((entry) => entry.projectId === projectId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  return checkpoint ? copyProjectCheckpoint(checkpoint) : null;
+}
+
 export function listCards(filter?: { projectId?: string }): KnowledgeCard[] {
   let cards = [...workingCards().values()].map(copyCard);
   if (filter?.projectId) {
     cards = cards.filter((card) => card.projectId === filter.projectId);
   }
   return cards;
+}
+
+export function getProjectCanvasSnapshot(
+  projectId: string,
+  focus: CanvasNodeRef = { kind: "project", id: projectId },
+  now: string = new Date().toISOString(),
+): ProjectCanvasSnapshot {
+  const project = getProject(projectId);
+  if (!project) throw new Error("项目不存在");
+  const cards = listCards({ projectId });
+  const workItems = listActions({ projectId });
+  const cardIds = new Set(cards.map((card) => card.id));
+  const workItemIds = new Set(workItems.map((item) => item.id));
+  const events = [...workingEvents().values()]
+    .filter((event) => workItemIds.has(event.workItemId))
+    .map(copyEvent);
+  const eventIds = new Set(events.map((event) => event.id));
+  const relations = listRelations().filter(
+    (relation) =>
+      cardIds.has(relation.fromCardId) && cardIds.has(relation.toCardId),
+  );
+
+  const focusBelongs =
+    (focus.kind === "project" && focus.id === projectId) ||
+    (focus.kind === "card" && cardIds.has(focus.id)) ||
+    (focus.kind === "work_item" && workItemIds.has(focus.id)) ||
+    (focus.kind === "event" && eventIds.has(focus.id));
+  if (!focusBelongs) throw new Error("关注对象不属于当前项目");
+
+  return buildProjectCanvasSnapshot({
+    project,
+    cards,
+    workItems,
+    events,
+    relations,
+    checkpoint: getLatestProjectCheckpoint(projectId),
+    focus,
+    now,
+  });
 }
 
 export function getCard(id: string): KnowledgeCard | null {
@@ -977,6 +1074,7 @@ export function resetKnowledgeStoreForTests(): void {
   for (const p of [
     cardsPath(),
     projectsPath(),
+    projectCheckpointsPath(),
     actionsPath(),
     eventsPath(),
     footprintEventsPath(),

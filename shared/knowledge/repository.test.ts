@@ -87,6 +87,43 @@ describe("knowledge repository persistence", () => {
     ).toBe(false);
   });
 
+  it("persists the latest confirmed project checkpoint", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const saved = repo.addProjectCheckpoint(repo.DEFAULT_PROJECT_ID, {
+      goal: "完成项目画布规格",
+      completed: ["源码调查"],
+      unresolved: ["界面实现"],
+      nextStep: "实现确认图",
+      confirmedBy: "自己",
+    });
+
+    expect(
+      repo.getLatestProjectCheckpoint(repo.DEFAULT_PROJECT_ID)?.id,
+    ).toBe(saved.id);
+    expect(
+      fs.existsSync(path.join(tmpDir, "project-checkpoints.json")),
+    ).toBe(true);
+  });
+
+  it("returns one-hop evidence and events for a work-item focus", async () => {
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const snapshot = repo.getProjectCanvasSnapshot(
+      repo.DEFAULT_PROJECT_ID,
+      { kind: "work_item", id: "ka-seed-1" },
+      "2026-07-15T10:00:00.000Z",
+    );
+
+    expect(snapshot.focus).toEqual({
+      kind: "work_item",
+      id: "ka-seed-1",
+    });
+    expect(snapshot.nodes.every((node) => node.depth <= 1)).toBe(true);
+    expect(snapshot.nodes.some((node) => node.ref.kind === "card")).toBe(true);
+    expect(snapshot.nodes.some((node) => node.ref.kind === "event")).toBe(true);
+  });
+
   it("persists cards across reload of maps from disk", async () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
