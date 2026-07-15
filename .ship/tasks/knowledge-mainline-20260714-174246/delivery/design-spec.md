@@ -40,6 +40,6 @@ Copy of PRD A1–A5. Engineering DONE for submit requires A1–A3 + green unit t
 
 ## Next eng stories (ordered)
 
-1. Playwright gold path for A1–A3  
-2. CI-stable offline path (force offline in test env)  
-3. Demo script doc 180s aligned to gold script  
+1. Playwright gold path for A1–A3
+2. CI-stable offline path (force offline in test env)
+3. Demo script doc 180s aligned to gold script

@@ -1,7 +1,7 @@
 # Scope challenge - knowledge mainline freeze
 
-**Task:** `knowledge-mainline-20260714-174246`  
-**Date:** 2026-07-14  
+**Task:** `knowledge-mainline-20260714-174246`
+**Date:** 2026-07-14
 **Owner:** User (product) + Grok (artifacts)
 
 ## Candidate requirements

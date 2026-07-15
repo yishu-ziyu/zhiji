@@ -1,6 +1,6 @@
 # Peer review (lite waiver)
 
-**Scope mode:** lite freeze for hackathon mainline lock  
+**Scope mode:** lite freeze for hackathon mainline lock
 **Disposition:** accept with waiver
 
 Findings:
