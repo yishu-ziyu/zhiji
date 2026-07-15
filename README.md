@@ -2,7 +2,7 @@
 
 效率赛道里做三件事：**资料检索、知识卡片、待办行动**。
 
-> 搜得到、卡片带来源、下一步能勾掉。  
+> 搜得到、卡片带来源、下一步能勾掉。
 > 不是编辑器，不是客户改约定工具，不是电商。
 
 ## 怎么跑
@@ -41,6 +41,6 @@ PORT=3011 BASE_URL=http://127.0.0.1:3011 npm run test:e2e
 
 ## 产品说明 / 交件
 
-- `CONTEXT.md` — 本轮说法  
-- `.ship/tasks/knowledge-mainline-20260714-174246/product/08-prd.md` — 验收  
+- `CONTEXT.md` — 本轮说法
+- `.ship/tasks/knowledge-mainline-20260714-174246/product/08-prd.md` — 验收
 - `docs/demo/SUBMIT_PACK.md` — 使用说明 · 演示 · ≤5 页路演 · 链接位
