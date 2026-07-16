@@ -46,6 +46,38 @@ export type CrossProjectReference = {
   sourceTitle?: string;
 };
 
+/**
+ * T-19 S2: Owner-preauthorized host→source grant receipt.
+ * Stores no credential, title, locator, object id, content, hit, or revision.
+ * Effective = no disabledAt, no revokedAt, expiresAt null/future.
+ */
+export type ProjectSourceGrant = {
+  id: string;
+  hostProjectId: string;
+  sourceProjectId: string;
+  approvedBy: string;
+  approvedAt: string;
+  expiresAt: string | null;
+  disabledAt?: string;
+  disabledBy?: string;
+  revokedAt?: string;
+  revokedBy?: string;
+  revokeReason?: string;
+};
+
+/**
+ * T-19 S2: generic zero-leak hint. Ephemeral read result only.
+ * No project title/id, object id, content, hit, revision, count, or rank.
+ */
+export type RedactedCrossProjectHint = {
+  kind: "approved_source_may_be_relevant";
+  message: string;
+};
+
+/** Fixed Chinese message for the sole generic hint (frozen S2 contract). */
+export const REDACTED_CROSS_PROJECT_HINT_MESSAGE =
+  "一项已授权来源可能相关；如需使用，请先由 Owner 明确引用。";
+
 export type CanvasNodeKind = "project" | "card" | "work_item" | "event";
 
 export type CanvasNodeRef = {
