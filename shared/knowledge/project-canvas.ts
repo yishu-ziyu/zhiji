@@ -18,6 +18,8 @@ import type {
 import { RELATION_TYPE_LABELS, STATUS_LABELS } from "@/shared/types/knowledge";
 import { edgeDirection } from "@/shared/knowledge/relations";
 import { materialCardSummary } from "@/shared/knowledge/materials";
+import { reviewProjectNow } from "@/shared/knowledge/project-review-agent";
+import type { ProjectNowView } from "@/shared/types/knowledge";
 
 export type ProjectFacts = {
   project: Project;
@@ -730,6 +732,38 @@ export function buildProjectCanvasSnapshot(
       )
     : [...timeline.now, ...timeline.history];
 
+  const nowReview = reviewProjectNow({
+    projectName: input.project.name,
+    cards: input.cards,
+    workItems: input.workItems,
+    events: input.events,
+    relations: input.relations,
+  });
+  const cardById = new Map(input.cards.map((card) => [card.id, card]));
+  const projectNow: ProjectNowView = {
+    status: nowReview.status,
+    judgment: nowReview.judgment,
+    gaps: nowReview.gaps,
+    nextStep: nowReview.nextStep,
+    mode: nowReview.mode,
+    evidence: nowReview.evidenceIds
+      .map((id) => {
+        const card = cardById.get(id);
+        if (!card) return null;
+        return {
+          kind: "card" as const,
+          id,
+          label:
+            card.title?.trim() ||
+            card.sourceFileId?.split("/").pop() ||
+            "项目材料",
+        };
+      })
+      .filter((entry): entry is ProjectNowView["evidence"][number] =>
+        Boolean(entry),
+      ),
+  };
+
   return {
     project: input.project,
     focus: input.focus,
@@ -737,6 +771,7 @@ export function buildProjectCanvasSnapshot(
     checkpointSource: input.checkpoint ? "confirmed" : "inferred",
     changesSinceCheckpoint,
     planAssessment: assessPlan(input.checkpoint, input.events, input.cards),
+    projectNow,
     attention,
     nodes: graph.nodes,
     edges: graph.edges,

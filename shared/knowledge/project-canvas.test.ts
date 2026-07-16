@@ -369,6 +369,34 @@ describe("project canvas domain", () => {
     );
   });
 
+  it("B-2: projectNow is ready with clickable real card evidence when materials exist", () => {
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+    expect(snapshot.projectNow.status).toBe("ready");
+    expect(snapshot.projectNow.judgment.length).toBeGreaterThan(0);
+    expect(snapshot.projectNow.evidence.length).toBeGreaterThan(0);
+    expect(
+      snapshot.projectNow.evidence.every((e) =>
+        cards.some((card) => card.id === e.id),
+      ),
+    ).toBe(true);
+  });
+
+  it("B-2: projectNow is honest empty without materials", () => {
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: [],
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+    expect(snapshot.projectNow.status).toBe("empty");
+    expect(snapshot.projectNow.judgment).toMatch(/还没材料|谈不上理解/);
+    expect(snapshot.projectNow.evidence).toEqual([]);
+  });
+
   it("keeps recent active work reachable when another item owns the attention signal", () => {
     const recentWithoutSignal: ActionItem = {
       ...baseItem,

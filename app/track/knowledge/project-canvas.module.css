@@ -558,6 +558,9 @@
 
 .agentAttentionList button {
   width: 100%;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
   padding: 8px 9px;
   border: 1px solid #e8e8e4;
   border-radius: 9px;
@@ -605,6 +608,42 @@
   border-color: #c5d4ea;
   background: #f5f8fd;
   font-weight: 600;
+}
+
+.projectNow {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #ecece8;
+}
+
+.projectNowJudgment {
+  margin: 0;
+  color: #2f3339;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.projectNowNext {
+  margin: 0;
+  color: #55585e;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.projectNowGaps {
+  margin: 0;
+  padding-left: 1.1em;
+  color: #6a6e75;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.projectNow[data-status="empty"] .projectNowJudgment {
+  font-weight: 550;
+  color: #5c5f66;
 }
 
 .relationColumn {

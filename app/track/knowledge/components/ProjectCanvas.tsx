@@ -276,8 +276,58 @@ export function ProjectCanvas({ snapshot, loading, onFocus }: Props) {
   return (
     <section className={styles.canvasArea} data-testid="project-canvas">
       <aside className={styles.agentAttention} data-testid="agent-attention">
+        {/* B-2: 打开项目优先「现在怎样」+ 可点依据；空材料诚实 */}
+        <div
+          className={styles.projectNow}
+          data-testid="project-now"
+          data-status={snapshot.projectNow?.status ?? "empty"}
+        >
+          <div className={styles.agentAttentionHeader}>
+            <Sparkles size={16} aria-hidden="true" />
+            <strong data-testid="project-now-label">现在怎样</strong>
+          </div>
+          <p data-testid="project-now-judgment" className={styles.projectNowJudgment}>
+            {snapshot.projectNow?.judgment ?? "还没材料，还谈不上理解项目局面。"}
+          </p>
+          {snapshot.projectNow?.nextStep ? (
+            <p data-testid="project-now-next" className={styles.projectNowNext}>
+              建议：{snapshot.projectNow.nextStep}
+            </p>
+          ) : null}
+          {snapshot.projectNow?.gaps && snapshot.projectNow.gaps.length > 0 ? (
+            <ul data-testid="project-now-gaps" className={styles.projectNowGaps}>
+              {snapshot.projectNow.gaps.map((gap) => (
+                <li key={gap}>{gap}</li>
+              ))}
+            </ul>
+          ) : null}
+          {snapshot.projectNow?.evidence && snapshot.projectNow.evidence.length > 0 ? (
+            <ul
+              data-testid="project-now-evidence"
+              className={styles.agentAttentionList}
+            >
+              {snapshot.projectNow.evidence.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    data-testid={`project-now-evidence-${item.id}`}
+                    onClick={() => onFocus({ kind: "card", id: item.id })}
+                  >
+                    <FileText size={13} aria-hidden="true" />
+                    <span>依据：{item.label}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : snapshot.projectNow?.status === "empty" ? (
+            <p className={styles.agentAttentionEmpty} data-testid="project-now-empty">
+              没有可点开的材料依据。
+            </p>
+          ) : null}
+        </div>
+
         <div className={styles.agentAttentionHeader}>
-          <Sparkles size={16} aria-hidden="true" />
+          <ListChecks size={16} aria-hidden="true" />
           <strong data-testid="agent-attention-primary-label">
             {snapshot.attention.length > 0
               ? "当前请先看这一条"

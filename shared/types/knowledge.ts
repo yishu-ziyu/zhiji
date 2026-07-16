@@ -41,6 +41,17 @@ export type PlanAssessment = {
   evidence: CanvasNodeRef[];
 };
 
+/** B-2: project-level “现在怎样” on open (deterministic, evidence-backed). */
+export type ProjectNowView = {
+  status: "empty" | "ready";
+  judgment: string;
+  gaps: string[];
+  nextStep: string;
+  /** Clickable material cards only; ids must exist in project. */
+  evidence: Array<{ kind: "card"; id: string; label: string }>;
+  mode: "deterministic" | "model";
+};
+
 export type AttentionReasonCode =
   | "blocked"
   | "awaiting_confirmation"
@@ -130,6 +141,8 @@ export type ProjectCanvasSnapshot = {
   checkpointSource: "confirmed" | "inferred";
   changesSinceCheckpoint: CanvasTimelineEvent[];
   planAssessment: PlanAssessment;
+  /** B-2: 打开项目优先看到的「现在怎样」+ 可点依据 */
+  projectNow: ProjectNowView;
   attention: AttentionItem[];
   nodes: CanvasNode[];
   edges: CanvasEdge[];
