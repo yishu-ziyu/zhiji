@@ -13,6 +13,8 @@ export type Project = {
   status: ProjectStatus;
   createdAt: string;
   updatedAt: string;
+  /** Last time the user opened this project in the workbench (attention). */
+  lastOpenedAt?: string;
 };
 
 export type CanvasNodeKind = "project" | "card" | "work_item" | "event";
@@ -64,6 +66,8 @@ export type CanvasNode = {
   evidence: CanvasNodeRef[];
 };
 
+export type CanvasEdgeDirection = "out" | "in" | "both";
+
 export type CanvasEdge = {
   id: string;
   relationId?: string;
@@ -72,6 +76,8 @@ export type CanvasEdge = {
   label: string;
   evidenceSentence?: string;
   status: "confirmed" | "suggested";
+  /** 相对本次 snapshot.focus 的方向；不是持久化关系字段。 */
+  direction: CanvasEdgeDirection;
 };
 
 export type CanvasAction =
@@ -144,6 +150,8 @@ export type KnowledgeCard = {
   /** Related card IDs */
   links: string[];
   title?: string;
+  /** Optional path into project materials store (knowledge base file). */
+  sourceFileId?: string;
 };
 
 /** Global status dictionary (shared language). */

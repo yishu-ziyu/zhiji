@@ -59,6 +59,7 @@ import {
   RelationValidationError,
 } from "@/shared/knowledge/relations";
 import { buildProjectCanvasSnapshot } from "@/shared/knowledge/project-canvas";
+import { rankProjectsByActivity } from "@/shared/knowledge/recent-project";
 
 type NewCardInput = {
   content: string;
@@ -69,6 +70,7 @@ type NewCardInput = {
   title?: string;
   id?: string;
   timestamp?: string;
+  sourceFileId?: string;
 };
 
 type NewActionInput = {
@@ -675,9 +677,26 @@ function eventEvidenceIds(meta?: Record<string, unknown>): string[] {
 }
 
 export function listProjects(): Project[] {
-  return [...workingProjects().values()]
-    .map(copyProject)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const projects = [...workingProjects().values()].map(copyProject);
+  const workItems = listActions();
+  const events = [...workingEvents().values()];
+  return rankProjectsByActivity(projects, workItems, events);
+}
+
+/** Mark project as opened now so entry attention prefers it. */
+export function touchProjectOpened(projectId: string): Project {
+  const projects = workingProjects();
+  const project = projects.get(projectId);
+  if (!project) throw new Error("项目不存在");
+  const now = new Date().toISOString();
+  const next: Project = {
+    ...project,
+    lastOpenedAt: now,
+    updatedAt: now,
+  };
+  projects.set(projectId, next);
+  saveProjects(projects);
+  return copyProject(next);
 }
 
 export function getProject(id: string): Project | null {
@@ -824,6 +843,7 @@ export function addCard(input: NewCardInput): KnowledgeCard {
     timestamp: input.timestamp ?? now,
     links: input.links ?? [],
     title: input.title?.trim() || undefined,
+    sourceFileId: input.sourceFileId?.trim() || undefined,
   };
   cards.set(card.id, card);
   saveCards(cards);
