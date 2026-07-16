@@ -7,7 +7,11 @@ import { assertAgentServiceShape } from "./reducer";
 import { SqliteProjectMemoryStore } from "./sqlite-store";
 import type { AnalysisRun, UnderstandingBody } from "./types";
 
-function bodyFor(revisionId: string, relativePath = "SPEC.md"): UnderstandingBody {
+function bodyFor(
+  revisionId: string,
+  relativePath = "SPEC.md",
+  quote = "spec v1",
+): UnderstandingBody {
   return {
     now: {
       text: "we understand",
@@ -15,7 +19,7 @@ function bodyFor(revisionId: string, relativePath = "SPEC.md"): UnderstandingBod
         {
           revisionId,
           relativePath,
-          quote: "scope line",
+          quote,
           lastVerifiedAt: "2026-07-16T13:00:00.000Z",
         },
       ],
@@ -38,7 +42,7 @@ function bodyFor(revisionId: string, relativePath = "SPEC.md"): UnderstandingBod
           {
             revisionId,
             relativePath,
-            quote: "scope line",
+            quote,
             lastVerifiedAt: "2026-07-16T13:00:00.000Z",
           },
         ],
@@ -52,7 +56,7 @@ function bodyFor(revisionId: string, relativePath = "SPEC.md"): UnderstandingBod
           {
             revisionId,
             relativePath,
-            quote: "scope line",
+            quote,
             lastVerifiedAt: "2026-07-16T13:00:00.000Z",
           },
         ],
@@ -342,7 +346,7 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
         createdAt: "2026-07-16T14:01:00.000Z",
         updatedAt: "2026-07-16T14:01:00.000Z",
       },
-      bodyFor(add.revision!.id, "a.md"),
+      bodyFor(add.revision!.id, "a.md", "x"),
     );
     await expect(
       store.resolveCandidate({
@@ -353,5 +357,120 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
         createdAt: "2026-07-16T14:02:00.000Z",
       }),
     ).rejects.toThrow(/owner/i);
+  });
+
+  it("two paths with identical bytes get distinct revision ids and same sha256", async () => {
+    const bytes = new TextEncoder().encode("same-bytes-payload");
+    const a = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "added",
+      relativePath: "dir/a.txt",
+      content: bytes,
+      observedAt: "2026-07-16T15:00:00.000Z",
+    });
+    const b = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "added",
+      relativePath: "dir/b.txt",
+      content: bytes,
+      observedAt: "2026-07-16T15:00:01.000Z",
+    });
+    expect(a.revision).toBeTruthy();
+    expect(b.revision).toBeTruthy();
+    expect(a.revision!.id).not.toBe(b.revision!.id);
+    expect(a.revision!.sha256).toBe(b.revision!.sha256);
+    expect(a.revision!.sha256).toBe(sha256Hex(bytes));
+    expect(a.revision!.id.startsWith("orev:")).toBe(true);
+    const ra = await store.readRevision(a.revision!.id);
+    const rb = await store.readRevision(b.revision!.id);
+    expect(new TextDecoder().decode(ra!)).toBe("same-bytes-payload");
+    expect(new TextDecoder().decode(rb!)).toBe("same-bytes-payload");
+  });
+
+  it("A→B→A creates return event/revision; re-observe A at tip is idempotent", async () => {
+    const aBytes = new TextEncoder().encode("content-A");
+    const bBytes = new TextEncoder().encode("content-B");
+    const a1 = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "added",
+      relativePath: "cycle.md",
+      content: aBytes,
+      observedAt: "2026-07-16T16:00:00.000Z",
+    });
+    const b1 = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "modified",
+      relativePath: "cycle.md",
+      content: bBytes,
+      observedAt: "2026-07-16T16:01:00.000Z",
+    });
+    const a2 = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "modified",
+      relativePath: "cycle.md",
+      content: aBytes,
+      observedAt: "2026-07-16T16:02:00.000Z",
+    });
+    expect(a2.event).toBeTruthy();
+    expect(a2.revision).toBeTruthy();
+    expect(a2.revision!.id).not.toBe(a1.revision!.id);
+    expect(a2.revision!.sha256).toBe(a1.revision!.sha256);
+    expect(a2.event!.beforeRevisionId).toBe(b1.revision!.id);
+    expect(a2.revision!.previousRevisionId).toBe(b1.revision!.id);
+
+    const events = (await store.listEvents("p1")).filter(
+      (e) => e.relativePath === "cycle.md",
+    );
+    expect(events).toHaveLength(3);
+
+    // Duplicate observation of current tip A: idempotent, no new event
+    const again = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "modified",
+      relativePath: "cycle.md",
+      content: aBytes,
+      observedAt: "2026-07-16T16:03:00.000Z",
+    });
+    expect(again.event).toBeUndefined();
+    expect(again.revision!.id).toBe(a2.revision!.id);
+    const events2 = (await store.listEvents("p1")).filter(
+      (e) => e.relativePath === "cycle.md",
+    );
+    expect(events2).toHaveLength(3);
+  });
+
+  it("rejects supported WhyClaim when quote not in revision bytes", async () => {
+    const v1 = new TextEncoder().encode("hello world");
+    const add = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "added",
+      relativePath: "why.md",
+      content: v1,
+      observedAt: "2026-07-16T17:00:00.000Z",
+    });
+    const bad = bodyFor(add.revision!.id, "why.md", "not-in-file");
+    await expect(
+      store.saveCandidate(
+        {
+          id: "run-why",
+          projectId: "p1",
+          matterId: "m1",
+          trigger: "retry",
+          eventIds: [add.event!.id],
+          status: "queued",
+          attempt: 1,
+          createdAt: "2026-07-16T17:01:00.000Z",
+          updatedAt: "2026-07-16T17:01:00.000Z",
+        },
+        bad,
+      ),
+    ).rejects.toThrow(/quote not found/i);
   });
 });

@@ -2,6 +2,7 @@
  * MVP-V0 Task 2: Project Memory domain contract (PRD §4, Lead amendment).
  * Immutable understanding revisions; head moves; split writer ports.
  */
+import { createHash } from "node:crypto";
 
 export type SourceGrant = {
   id: string;
@@ -14,11 +15,16 @@ export type SourceGrant = {
 };
 
 export type OriginalRevision = {
-  /** sha256:<hex> */
+  /**
+   * Occurrence identity for this path/grant/version (not global content hash).
+   * Format: `orev:<hex>` derived from project+grant+path+contentSha+previousOccurrence+tombstone.
+   * CAS blob identity remains `sha256` field only.
+   */
   id: string;
   projectId: string;
   grantId: string;
   relativePath: string;
+  /** Content-addressed blob identity (CAS key). Multiple revisions may share one sha256. */
   sha256: string;
   sizeBytes: number;
   observedAt: string;
@@ -237,11 +243,36 @@ export interface AgentModelLoop {
   propose(input: MatterStateReconstructionInput): Promise<UnderstandingBody>;
 }
 
+/** @deprecated Content SHA is not a revision occurrence id. Prefer makeOccurrenceRevisionId. */
 export function revisionIdFromSha256(sha256: string): string {
   const hex = sha256.replace(/^sha256:/, "").toLowerCase();
   return `sha256:${hex}`;
 }
 
 export function sha256FromRevisionId(id: string): string {
-  return id.replace(/^sha256:/, "").toLowerCase();
+  return id.replace(/^(sha256:|orev:)/, "").toLowerCase();
+}
+
+/**
+ * Stable occurrence id: unique per project/grant/path/content/previous tip/tombstone.
+ * Same content on two paths → distinct ids; A→B→A (prev differs) → distinct ids.
+ */
+export function makeOccurrenceRevisionId(input: {
+  projectId: string;
+  grantId: string;
+  relativePath: string;
+  contentSha256: string;
+  previousRevisionId?: string | null;
+  tombstone: boolean;
+}): string {
+  const material = [
+    input.projectId,
+    input.grantId,
+    input.relativePath.replace(/\\/g, "/"),
+    input.contentSha256.replace(/^sha256:/, "").toLowerCase(),
+    input.previousRevisionId ?? "",
+    input.tombstone ? "1" : "0",
+  ].join("\0");
+  const hex = createHash("sha256").update(material).digest("hex");
+  return `orev:${hex}`;
 }

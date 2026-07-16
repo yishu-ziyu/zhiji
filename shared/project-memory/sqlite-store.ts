@@ -33,7 +33,7 @@ import type {
   UnderstandingBody,
   UnderstandingRevision,
 } from "./types";
-import { revisionIdFromSha256, sha256FromRevisionId } from "./types";
+import { makeOccurrenceRevisionId, sha256FromRevisionId } from "./types";
 
 export type SqliteProjectMemoryOptions = {
   dataDir: string;
@@ -96,29 +96,39 @@ function payloadHash(kind: string, aggregateId: string, payload: unknown): strin
     .digest("hex");
 }
 
+/**
+ * Dedupe includes previous tip occurrence so A→B→A is not swallowed,
+ * while re-observing the same tip+bytes remains the same key (plus tip short-circuit).
+ */
 export function defaultDedupeKey(
   signal: ObservationSignal,
-  tipSha?: string,
+  opts: {
+    contentSha256?: string;
+    previousRevisionId?: string | null;
+  } = {},
 ): string {
   if (signal.dedupeKey?.trim()) return signal.dedupeKey.trim();
   const pathKey = signal.relativePath.replace(/\\/g, "/");
+  const prev = opts.previousRevisionId ?? "";
   if (signal.kind === "deleted") {
     return [
       signal.projectId,
       signal.grantId,
       "deleted",
       pathKey,
-      tipSha ?? "none",
+      opts.contentSha256 ?? "none",
+      prev,
     ].join("|");
   }
   const sha =
-    tipSha ?? (signal.content ? sha256Hex(signal.content) : "empty");
+    opts.contentSha256 ??
+    (signal.content ? sha256Hex(signal.content) : "empty");
   return [
     signal.projectId,
     signal.grantId,
-    signal.kind,
     pathKey,
     sha,
+    prev,
     signal.previousPath ?? "",
   ].join("|");
 }
@@ -193,9 +203,10 @@ export class SqliteProjectMemoryStore
         size_bytes INTEGER NOT NULL,
         observed_at TEXT NOT NULL,
         previous_revision_id TEXT,
-        tombstone INTEGER NOT NULL DEFAULT 0,
-        UNIQUE(project_id, grant_id, relative_path, sha256, tombstone)
+        tombstone INTEGER NOT NULL DEFAULT 0
       );
+      -- Occurrence id is PRIMARY KEY; same content may appear on many paths
+      -- and may return after A→B→A (same sha256, different previous_revision_id).
 
       CREATE TABLE IF NOT EXISTS change_events (
         id TEXT PRIMARY KEY,
@@ -579,13 +590,60 @@ export class SqliteProjectMemoryStore
         throw new Error(`evidence revision missing or foreign: ${rid}`);
       }
     }
-    for (const claim of [body.now, body.then, ...body.changed, ...body.why]) {
-      const anchors =
-        "evidence" in claim ? claim.evidence : ([] as { revisionId: string }[]);
-      for (const a of anchors) {
+    for (const claim of [body.now, body.then, ...body.changed]) {
+      for (const a of claim.evidence) {
         const rev = this.getRevision(a.revisionId);
         if (!rev || rev.projectId !== projectId) {
           throw new Error(`anchor revision missing or foreign: ${a.revisionId}`);
+        }
+      }
+    }
+    this.validateSupportedWhyClaims(body, projectId);
+  }
+
+  /**
+   * supported WhyClaim must have complete anchors whose quote exists exactly
+   * in the referenced revision bytes. False "supported" must not persist.
+   */
+  private validateSupportedWhyClaims(
+    body: UnderstandingBody,
+    projectId: string,
+  ): void {
+    for (const w of body.why) {
+      if (w.status !== "supported") continue;
+      if (!w.evidence.length) {
+        throw new Error("supported WhyClaim requires at least one evidence anchor");
+      }
+      for (const a of w.evidence) {
+        if (!a.revisionId?.trim()) {
+          throw new Error("supported WhyClaim anchor requires revisionId");
+        }
+        if (!a.relativePath?.trim()) {
+          throw new Error("supported WhyClaim anchor requires relativePath");
+        }
+        if (!a.quote?.trim()) {
+          throw new Error("supported WhyClaim anchor requires nonempty quote");
+        }
+        if (!a.lastVerifiedAt?.trim()) {
+          throw new Error("supported WhyClaim anchor requires lastVerifiedAt");
+        }
+        const rev = this.getRevision(a.revisionId);
+        if (!rev || rev.projectId !== projectId) {
+          throw new Error(
+            `supported WhyClaim anchor revision missing or foreign: ${a.revisionId}`,
+          );
+        }
+        const bytes = this.cas.read(rev.sha256);
+        if (!bytes) {
+          throw new Error(
+            `supported WhyClaim anchor blob missing for ${a.revisionId}`,
+          );
+        }
+        const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+        if (!text.includes(a.quote)) {
+          throw new Error(
+            "supported WhyClaim quote not found in revision bytes",
+          );
         }
       }
     }
@@ -618,19 +676,7 @@ export class SqliteProjectMemoryStore
       throw new Error("CAS write missing after put");
     }
 
-    const revId = revisionIdFromSha256(casResult.sha256);
-    const dedupeKey = defaultDedupeKey(
-      { ...signal, relativePath },
-      casResult.sha256,
-    );
-    const existing = this.findEventByDedupe(dedupeKey);
-    if (existing) {
-      const rev = existing.afterRevisionId
-        ? this.getRevision(existing.afterRevisionId)
-        : undefined;
-      return { event: existing, revision: rev ?? undefined };
-    }
-
+    // Idempotent re-observation of current tip bytes (no cycle).
     if (tip && !tip.tombstone && tip.sha256 === casResult.sha256) {
       return { revision: tip };
     }
@@ -641,6 +687,29 @@ export class SqliteProjectMemoryStore
         : tip?.tombstone
           ? tip.previousRevisionId
           : undefined;
+
+    const revId = makeOccurrenceRevisionId({
+      projectId: signal.projectId,
+      grantId: signal.grantId,
+      relativePath,
+      contentSha256: casResult.sha256,
+      previousRevisionId: beforeId,
+      tombstone: false,
+    });
+    const dedupeKey = defaultDedupeKey(
+      { ...signal, relativePath },
+      {
+        contentSha256: casResult.sha256,
+        previousRevisionId: beforeId,
+      },
+    );
+    const existing = this.findEventByDedupe(dedupeKey);
+    if (existing) {
+      const rev = existing.afterRevisionId
+        ? this.getRevision(existing.afterRevisionId)
+        : undefined;
+      return { event: existing, revision: rev ?? undefined };
+    }
 
     const revision: OriginalRevision = {
       id: revId,
@@ -744,7 +813,10 @@ export class SqliteProjectMemoryStore
     if (!tip || tip.tombstone) {
       const dedupeKey = defaultDedupeKey(
         { ...signal, relativePath },
-        tip?.sha256,
+        {
+          contentSha256: tip?.sha256,
+          previousRevisionId: tip?.id,
+        },
       );
       const existing = this.findEventByDedupe(dedupeKey);
       if (existing) {
@@ -764,9 +836,20 @@ export class SqliteProjectMemoryStore
       throw new Error("cannot tombstone: last blob missing");
     }
 
+    const tombstoneId = makeOccurrenceRevisionId({
+      projectId: signal.projectId,
+      grantId: signal.grantId,
+      relativePath,
+      contentSha256: lastSha,
+      previousRevisionId: lastLiveId,
+      tombstone: true,
+    });
     const dedupeKey = defaultDedupeKey(
       { ...signal, relativePath },
-      lastSha,
+      {
+        contentSha256: lastSha,
+        previousRevisionId: lastLiveId,
+      },
     );
     const existing = this.findEventByDedupe(dedupeKey);
     if (existing) {
@@ -778,12 +861,7 @@ export class SqliteProjectMemoryStore
       };
     }
 
-    const tombstoneMaterial = new TextEncoder().encode(
-      `tombstone:${lastSha}:${relativePath}:${signal.observedAt}`,
-    );
-    this.cas.put(tombstoneMaterial);
-    const tombstoneId = revisionIdFromSha256(sha256Hex(tombstoneMaterial));
-
+    // CAS blob stays last live content; tombstone occurrence is a separate id.
     const revision: OriginalRevision = {
       id: tombstoneId,
       projectId: signal.projectId,
