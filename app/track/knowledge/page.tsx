@@ -114,6 +114,8 @@ export default function KnowledgePage() {
       kind: string;
       updatedAt: string;
       sizeBytes?: number;
+      citationCardId?: string;
+      citationTitle?: string;
     }>
   >([]);
   const [materialView, setMaterialView] = useState<{
@@ -345,7 +347,15 @@ export default function KnowledgePage() {
     setMaterialView(null);
     try {
       const data = await apiJson<{
-        materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
+        materials: Array<{
+          id: string;
+          name: string;
+          kind: string;
+          updatedAt: string;
+          sizeBytes?: number;
+          citationCardId?: string;
+          citationTitle?: string;
+        }>;
       }>(`/api/knowledge/projects/${projectId}/materials`);
       setMaterials(data.materials);
     } catch (nextError) {
@@ -1118,6 +1128,36 @@ export default function KnowledgePage() {
     }
   }
 
+  /** B-3: rule-based material relation proposals for current project. */
+  async function handleProposeMaterialRelations() {
+    if (!projectId) return;
+    const mutation = beginMutation();
+    try {
+      const data = await apiJson<{ count: number; items: unknown[] }>(
+        "/api/knowledge/relations/extract",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId }),
+        },
+      );
+      if (!mutationIsCurrent(mutation)) return;
+      const focus = snapshot?.focus ?? { kind: "project" as const, id: projectId };
+      await loadSnapshot(mutation.projectId, focus);
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setNotice(
+        data.count > 0
+          ? `已提议 ${data.count} 条材料关系（均带来源句，可确认或否决）`
+          : "未找到有依据的材料关系（不瞎连）",
+      );
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setBusy(false);
+      setError(nextError instanceof Error ? nextError.message : "提议关系失败");
+    }
+  }
+
   async function handleReviewRelation(
     relationId: string,
     status: "confirmed" | "rejected",
@@ -1608,6 +1648,7 @@ export default function KnowledgePage() {
             onAddComment={handleAddComment}
             onCreateRelation={handleCreateRelation}
             onReviewRelation={handleReviewRelation}
+            onProposeMaterialRelations={handleProposeMaterialRelations}
             onRunAgent={handleRunAgent}
             onCheckpoint={handleCheckpoint}
           />
@@ -1805,6 +1846,8 @@ export default function KnowledgePage() {
                       key={file.id}
                       type="button"
                       data-testid={`material-file-${file.id}`}
+                      data-citation-card-id={file.citationCardId || ""}
+                      data-material-id={file.id}
                       onClick={() => void openMaterialFile(file.id)}
                       style={{
                         textAlign: "left",
@@ -1815,9 +1858,12 @@ export default function KnowledgePage() {
                         cursor: "pointer",
                       }}
                     >
-                      <strong style={{ fontSize: 12 }}>{file.name}</strong>
+                      <strong style={{ fontSize: 12 }}>
+                        {file.citationTitle || file.name}
+                      </strong>
                       <small style={{ display: "block", color: "#81848a" }}>
-                        {materialKindLabel(file.kind)}
+                        可引用 · {materialKindLabel(file.kind)}
+                        {file.citationCardId ? "" : ""}
                       </small>
                     </button>
                   ))

@@ -5,9 +5,11 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json().catch(() => ({}))) as {
       cardId?: string;
+      projectId?: string;
     };
     const result = extractRelations({
       cardId: body.cardId,
+      projectId: body.projectId,
     });
     return NextResponse.json({
       count: result.count,

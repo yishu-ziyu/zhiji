@@ -442,6 +442,198 @@ export function extractRelationCandidates(
     }
   }
 
+  // B-3: material-backed cards (sourceFileId) — only evidence-backed links.
+  for (const candidate of extractMaterialRelationCandidates(cards, existing)) {
+    push(candidate);
+  }
+
+  return out;
+}
+
+/** Tokenize for material overlap; skip short / noise tokens. */
+export function significantMaterialTokens(text: string): string[] {
+  const raw = text ?? "";
+  const tokens = new Set<string>();
+  for (const m of raw.match(/[\u4e00-\u9fff]{2,12}/g) ?? []) {
+    tokens.add(m);
+  }
+  for (const m of raw.match(/[A-Za-z][A-Za-z0-9_-]{3,24}/g) ?? []) {
+    tokens.add(m.toLowerCase());
+  }
+  // Drop ultra-common Chinese fillers that would cause random links.
+  for (const noise of [
+    "因此",
+    "所以",
+    "我们",
+    "你们",
+    "他们",
+    "这个",
+    "那个",
+    "可以",
+    "没有",
+    "一个",
+    "进行",
+    "通过",
+    "如果",
+    "已经",
+    "需要",
+    "项目",
+    "材料",
+    "文件",
+    "内容",
+  ]) {
+    tokens.delete(noise);
+  }
+  return [...tokens];
+}
+
+function materialLabel(card: KnowledgeCard): string {
+  const fromFile = card.sourceFileId?.split("/").pop()?.trim() ?? "";
+  const title = card.title?.trim() ?? "";
+  return fromFile || title;
+}
+
+/**
+ * B-3 soft: propose relations among material-backed cards (sourceFileId).
+ * Id alignment (pending G3-B1-done): material.id = relativePath; card.sourceFileId = material.id;
+ * endpoints remain card ids so existing relation graph works.
+ *
+ * Only runs pairing when a project has ≥3 material cards.
+ * Never invents links without a quotable evidence sentence.
+ */
+export function extractMaterialRelationCandidates(
+  cards: KnowledgeCard[],
+  existing: KnowledgeRelation[],
+): CreateRelationInput[] {
+  const byProject = new Map<string, KnowledgeCard[]>();
+  for (const card of cards) {
+    if (!card.sourceFileId?.trim()) continue;
+    const list = byProject.get(card.projectId) ?? [];
+    list.push(card);
+    byProject.set(card.projectId, list);
+  }
+
+  const existingKeys = new Set(
+    existing
+      .filter((r) => r.status !== "rejected")
+      .map((r) => relationDedupKey(r)),
+  );
+  const out: CreateRelationInput[] = [];
+  const push = (input: CreateRelationInput) => {
+    try {
+      const cardIds = new Set(cards.map((c) => c.id));
+      const shape = assertRelationShape(input, cardIds);
+      const key = relationDedupKey(shape);
+      if (existingKeys.has(key)) return;
+      if (
+        out.some(
+          (c) =>
+            relationDedupKey({
+              fromCardId: c.fromCardId,
+              toCardId: c.toCardId,
+              relationType: c.relationType,
+              evidenceSentence: c.evidenceSentence,
+            }) === key,
+        )
+      ) {
+        return;
+      }
+      out.push({
+        ...input,
+        status: "suggested",
+        source: "rule",
+        createdBy: input.createdBy ?? "system:rule:material",
+      });
+    } catch {
+      // skip
+    }
+  };
+
+  for (const [, materialCards] of byProject) {
+    if (materialCards.length < 3) continue;
+
+    // R-material-label-ref: body quotes another material's file/title (length≥2).
+    for (const card of materialCards) {
+      for (const other of materialCards) {
+        if (other.id === card.id) continue;
+        const label = materialLabel(other);
+        if (!label || label.length < 2) continue;
+        if (!card.content.includes(label) && !card.content.includes(other.id)) {
+          continue;
+        }
+        const sentence =
+          card.content
+            .split(/[。！？\n]/)
+            .map((s) => s.trim())
+            .find((s) => s.includes(label) || s.includes(other.id)) ||
+          `正文提到材料「${label}」`;
+        push({
+          fromCardId: card.id,
+          toCardId: other.id,
+          relationType: "mentions",
+          evidenceSentence: sentence,
+          source: "rule",
+          meta: {
+            rule: "R-material-label-ref",
+            fromMaterialId: card.sourceFileId,
+            toMaterialId: other.sourceFileId,
+          },
+        });
+      }
+    }
+
+    // R-material-shared-token: both bodies share a significant token; quote both sides.
+    for (let i = 0; i < materialCards.length; i++) {
+      for (let j = i + 1; j < materialCards.length; j++) {
+        const a = materialCards[i];
+        const b = materialCards[j];
+        const tokensA = new Set(significantMaterialTokens(a.content));
+        const shared = significantMaterialTokens(b.content).filter((t) =>
+          tokensA.has(t),
+        );
+        if (shared.length === 0) continue;
+        // Prefer longer tokens (more specific evidence).
+        shared.sort((x, y) => y.length - x.length);
+        const token = shared[0];
+        if (!token || token.length < 2) continue;
+        const sentenceA =
+          a.content
+            .split(/[。！？\n]/)
+            .map((s) => s.trim())
+            .find((s) => s.toLowerCase().includes(token.toLowerCase())) ||
+          a.content.slice(0, 80);
+        const sentenceB =
+          b.content
+            .split(/[。！？\n]/)
+            .map((s) => s.trim())
+            .find((s) => s.toLowerCase().includes(token.toLowerCase())) ||
+          b.content.slice(0, 80);
+        if (!sentenceA.includes(token) && !sentenceA.toLowerCase().includes(token)) {
+          // token may be lowercased English; still require presence in at least one original sentence path
+        }
+        const evidence = normalizeEvidenceSentence(
+          `双方均出现「${token}」：${sentenceA} ｜ ${sentenceB}`,
+        );
+        if (!evidence.includes(token) && !evidence.toLowerCase().includes(token)) {
+          continue;
+        }
+        push({
+          fromCardId: a.id,
+          toCardId: b.id,
+          relationType: "same_topic",
+          evidenceSentence: evidence,
+          source: "rule",
+          meta: {
+            rule: "R-material-shared-token",
+            token,
+            fromMaterialId: a.sourceFileId,
+            toMaterialId: b.sourceFileId,
+          },
+        });
+      }
+    }
+  }
+
   return out;
 }
 

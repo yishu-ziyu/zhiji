@@ -58,6 +58,8 @@ type Props = {
     relationId: string,
     status: "confirmed" | "rejected",
   ) => Promise<void>;
+  /** B-3: propose material relations for current project (rule extract). */
+  onProposeMaterialRelations?: () => Promise<void>;
   onRunAgent: () => Promise<void>;
   onCheckpoint: (input: {
     goal: string;
@@ -103,6 +105,7 @@ export function ProjectInspector({
   onAddComment,
   onCreateRelation,
   onReviewRelation,
+  onProposeMaterialRelations,
   onRunAgent,
   onCheckpoint,
 }: Props) {
@@ -509,17 +512,48 @@ export function ProjectInspector({
                 );
               })
             )}
+            {onProposeMaterialRelations ? (
+              <div style={{ padding: "6px 0 10px" }}>
+                <button
+                  type="button"
+                  data-testid="propose-material-relations"
+                  disabled={busy}
+                  onClick={() => void onProposeMaterialRelations()}
+                  title="仅在有依据时提议；无依据不瞎连"
+                >
+                  <Link2 size={15} />
+                  提议材料关系
+                </button>
+                <p className={styles.emptyCopy} style={{ marginTop: 6 }}>
+                  ≥3 份材料时，按正文/文件名依据提议；可确认或否决。
+                </p>
+              </div>
+            ) : null}
             {relationEdges.length > 0 ? (
               <div className={styles.relationDetails} data-testid="relation-details">
                 <div className={styles.listHeading}><h3>材料关系</h3><span>{relationEdges.length}</span></div>
                 {relationEdges.map((edge) => (
-                  <article key={edge.id} data-status={edge.status}>
+                  <article key={edge.id} data-status={edge.status} data-testid={`relation-edge-${edge.id}`}>
                     <header><strong>{edge.label}</strong><span>{edge.status === "suggested" ? "待确认" : "已确认"}</span></header>
                     <p>{edge.evidenceSentence}</p>
                     {edge.status === "suggested" && edge.relationId ? (
                       <div>
-                        <button type="button" disabled={busy} onClick={() => onReviewRelation(edge.relationId!, "confirmed")}>确认关系</button>
-                        <button type="button" disabled={busy} onClick={() => onReviewRelation(edge.relationId!, "rejected")}>否决关系</button>
+                        <button
+                          type="button"
+                          data-testid={`relation-confirm-${edge.relationId}`}
+                          disabled={busy}
+                          onClick={() => onReviewRelation(edge.relationId!, "confirmed")}
+                        >
+                          确认关系
+                        </button>
+                        <button
+                          type="button"
+                          data-testid={`relation-reject-${edge.relationId}`}
+                          disabled={busy}
+                          onClick={() => onReviewRelation(edge.relationId!, "rejected")}
+                        >
+                          否决关系
+                        </button>
                       </div>
                     ) : null}
                   </article>

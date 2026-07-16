@@ -835,6 +835,44 @@ export function getCard(id: string): KnowledgeCard | null {
   return card ? copyCard(card) : null;
 }
 
+/** B-1: find the citation card bound to a project material file id. */
+export function getCardBySourceFileId(
+  projectId: string,
+  sourceFileId: string,
+): KnowledgeCard | null {
+  const fileId = sourceFileId.trim();
+  if (!fileId) return null;
+  for (const card of listCards({ projectId })) {
+    if (card.sourceFileId === fileId) return card;
+  }
+  return null;
+}
+
+/**
+ * B-1: ensure a real KnowledgeCard cites this material (stable material id = sourceFileId).
+ * Reuses existing card; never invents materials without a real file id.
+ */
+export function ensureMaterialCitationCard(input: {
+  projectId: string;
+  materialId: string;
+  title: string;
+  contentSummary: string;
+}): KnowledgeCard {
+  if (!getProject(input.projectId)) throw new Error("项目不存在");
+  const materialId = input.materialId.trim();
+  if (!materialId) throw new Error("材料 ID 无效");
+  const existing = getCardBySourceFileId(input.projectId, materialId);
+  if (existing) return existing;
+  return addCard({
+    projectId: input.projectId,
+    title: input.title.trim() || materialId,
+    content: input.contentSummary.trim() || `材料：${materialId}`,
+    source: "doc",
+    sourceFileId: materialId,
+    tags: ["material", "citable"],
+  });
+}
+
 export function addCard(input: NewCardInput): KnowledgeCard {
   const content = input.content?.trim();
   if (!content) throw new Error("卡片内容不能为空");
@@ -1648,8 +1686,11 @@ export function getEvidenceIsland(
 
 export function extractRelations(options?: {
   cardId?: string;
+  projectId?: string;
 }): { created: KnowledgeRelation[]; count: number } {
-  const pool = listCards();
+  const pool = options?.projectId
+    ? listCards({ projectId: options.projectId })
+    : listCards();
   const existing = [...workingRelations().values()];
   const candidates = extractRelationCandidates(pool, existing).filter((c) => {
     if (!options?.cardId) return true;
@@ -1663,7 +1704,7 @@ export function extractRelations(options?: {
           ...c,
           status: "suggested",
           source: "rule",
-          createdBy: "system:rule",
+          createdBy: c.createdBy ?? "system:rule",
         }),
       );
     } catch {
