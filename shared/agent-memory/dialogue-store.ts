@@ -1,10 +1,25 @@
 /**
  * Thin Dialogue Memory: session turns + open tool intent.
  * Never writes Project Memory understanding heads.
+ *
+ * Strangler (PR-11): default JSON; set DIALOGUE_STORE=sqlite to write/read
+ * shared/agent-memory/dialogue-sqlite-store.ts.
  */
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  appendDialogueMessage as appendDialogueMessageSqlite,
+  closeDialogueSession as closeDialogueSessionSqlite,
+  getDialogueSession as getDialogueSessionSqlite,
+  isDialogueSqliteMode,
+  listDialogueMessages as listDialogueMessagesSqlite,
+  listDialogueSessions as listDialogueSessionsSqlite,
+  listRecentProjectDialogue as listRecentProjectDialogueSqlite,
+  openDialogueSession as openDialogueSessionSqlite,
+  resetDialogueSqliteStoreForTests,
+  setOpenToolIntent as setOpenToolIntentSqlite,
+} from "./dialogue-sqlite-store";
 import type {
   DialogueMessage,
   DialogueRole,
@@ -63,6 +78,9 @@ export function openDialogueSession(input: {
   matterId?: string;
   title?: string;
 }): DialogueSession {
+  if (isDialogueSqliteMode()) {
+    return openDialogueSessionSqlite(input);
+  }
   const projectId = input.projectId?.trim();
   if (!projectId) throw new Error("projectId required");
   const now = new Date().toISOString();
@@ -82,11 +100,17 @@ export function openDialogueSession(input: {
 }
 
 export function getDialogueSession(sessionId: string): DialogueSession | null {
+  if (isDialogueSqliteMode()) {
+    return getDialogueSessionSqlite(sessionId);
+  }
   const s = readJsonMap<DialogueSession>(sessionsPath()).get(sessionId);
   return s ? copySession(s) : null;
 }
 
 export function listDialogueSessions(projectId: string): DialogueSession[] {
+  if (isDialogueSqliteMode()) {
+    return listDialogueSessionsSqlite(projectId);
+  }
   const id = projectId?.trim();
   if (!id) return [];
   return [...readJsonMap<DialogueSession>(sessionsPath()).values()]
@@ -96,6 +120,9 @@ export function listDialogueSessions(projectId: string): DialogueSession[] {
 }
 
 export function closeDialogueSession(sessionId: string): DialogueSession | null {
+  if (isDialogueSqliteMode()) {
+    return closeDialogueSessionSqlite(sessionId);
+  }
   const sessions = readJsonMap<DialogueSession>(sessionsPath());
   const s = sessions.get(sessionId);
   if (!s) return null;
@@ -111,6 +138,9 @@ export function setOpenToolIntent(
   sessionId: string,
   intent: OpenToolIntent | null,
 ): DialogueSession | null {
+  if (isDialogueSqliteMode()) {
+    return setOpenToolIntentSqlite(sessionId, intent);
+  }
   const sessions = readJsonMap<DialogueSession>(sessionsPath());
   const s = sessions.get(sessionId);
   if (!s || s.status !== "open") return null;
@@ -129,6 +159,9 @@ export function appendDialogueMessage(input: {
   analysisRunId?: string;
   milestone?: boolean;
 }): DialogueMessage {
+  if (isDialogueSqliteMode()) {
+    return appendDialogueMessageSqlite(input);
+  }
   const sessions = readJsonMap<DialogueSession>(sessionsPath());
   const session = sessions.get(input.sessionId);
   if (!session) throw new Error("dialogue session not found");
@@ -163,6 +196,9 @@ export function listDialogueMessages(
   sessionId: string,
   limit = 100,
 ): DialogueMessage[] {
+  if (isDialogueSqliteMode()) {
+    return listDialogueMessagesSqlite(sessionId, limit);
+  }
   return [...readJsonMap<DialogueMessage>(messagesPath()).values()]
     .filter((m) => m.sessionId === sessionId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -175,6 +211,9 @@ export function listRecentProjectDialogue(
   projectId: string,
   limit = 40,
 ): DialogueMessage[] {
+  if (isDialogueSqliteMode()) {
+    return listRecentProjectDialogueSqlite(projectId, limit);
+  }
   const id = projectId?.trim();
   if (!id) return [];
   return [...readJsonMap<DialogueMessage>(messagesPath()).values()]
@@ -188,6 +227,11 @@ export function resetDialogueStoreForTests(): void {
   try {
     if (fs.existsSync(sessionsPath())) fs.unlinkSync(sessionsPath());
     if (fs.existsSync(messagesPath())) fs.unlinkSync(messagesPath());
+  } catch {
+    // ignore
+  }
+  try {
+    resetDialogueSqliteStoreForTests();
   } catch {
     // ignore
   }

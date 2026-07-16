@@ -30,6 +30,14 @@ export {
 } from "./dialogue-store";
 
 export {
+  DialogueJsonCorruptError,
+  isDialogueSqliteMode,
+  migrateJsonDialogueToSqlite,
+  readDialogueJsonMapStrict,
+  type MigrateJsonDialogueReport,
+} from "./dialogue-sqlite-store";
+
+export {
   getUserPreferences,
   patchUserPreferences,
   resetUserPreferencesForTests,
@@ -61,11 +69,14 @@ export {
 } from "./chat-context";
 
 export {
+  confirmOwnerProjectStatement,
   listOwnerProjectStatements,
   looksLikeProjectUnderstanding,
   mergeOwnerStatementsIntoUnderstandingBody,
+  proposeOwnerProjectStatement,
   recordOwnerProjectStatement,
   resetOwnerStatementsForTests,
   withdrawOwnerProjectStatement,
   type OwnerProjectStatement,
+  type OwnerStatementStatus,
 } from "./owner-statements";

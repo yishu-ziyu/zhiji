@@ -14,6 +14,7 @@ import {
   ProjectScopeError,
   requireProjectId,
 } from "@/shared/knowledge/project-scope";
+import { checkLocalTrustFromRequest } from "@/shared/security/local-session";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -35,6 +36,10 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 }
 
 export async function POST(req: NextRequest, ctx: Ctx) {
+  const trust = checkLocalTrustFromRequest(req);
+  if (!trust.ok) {
+    return NextResponse.json({ error: trust.error }, { status: trust.status });
+  }
   try {
     const { id } = await ctx.params;
     const projectId = requireProjectId(id);
@@ -82,9 +87,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     }
 
     if (action === "message") {
-      if (!body.sessionId || !body.role || !body.content) {
+      if (!body.sessionId || !body.content) {
         return NextResponse.json(
-          { error: "sessionId, role, content required" },
+          { error: "sessionId, content required" },
+          { status: 400 },
+        );
+      }
+      // PR-08: clients may only submit user turns. Agent/system roles are server-authored.
+      if (body.role && body.role !== "user") {
+        return NextResponse.json(
+          {
+            error:
+              "客户端只能提交 role=user；agent/system 消息由服务端写入",
+          },
           { status: 400 },
         );
       }
@@ -94,7 +109,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       }
       const message = appendDialogueMessage({
         sessionId: body.sessionId,
-        role: body.role,
+        role: "user",
         content: body.content,
         milestone: body.milestone,
         refRevisionIds: body.refRevisionIds,

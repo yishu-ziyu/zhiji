@@ -51,7 +51,8 @@ describe("buildAgentChatContext + format for model loop", () => {
     statements.recordOwnerProjectStatement({
       projectId: project.id,
       text: "我们这个项目的目标是先把画布跑通",
-      source: "chat",
+      source: "manual",
+      confirmed: true,
     });
 
     const pack = toAgentChatContextPack(
