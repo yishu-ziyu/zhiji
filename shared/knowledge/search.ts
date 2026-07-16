@@ -4,6 +4,7 @@ import type {
   KnowledgeSearchHit,
 } from "@/shared/types/knowledge";
 import { listCards } from "./repository";
+import { ProjectScopeError, requireProjectId } from "./project-scope";
 
 function tokenize(text: string): string[] {
   return text
@@ -61,14 +62,24 @@ function matchesFilters(
   return true;
 }
 
-/** Hybrid-ish local search: keyword + tag boost. No vector DB required for demo. */
+/**
+ * Project-scoped keyword search (T-19).
+ * Requires filters.projectId — never searches all projects by default.
+ */
 export function searchKnowledge(
   query: string,
   filters?: KnowledgeSearchFilters,
 ): KnowledgeSearchHit[] {
+  if (!filters?.projectId?.trim()) {
+    throw new ProjectScopeError("projectId 必填");
+  }
+  const projectId = requireProjectId(filters.projectId);
   const tokens = tokenize(query ?? "");
   const limit = filters?.limit ?? 20;
-  const cards = listCards().filter((c) => matchesFilters(c, filters));
+  const scoped: KnowledgeSearchFilters = { ...filters, projectId };
+  const cards = listCards({ projectId }).filter((c) =>
+    matchesFilters(c, scoped),
+  );
 
   const hits: KnowledgeSearchHit[] = cards
     .map((card) => ({
