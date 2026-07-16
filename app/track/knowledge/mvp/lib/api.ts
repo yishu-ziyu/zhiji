@@ -163,13 +163,42 @@ export type MvpBootstrap = {
   matter: Matter;
 };
 
+/** GET /api/knowledge/project-memory/connections — minimal recent active connection. */
+export type RecentConnectionResponse = {
+  connection: null | {
+    projectId: string;
+    grantId: string;
+    folderName: string;
+    rootPath: string;
+    matterId?: string;
+  };
+};
+
+/** POST /api/knowledge/project-memory/folder-picker */
+export type FolderPickerResponse =
+  | { cancelled: true }
+  | {
+      cancelled?: false;
+      selectionId: string;
+      folderName: string;
+      rootPath: string;
+      permissionBoundary: string;
+    };
+
+export type ConnectConnectionBody =
+  | { selectionId: string }
+  | { projectId: string; grantId: string };
+
 export type ContractApi = {
-  bootstrapExisting(projectId?: string): Promise<MvpBootstrap | null>;
-  connectGrant(projectId: string, rootPath: string, includePathPrefixes: string[]): Promise<{
-    grant: SourceGrant;
-    watchSet: MatterWatchSet;
-    matter: Matter;
-  }>;
+  /** Minimal recent active connection for Continue (not auto-connect). */
+  getRecentConnection(): Promise<RecentConnectionResponse["connection"]>;
+  /** Native folder picker. Cancel returns cancelled; no grant is created. */
+  openFolderPicker(): Promise<FolderPickerResponse>;
+  /**
+   * Bootstrap grant/matter/watch from either a picker selectionId
+   * or a persisted projectId+grantId. UI must never invent rootPath.
+   */
+  connectConnection(body: ConnectConnectionBody): Promise<MvpBootstrap>;
   getMemory(projectId: string, matterId: string): Promise<MemoryResponse>;
   updateWatchSet(
     projectId: string,
@@ -476,13 +505,38 @@ function fixtureMemory(): MemoryResponse {
   });
 }
 
+const fixtureSelectionId = "selection-fixture-product-exploration";
+
+function fixtureBootstrap(): MvpBootstrap {
+  return clone({
+    projectId,
+    grant: fixtureGrant,
+    watchSet: fixtureWatchSet,
+    matter: fixtureMatter,
+  });
+}
+
 function createFixtureApi(): ContractApi {
   return {
-    async bootstrapExisting() {
+    async getRecentConnection() {
       return null;
     },
-    async connectGrant() {
-      return clone({ grant: fixtureGrant, watchSet: fixtureWatchSet, matter: fixtureMatter });
+    async openFolderPicker() {
+      return {
+        selectionId: fixtureSelectionId,
+        folderName: "product-exploration",
+        rootPath: fixtureGrant.rootPath,
+        permissionBoundary: fixtureGrant.rootPath,
+      };
+    },
+    async connectConnection(body) {
+      if ("selectionId" in body && body.selectionId !== fixtureSelectionId) {
+        throw new Error("未知的 fixture selectionId");
+      }
+      if ("projectId" in body && body.projectId !== projectId) {
+        throw new Error("未知的 fixture projectId");
+      }
+      return fixtureBootstrap();
     },
     async getMemory() {
       return fixtureMemory();
@@ -600,48 +654,56 @@ function projectBackendEvents(
   };
 }
 
+function bootstrapFromConnectionPayload(
+  data: GrantBootstrapResponse & MvpBootstrap & {
+    projectId?: string;
+    grant?: SourceGrant;
+    matter?: Matter;
+    watchSet?: MatterWatchSet;
+  },
+): MvpBootstrap {
+  const grant = data.grant;
+  const matter = data.matter ?? data.defaultMatter ?? data.bootstrap?.matter;
+  const watchSet = data.watchSet ?? data.defaultWatchSet ?? data.bootstrap?.watchSet;
+  const nextProjectId =
+    data.projectId ??
+    data.bootstrap?.projectId ??
+    grant?.projectId ??
+    matter?.projectId;
+  if (!grant || !matter || !watchSet || !nextProjectId) {
+    throw new Error("connections API 未返回完整 grant/matter/watch bootstrap");
+  }
+  return { projectId: nextProjectId, grant, matter, watchSet };
+}
+
 function createHttpApi(): ContractApi {
   return {
-    async bootstrapExisting(requestedProjectId) {
-      let nextProjectId = requestedProjectId?.trim() || "";
-      if (!nextProjectId) {
-        const projects = await httpJson<{ projects: Array<{ id: string }> }>("/api/knowledge/projects");
-        nextProjectId = projects.projects[0]?.id || "";
-      }
-      if (!nextProjectId) return null;
-
-      const data = await httpJson<GrantBootstrapResponse>(
-        `/api/knowledge/projects/${encodeURIComponent(nextProjectId)}/source-grants`,
+    async getRecentConnection() {
+      const data = await httpJson<RecentConnectionResponse>(
+        "/api/knowledge/project-memory/connections",
       );
-      const grant = data.grant ?? data.grants?.find((item) => item.status === "active");
-      if (!grant) return null;
-      const matter = data.matter ?? data.defaultMatter ?? data.bootstrap?.matter;
-      const watchSet = data.watchSet ?? data.defaultWatchSet ?? data.bootstrap?.watchSet;
-      const bootstrapMatterId = matter?.id ?? watchSet?.matterId ?? data.matterId ?? data.bootstrap?.matterId;
-      if (!bootstrapMatterId) return null;
-      const memory = await this.getMemory(nextProjectId, bootstrapMatterId);
-      return {
-        projectId: data.projectId ?? data.bootstrap?.projectId ?? nextProjectId,
-        grant,
-        matter: matter ?? memory.matter,
-        watchSet: watchSet ?? memory.watchSet,
-      };
+      return data.connection ?? null;
     },
-    async connectGrant(nextProjectId, rootPath, includePathPrefixes) {
-      const data = await httpJson<GrantBootstrapResponse>(
-        `/api/knowledge/projects/${encodeURIComponent(nextProjectId)}/source-grants`,
-        { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "local_git", rootPath, includePathPrefixes }) },
+    async openFolderPicker() {
+      return httpJson<FolderPickerResponse>(
+        "/api/knowledge/project-memory/folder-picker",
+        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
       );
-      if (!data.grant) throw new Error("source-grant API 未返回 grant");
-      if (data.matter && data.watchSet) {
-        return { grant: data.grant, watchSet: data.watchSet, matter: data.matter };
-      }
-      const bootstrapMatterId = data.matter?.id ?? data.watchSet?.matterId ?? data.matterId;
-      if (!bootstrapMatterId) {
-        throw new Error("source-grant API 未返回默认 matter/watch bootstrap");
-      }
-      const memory = await this.getMemory(nextProjectId, bootstrapMatterId);
-      return { grant: data.grant, watchSet: memory.watchSet, matter: memory.matter };
+    },
+    async connectConnection(body) {
+      const data = await httpJson<
+        GrantBootstrapResponse & MvpBootstrap & {
+          projectId?: string;
+          grant?: SourceGrant;
+          matter?: Matter;
+          watchSet?: MatterWatchSet;
+        }
+      >("/api/knowledge/project-memory/connections", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return bootstrapFromConnectionPayload(data);
     },
     async getMemory(nextProjectId, nextMatterId) {
       const encodedProjectId = encodeURIComponent(nextProjectId);

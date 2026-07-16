@@ -213,10 +213,13 @@
 .promiseList span { display: block; color: #9fa3a7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
 .promiseList strong { display: block; margin-top: 11px; font-size: 13px; }
 .promiseList small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.45; }
-.connectionForm { display: grid; gap: 10px; max-width: 620px; margin: 0 0 18px; }
-.connectionForm label { display: grid; gap: 5px; color: #5e646a; font-size: 11px; font-weight: 650; }
-.connectionForm input { min-height: 40px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; outline: 0; background: white; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.connectionForm input:focus { border-color: #82a9e8; box-shadow: 0 0 0 3px rgba(47,111,235,.1); }
+.folderChoiceActions { display: grid; gap: 14px; max-width: 620px; margin: 0 0 12px; }
+.folderChoiceCard { display: grid; gap: 8px; max-width: 620px; margin: 0 0 12px; padding: 16px; border: 1px solid #d5e2f6; border-radius: 12px; background: #f7faff; }
+.folderChoiceCard strong { font-size: 16px; letter-spacing: -.02em; }
+.folderChoiceCard code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #5e6a7a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.permissionCopy { margin: 4px 0 0; color: #4f5d70; font-size: 12px; line-height: 1.55; }
+.folderChoiceCard > small { color: #7a8492; font-size: 11px; }
+.choiceActions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; align-items: center; }
 .primaryButtonLarge { min-height: 42px; padding: 10px 15px; border: 1px solid var(--blue); background: var(--blue); color: white !important; font-size: 13px; }
 .primaryButtonLarge svg:last-child { margin-left: 5px; }
 .fixtureNote { display: block; margin-top: 10px; color: #9a8c65; font-size: 10px; }
