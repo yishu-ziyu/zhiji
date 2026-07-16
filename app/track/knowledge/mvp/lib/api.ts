@@ -161,6 +161,13 @@ export type MvpBootstrap = {
   grant: SourceGrant;
   watchSet: MatterWatchSet;
   matter: Matter;
+  mode?: "connect" | "continue";
+  folderName?: string;
+  /** Matched / matter-relevant event ids from reconcile (preferred for analysis). */
+  matchedEventIds?: string[];
+  reconciledEventIds?: string[];
+  events?: Array<{ id: string; matched?: boolean }>;
+  relevantEvents?: Array<{ id?: string; event?: { id?: string } }>;
 };
 
 /** GET /api/knowledge/project-memory/connections — minimal recent active connection. */
@@ -176,9 +183,10 @@ export type RecentConnectionResponse = {
 
 /** POST /api/knowledge/project-memory/folder-picker */
 export type FolderPickerResponse =
-  | { cancelled: true }
+  | { cancelled: true; status?: "cancelled" }
   | {
       cancelled?: false;
+      status?: "selected";
       selectionId: string;
       folderName: string;
       rootPath: string;
@@ -186,8 +194,17 @@ export type FolderPickerResponse =
     };
 
 export type ConnectConnectionBody =
-  | { selectionId: string }
-  | { projectId: string; grantId: string };
+  | { mode: "connect"; selectionId: string }
+  | { mode: "continue"; projectId: string; grantId: string };
+
+export type ReconcileResult = {
+  projectId?: string;
+  grant?: SourceGrant;
+  observed?: number;
+  ingested?: number;
+  matchedEventIds?: string[];
+  events?: Array<{ id: string; matched?: boolean }>;
+};
 
 export type ContractApi = {
   /** Minimal recent active connection for Continue (not auto-connect). */
@@ -197,8 +214,11 @@ export type ContractApi = {
   /**
    * Bootstrap grant/matter/watch from either a picker selectionId
    * or a persisted projectId+grantId. UI must never invent rootPath.
+   * May include reconciled/matched event ids for initial reconstruction.
    */
   connectConnection(body: ConnectConnectionBody): Promise<MvpBootstrap>;
+  /** Real reconcile of authorized folder files (not a timer). */
+  reconcileGrant(projectId: string, grantId: string): Promise<ReconcileResult>;
   getMemory(projectId: string, matterId: string): Promise<MemoryResponse>;
   updateWatchSet(
     projectId: string,
@@ -507,12 +527,23 @@ function fixtureMemory(): MemoryResponse {
 
 const fixtureSelectionId = "selection-fixture-product-exploration";
 
-function fixtureBootstrap(): MvpBootstrap {
+function fixtureMatchedEventIds(): string[] {
+  return fixtureEvents.filter((event) => event.matched).map((event) => event.id);
+}
+
+function fixtureBootstrap(mode: "connect" | "continue"): MvpBootstrap {
   return clone({
     projectId,
     grant: fixtureGrant,
     watchSet: fixtureWatchSet,
     matter: fixtureMatter,
+    mode,
+    folderName: "product-exploration",
+    matchedEventIds: fixtureMatchedEventIds(),
+    events: fixtureEvents.map((event) => ({
+      id: event.id,
+      matched: event.matched,
+    })),
   });
 }
 
@@ -523,6 +554,7 @@ function createFixtureApi(): ContractApi {
     },
     async openFolderPicker() {
       return {
+        status: "selected",
         selectionId: fixtureSelectionId,
         folderName: "product-exploration",
         rootPath: fixtureGrant.rootPath,
@@ -530,13 +562,29 @@ function createFixtureApi(): ContractApi {
       };
     },
     async connectConnection(body) {
-      if ("selectionId" in body && body.selectionId !== fixtureSelectionId) {
-        throw new Error("未知的 fixture selectionId");
+      if (body.mode === "connect") {
+        if (body.selectionId !== fixtureSelectionId) {
+          throw new Error("未知的 fixture selectionId");
+        }
+        return fixtureBootstrap("connect");
       }
-      if ("projectId" in body && body.projectId !== projectId) {
-        throw new Error("未知的 fixture projectId");
+      if (body.projectId !== projectId || body.grantId !== grantId) {
+        throw new Error("未知的 fixture continue identity");
       }
-      return fixtureBootstrap();
+      return fixtureBootstrap("continue");
+    },
+    async reconcileGrant() {
+      return {
+        projectId,
+        grant: clone(fixtureGrant),
+        observed: fixtureEvents.length,
+        ingested: fixtureEvents.length,
+        matchedEventIds: fixtureMatchedEventIds(),
+        events: fixtureEvents.map((event) => ({
+          id: event.id,
+          matched: event.matched,
+        })),
+      };
     },
     async getMemory() {
       return fixtureMemory();
@@ -655,12 +703,19 @@ function projectBackendEvents(
 }
 
 function bootstrapFromConnectionPayload(
-  data: GrantBootstrapResponse & MvpBootstrap & {
-    projectId?: string;
-    grant?: SourceGrant;
-    matter?: Matter;
-    watchSet?: MatterWatchSet;
-  },
+  data: GrantBootstrapResponse &
+    MvpBootstrap & {
+      projectId?: string;
+      grant?: SourceGrant;
+      matter?: Matter;
+      watchSet?: MatterWatchSet;
+      mode?: "connect" | "continue";
+      folderName?: string;
+      matchedEventIds?: string[];
+      reconciledEventIds?: string[];
+      events?: Array<{ id: string; matched?: boolean }>;
+      relevantEvents?: Array<{ id?: string; event?: { id?: string } }>;
+    },
 ): MvpBootstrap {
   const grant = data.grant;
   const matter = data.matter ?? data.defaultMatter ?? data.bootstrap?.matter;
@@ -673,7 +728,18 @@ function bootstrapFromConnectionPayload(
   if (!grant || !matter || !watchSet || !nextProjectId) {
     throw new Error("connections API 未返回完整 grant/matter/watch bootstrap");
   }
-  return { projectId: nextProjectId, grant, matter, watchSet };
+  return {
+    projectId: nextProjectId,
+    grant,
+    matter,
+    watchSet,
+    mode: data.mode,
+    folderName: data.folderName,
+    matchedEventIds: data.matchedEventIds,
+    reconciledEventIds: data.reconciledEventIds,
+    events: data.events,
+    relevantEvents: data.relevantEvents,
+  };
 }
 
 function createHttpApi(): ContractApi {
@@ -685,25 +751,59 @@ function createHttpApi(): ContractApi {
       return data.connection ?? null;
     },
     async openFolderPicker() {
-      return httpJson<FolderPickerResponse>(
-        "/api/knowledge/project-memory/folder-picker",
-        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
-      );
+      const data = await httpJson<{
+        status?: string;
+        cancelled?: boolean;
+        selectionId?: string;
+        folderName?: string;
+        rootPath?: string;
+        displayPath?: string;
+        permissionBoundary?: string;
+        error?: string;
+      }>("/api/knowledge/project-memory/folder-picker", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      if (data.status === "cancelled" || data.cancelled) {
+        return { cancelled: true, status: "cancelled" };
+      }
+      if (data.status === "error") {
+        throw new Error(data.error || "文件夹选择失败");
+      }
+      const rootPath = data.displayPath || data.rootPath || "";
+      if (!data.selectionId || !rootPath) {
+        throw new Error("文件夹选择未返回 selectionId 与路径");
+      }
+      return {
+        status: "selected",
+        selectionId: data.selectionId,
+        folderName: data.folderName || rootPath.split("/").filter(Boolean).pop() || rootPath,
+        rootPath,
+        permissionBoundary: data.permissionBoundary || rootPath,
+      };
     },
     async connectConnection(body) {
       const data = await httpJson<
-        GrantBootstrapResponse & MvpBootstrap & {
-          projectId?: string;
-          grant?: SourceGrant;
-          matter?: Matter;
-          watchSet?: MatterWatchSet;
-        }
+        GrantBootstrapResponse &
+          MvpBootstrap & {
+            projectId?: string;
+            grant?: SourceGrant;
+            matter?: Matter;
+            watchSet?: MatterWatchSet;
+          }
       >("/api/knowledge/project-memory/connections", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
       return bootstrapFromConnectionPayload(data);
+    },
+    async reconcileGrant(nextProjectId, grantId) {
+      return httpJson<ReconcileResult>(
+        `/api/knowledge/projects/${encodeURIComponent(nextProjectId)}/source-grants/${encodeURIComponent(grantId)}/reconcile`,
+        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+      );
     },
     async getMemory(nextProjectId, nextMatterId) {
       const encodedProjectId = encodeURIComponent(nextProjectId);
@@ -734,10 +834,22 @@ function createHttpApi(): ContractApi {
       return data.watchSet;
     },
     async runAnalysis(nextProjectId, nextMatterId, eventIds) {
-      const data = await httpJson<{ candidate: UnderstandingRevision }>(
+      const data = await httpJson<{
+        candidate?: UnderstandingRevision;
+        run?: { id?: string };
+      }>(
         `/api/knowledge/projects/${encodeURIComponent(nextProjectId)}/analysis-runs`,
-        { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ matterId: nextMatterId, eventIds, trigger: "source_change" }) },
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            matterId: nextMatterId,
+            eventIds,
+            trigger: "source_change",
+          }),
+        },
       );
+      if (!data.candidate) throw new Error("analysis-runs 未返回 candidate");
       return data.candidate;
     },
     async resolveCandidate(nextProjectId, nextMatterId, candidateId, decision, editedBody) {

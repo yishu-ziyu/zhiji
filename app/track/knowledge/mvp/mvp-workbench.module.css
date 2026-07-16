@@ -225,6 +225,27 @@
 .fixtureNote { display: block; margin-top: 10px; color: #9a8c65; font-size: 10px; }
 .errorBanner { margin-top: 16px; padding: 10px; border: 1px solid #ecc8c5; border-radius: 8px; background: #fff7f6; color: #a44b45; font-size: 11px; }
 
+.firstUseProgress { max-width: 620px; margin: 0 0 18px; padding: 18px; border: 1px solid #d5e2f6; border-radius: 12px; background: #f7faff; }
+.firstUseProgress strong { display: block; margin-top: 6px; font-size: 18px; letter-spacing: -.02em; }
+.firstUseProgress > p { margin: 8px 0 14px; color: #5e6a7a; font-size: 12px; line-height: 1.55; }
+.firstUseSteps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.firstUseSteps li { display: flex; align-items: center; gap: 8px; min-height: 28px; color: #6a727c; font-size: 13px; font-weight: 600; }
+.firstUseStepActive { color: #245fcf !important; }
+.firstUseStepDone { color: #2f6a3a !important; }
+.firstUseStepPending { opacity: .62; }
+.firstUseStepDot { width: 8px; height: 8px; border-radius: 99px; background: #c5ccd6; }
+.spin { animation: mvpSpin 0.9s linear infinite; }
+@keyframes mvpSpin { to { transform: rotate(360deg); } }
+
+.understandingLead { margin: 0 0 16px; padding: 16px 18px; border: 1px solid #d5e2f6; border-radius: 12px; background: linear-gradient(180deg, #f8fbff 0%, #fff 100%); }
+.understandingLeadHeader { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.understandingLead h2 { margin: 6px 0 0; font-size: 20px; letter-spacing: -.03em; }
+.understandingNow { margin: 0 0 10px; color: #2d333a; font-size: 15px; line-height: 1.65; font-weight: 550; }
+.understandingEvidence { display: grid; gap: 6px; margin-bottom: 12px; }
+.unknownList { padding-top: 10px; border-top: 1px solid var(--line); }
+.unknownList ul { margin: 8px 0 0; padding-left: 18px; color: #6a4b18; font-size: 12px; line-height: 1.55; }
+.unknownEmpty { margin: 8px 0 0; color: #7a8492; font-size: 12px; }
+
 .viewerBackdrop { position: fixed; inset: 0; z-index: 40; display: flex; justify-content: flex-end; background: rgba(24,27,31,.18); backdrop-filter: blur(2px); }
 .revisionViewer { width: min(520px, 100%); height: 100%; display: flex; flex-direction: column; padding: 22px; overflow: auto; border-left: 1px solid var(--line); background: #fff; box-shadow: -16px 0 40px rgba(23,27,34,.12); }
 .viewerHeader { display: flex; align-items: start; justify-content: space-between; gap: 15px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }

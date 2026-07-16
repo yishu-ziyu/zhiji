@@ -14,6 +14,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { FirstUseProgress } from "./components/FirstUseProgress";
+import { InitialUnderstandingLead } from "./components/InitialUnderstandingLead";
 import { MatterFocusCanvas, type FocusNode } from "./components/MatterFocusCanvas";
 import { RevisionViewer } from "./components/RevisionViewer";
 import { SourceGrantPanel } from "./components/SourceGrantPanel";
@@ -23,6 +25,7 @@ import {
   createMvpApi,
   type Matter,
   type MemoryResponse,
+  type MvpBootstrap,
   type RecentConnectionResponse,
   type RevisionResponse,
   type SourceGrant,
@@ -36,8 +39,11 @@ import {
   connectPayloadForNewSelection,
   fixtureModeFromSearch,
   folderNameFromPath,
+  matchedEventIdsFromBootstrap,
+  memoryNeedsReconstruction,
   phaseAfterPickerCancel,
   phaseAfterPickerSelected,
+  type FirstUseProgressStep,
   type FolderSelection,
   type OnboardingPhase,
 } from "./lib/onboarding-folder-choice";
@@ -67,6 +73,8 @@ export default function MvpKnowledgeWorkbenchPage() {
   const [onboardingPhase, setOnboardingPhase] = useState<OnboardingPhase>("entry");
   const [recentConnection, setRecentConnection] = useState<RecentConnection | null>(null);
   const [pendingSelection, setPendingSelection] = useState<FolderSelection | null>(null);
+  const [progressStep, setProgressStep] = useState<FirstUseProgressStep | null>(null);
+  const [progressFolderName, setProgressFolderName] = useState<string>("");
 
   useEffect(() => {
     const search = new URL(window.location.href).searchParams;
@@ -106,27 +114,65 @@ export default function MvpKnowledgeWorkbenchPage() {
     };
   }, [api, connected, isFixture, modeReady]);
 
-  async function applyBootstrap(
-    bootstrap: {
-      projectId: string;
-      grant: SourceGrant;
-      matter: Matter;
-      watchSet: { matterId?: string };
-    },
-    successNotice: string,
-  ) {
+  /**
+   * First-use chain: authorize → reconcile → reconstruct (when needed).
+   * Progress advances only after each real API returns. Fresh always reconstructs
+   * from matched event ids; Continue shows persisted understanding when current.
+   */
+  async function runFirstUsePipeline(options: {
+    kind: "fresh" | "continue";
+    body: ReturnType<typeof connectPayloadForNewSelection> | ReturnType<typeof connectPayloadForContinue>;
+    folderHint?: string;
+    successNotice: string;
+  }) {
+    setProgressStep("authorize");
+    setProgressFolderName(options.folderHint || "");
+    const bootstrap: MvpBootstrap = await api.connectConnection(options.body);
     const resolvedProjectId = bootstrap.projectId;
     const resolvedMatterId = bootstrap.matter.id;
+    const folderLabel =
+      bootstrap.folderName ||
+      options.folderHint ||
+      folderNameFromPath(bootstrap.grant.rootPath);
+    setProgressFolderName(folderLabel);
     setGrant(bootstrap.grant);
     setMatter(bootstrap.matter);
     setProjectId(resolvedProjectId);
     setMatterId(resolvedMatterId);
+
+    let eventIds = matchedEventIdsFromBootstrap(bootstrap);
+    let nextMemory = await api.getMemory(resolvedProjectId, resolvedMatterId);
+    const shouldReconstruct =
+      options.kind === "fresh" || memoryNeedsReconstruction(nextMemory);
+
+    if (shouldReconstruct) {
+      setProgressStep("reconcile");
+      const reconciled = await api.reconcileGrant(
+        resolvedProjectId,
+        bootstrap.grant.id,
+      );
+      const fromReconcile = matchedEventIdsFromBootstrap({
+        matchedEventIds: reconciled.matchedEventIds,
+        events: reconciled.events,
+      });
+      if (fromReconcile.length > 0) eventIds = fromReconcile;
+      nextMemory = await api.getMemory(resolvedProjectId, resolvedMatterId);
+      if (eventIds.length === 0) {
+        eventIds = eventIdsForMatterAnalysis(nextMemory);
+      }
+
+      setProgressStep("reconstruct");
+      await api.runAnalysis(resolvedProjectId, resolvedMatterId, eventIds);
+      nextMemory = await api.getMemory(resolvedProjectId, resolvedMatterId);
+    }
+
+    setMemory(nextMemory);
     setFocusId(resolvedMatterId);
     setConnected(true);
     setPendingSelection(null);
     setOnboardingPhase("entry");
-    await loadMemory(resolvedProjectId, resolvedMatterId);
-    setNotice(successNotice);
+    setProgressStep(null);
+    setNotice(options.successNotice);
   }
 
   async function chooseProjectFolder() {
@@ -162,15 +208,16 @@ export default function MvpKnowledgeWorkbenchPage() {
     setBusy(true);
     setError(null);
     try {
-      const body = connectPayloadForNewSelection(pendingSelection.selectionId);
-      const bootstrap = await api.connectConnection(body);
-      await applyBootstrap(
-        bootstrap,
-        isFixture
-          ? "已连接显式 contract fixture；UI 不把 fixture 当作生产事实。"
-          : "已连接所选项目文件夹，并读取默认事项。",
-      );
+      await runFirstUsePipeline({
+        kind: "fresh",
+        body: connectPayloadForNewSelection(pendingSelection.selectionId),
+        folderHint: pendingSelection.folderName,
+        successNotice: isFixture
+          ? "已连接显式 contract fixture，并生成有依据的 candidate 理解。"
+          : "已授权文件夹并完成对账与状态重建；请审阅当前理解与未知项。",
+      });
     } catch (nextError) {
+      setProgressStep(null);
       setError(nextError instanceof Error ? nextError.message : "连接失败");
     } finally {
       setBusy(false);
@@ -182,10 +229,14 @@ export default function MvpKnowledgeWorkbenchPage() {
     setBusy(true);
     setError(null);
     try {
-      const body = connectPayloadForContinue(recentConnection);
-      const bootstrap = await api.connectConnection(body);
-      await applyBootstrap(bootstrap, "已继续上次授权的项目文件夹。");
+      await runFirstUsePipeline({
+        kind: "continue",
+        body: connectPayloadForContinue(recentConnection),
+        folderHint: recentConnection.folderName,
+        successNotice: "已继续上次项目；先展示已有理解，仅在需要时重建。",
+      });
     } catch (nextError) {
+      setProgressStep(null);
       setError(nextError instanceof Error ? nextError.message : "继续连接失败");
     } finally {
       setBusy(false);
@@ -297,6 +348,7 @@ export default function MvpKnowledgeWorkbenchPage() {
 
   if (!connected || !grant || !matter || !memory) {
     const showReview = onboardingPhase === "review" && pendingSelection;
+    const showProgress = progressStep !== null;
     return (
       <main className={styles.shell}>
         <aside className={styles.rail} aria-label="MVP 知识工作台导航">
@@ -326,7 +378,7 @@ export default function MvpKnowledgeWorkbenchPage() {
             <span className={styles.railLabel}>状态</span>
             <div className={styles.railItem}>
               <ShieldCheck size={15} />
-              等待选择本地项目
+              {showProgress ? "正在建立理解" : "等待选择本地项目"}
             </div>
           </div>
         </aside>
@@ -348,27 +400,31 @@ export default function MvpKnowledgeWorkbenchPage() {
             </span>
             <h1>选择一个本地项目，开始重建当前理解</h1>
             <p>
-              用系统文件夹选择器选中项目目录即可。不需要项目 UUID、绝对路径语法或关注路径前缀。授权范围仅限所选文件夹。
+              你只负责指出授权文件夹；Agent 在边界内对账与重建有依据的当前理解。不需要项目 UUID、绝对路径语法或关注路径前缀。
             </p>
             <div className={styles.promiseList}>
               <div>
                 <span>01</span>
-                <strong>一件事项居中</strong>
-                <small>只展开一层直接关系，非匹配变化不进入中心。</small>
+                <strong>授权边界</strong>
+                <small>Continue 或系统文件夹选择；仅所选目录可读。</small>
               </div>
               <div>
                 <span>02</span>
-                <strong>六问逐条有据</strong>
-                <small>why 显示 supported / unknown / conflicted 与 exact quote。</small>
+                <strong>真实进度</strong>
+                <small>授权 → 对账 → 重建，每步跟真实接口，不用假计时。</small>
               </div>
               <div>
                 <span>03</span>
-                <strong>Owner 决议成新版本</strong>
-                <small>accept / edit_accept 新建 accepted revision，不改 candidate。</small>
+                <strong>理解优先</strong>
+                <small>先看有依据的现状与明确未知；Owner 只纠正/确认。</small>
               </div>
             </div>
 
-            {showReview ? (
+            {showProgress && progressStep && (
+              <FirstUseProgress step={progressStep} folderName={progressFolderName} />
+            )}
+
+            {!showProgress && showReview ? (
               <div className={styles.folderChoiceCard} data-testid="folder-selection-review">
                 <span className={styles.stripLabel}>已选文件夹</span>
                 <strong>{pendingSelection.folderName}</strong>
@@ -396,7 +452,7 @@ export default function MvpKnowledgeWorkbenchPage() {
                   </button>
                 </div>
               </div>
-            ) : (
+            ) : !showProgress ? (
               <div className={styles.folderChoiceActions} data-testid="folder-choice-entry">
                 {recentConnection && !isFixture && (
                   <div className={styles.folderChoiceCard} data-testid="recent-connection">
@@ -431,7 +487,7 @@ export default function MvpKnowledgeWorkbenchPage() {
                   <ArrowRight size={16} />
                 </button>
               </div>
-            )}
+            ) : null}
 
             <span className={styles.fixtureNote}>
               {isFixture
@@ -536,6 +592,10 @@ export default function MvpKnowledgeWorkbenchPage() {
           </button>
         </div>
         <div className={styles.scrollArea}>
+          <InitialUnderstandingLead
+            memory={memory}
+            onOpenRevision={(revisionId) => void openRevision(revisionId)}
+          />
           <MatterFocusCanvas
             memory={memory}
             focusId={focusId}
