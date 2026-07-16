@@ -46,6 +46,10 @@ npm run test:unit -- shared/knowledge/folder-import.test.ts tests/unit/a5-folder
 - **G4：** 读本文件 + 空环境拖 ≥2 顶层夹证伪 A5 PASS 表  
 - 若 G3A 另有 `G3A-A5-done`：以本 handoff 为整刀对接入口，避免双真源
 
+## Commit
+
+`ac1c230f` · `feat(knowledge): A5 import top-level folders as projects`
+
 ## 状态
 
 `DONE · 等 G4 整条证伪`
