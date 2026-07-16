@@ -19,6 +19,13 @@ test("project canvas supports focus, decision, Agent execution, and writeback", 
   await expect(page.getByTestId("project-canvas")).toBeVisible();
   await expect(page.getByTestId("project-inspector")).toBeVisible();
   await expect(page.getByTestId("project-timeline")).toBeVisible();
+  await expect(
+    page.getByTestId("canvas-graph-links").locator("path"),
+  ).not.toHaveCount(0);
+  await expect(page.getByTestId("focus-state")).toHaveAttribute(
+    "data-canvas-ref",
+    /^(project|card|work_item|event):/,
+  );
 
   await page.getByRole("button", { name: /新建/ }).click();
   await page
@@ -35,13 +42,33 @@ test("project canvas supports focus, decision, Agent execution, and writeback", 
   await expect(page.getByTestId("project-inspector")).toContainText(
     "e2e 项目画布复核",
   );
+  await expect(page.getByTestId("focus-state")).toBeVisible();
+  await expect(
+    page.getByTestId("project-canvas").getByTestId("one-hop-relation").first(),
+  ).toBeVisible();
+
+  await page
+    .getByTestId("project-navigator")
+    .locator('button[class*="projectButtonActive"]')
+    .click();
+  await expect(page.getByTestId("agent-attention")).toBeVisible();
+  await page.getByTestId("agent-attention").getByRole("button").first().click();
+  await expect(page).toHaveURL(/focus=/);
+  await expect(page.getByTestId("focus-state")).toBeVisible();
+  await expect(page.getByTestId("project-inspector")).toBeVisible();
+  await expect(page.getByTestId("project-timeline")).toBeVisible();
+
+  await page.getByRole("button", { name: /我的未完成/ }).click();
+  await expect(page.getByTestId("my-open-work")).toContainText("e2e 项目画布复核");
+  await page.getByTestId("my-open-work").getByRole("button", { name: /e2e 项目画布复核/ }).click();
+  await expect(page).toHaveURL(/focus=work_item%3A/);
+  await expect(page.getByTestId("project-inspector")).toContainText(
+    "e2e 项目画布复核",
+  );
   await expect(page.getByTestId("project-inspector")).toContainText("负责人");
   await page.getByTestId("project-inspector").getByRole("button", { name: "依据1", exact: true }).click();
   await expect(page.getByTestId("project-inspector")).toContainText("来源：会议");
   await page.getByTestId("project-inspector").getByRole("button", { name: "概览" }).click();
-  await page.getByRole("button", { name: /我的未完成/ }).click();
-  await expect(page.getByTestId("my-open-work")).toContainText("e2e 项目画布复核");
-  await page.getByTestId("my-open-work").getByRole("button", { name: /e2e 项目画布复核/ }).click();
 
   await page.getByRole("button", { name: /修改下一步/ }).click();
   const nextStepForm = page.getByTestId("next-step-form");
@@ -81,6 +108,21 @@ test("project canvas supports focus, decision, Agent execution, and writeback", 
   );
 });
 
+test("Agent 提示能把项目画布聚焦到当前重点", async ({ page }) => {
+  await page.goto("/track/knowledge");
+  const attention = page.getByTestId("agent-attention");
+  await expect(attention).toBeVisible();
+
+  await attention.getByRole("button").first().click();
+  await expect(page).toHaveURL(/focus=work_item%3A/);
+  await expect(page.getByTestId("focus-state")).toBeVisible();
+  await expect(
+    page.getByTestId("project-canvas").getByTestId("one-hop-relation").first(),
+  ).toBeVisible();
+  await expect(page.getByTestId("project-inspector")).toBeVisible();
+  await expect(page.getByTestId("project-timeline")).toBeVisible();
+});
+
 test("project canvas keeps search evidence and confirmed checkpoint", async ({
   page,
 }) => {
@@ -100,10 +142,15 @@ test("project canvas keeps search evidence and confirmed checkpoint", async ({
   await expect(footprint.locator('button[title="检索验收标准"]')).toHaveAttribute("data-depth", "1");
   await result.click();
   await expect(page).toHaveURL(/focus=card%3A/);
-  await expect(page.getByTestId("project-canvas")).toContainText(/支持|依赖/);
+  await expect(page.getByTestId("focus-state")).toContainText("检索验收标准");
+  const relationItems = page
+    .getByTestId("project-canvas")
+    .getByTestId("one-hop-relation");
+  await expect(relationItems.filter({ hasText: "支持" }).first()).toBeVisible();
   await expect(
-    page.getByTestId("project-canvas").locator('[title*="来源"]').first(),
-  ).toBeVisible();
+    page.getByTestId("project-canvas").locator('[title*="来源"]'),
+  ).not.toHaveCount(0);
+  await expect(page.getByTestId("project-canvas")).toContainText(/支持|依赖/);
 
   const activeProject = page
     .getByTestId("project-navigator")

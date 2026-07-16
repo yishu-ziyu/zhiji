@@ -87,6 +87,18 @@ export default function KnowledgePage() {
   const [workNextStep, setWorkNextStep] = useState("");
   const [workEvidenceId, setWorkEvidenceId] = useState("");
   const [checkpointOpen, setCheckpointOpen] = useState(false);
+  const [materialsOpen, setMaterialsOpen] = useState(false);
+  const [materials, setMaterials] = useState<
+    Array<{ id: string; name: string; kind: string; updatedAt: string }>
+  >([]);
+  const [materialView, setMaterialView] = useState<{
+    name: string;
+    html?: string;
+    content: string;
+    preview: boolean;
+  } | null>(null);
+  const [projectJumpOpen, setProjectJumpOpen] = useState(false);
+  const [projectJumpQuery, setProjectJumpQuery] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -175,17 +187,26 @@ export default function KnowledgePage() {
         );
         if (!active) return;
         setProjects(data.projects);
-        const urlProjectId = new URL(window.location.href).searchParams.get(
-          "projectId",
-        );
+        const url = new URL(window.location.href);
+        const urlProjectId = url.searchParams.get("projectId");
+        // No project in URL → open the most recently active project (list already ranked).
         const selected =
           data.projects.find((project) => project.id === urlProjectId) ??
           data.projects[0];
         if (selected) {
           activeProjectIdRef.current = selected.id;
           setProjectId(selected.id);
+          const focus = urlProjectId
+            ? focusFromUrl(selected.id)
+            : ({ kind: "project", id: selected.id } as const);
+          if (!urlProjectId) {
+            updateUrl(selected.id, focus, true);
+          }
+          void apiJson(`/api/knowledge/projects/${selected.id}/open`, {
+            method: "POST",
+          }).catch(() => undefined);
           await Promise.all([
-            loadSnapshot(selected.id),
+            loadSnapshot(selected.id, focus),
             loadProjectCards(selected.id),
             loadMyOpenWork(selected.id),
             loadFootprint(),
@@ -241,10 +262,51 @@ export default function KnowledgePage() {
         event.preventDefault();
         searchRef.current?.focus();
       }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        setProjectJumpOpen(true);
+        setProjectJumpQuery("");
+      }
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
   }, []);
+
+  async function openMaterialsPanel() {
+    if (!projectId) return;
+    setMaterialsOpen(true);
+    setMaterialView(null);
+    try {
+      const data = await apiJson<{
+        materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
+      }>(`/api/knowledge/projects/${projectId}/materials`);
+      setMaterials(data.materials);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "读取材料失败");
+    }
+  }
+
+  async function openMaterialFile(fileId: string) {
+    if (!projectId) return;
+    try {
+      const data = await apiJson<{
+        file: { name: string };
+        content: string;
+        html?: string;
+        preview: boolean;
+      }>(
+        `/api/knowledge/projects/${projectId}/materials?file=${encodeURIComponent(fileId)}`,
+      );
+      setMaterialView({
+        name: data.file.name,
+        content: data.content,
+        html: data.html,
+        preview: data.preview,
+      });
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "打开文件失败");
+    }
+  }
 
   function updateUrl(nextProjectId: string, focus: CanvasNodeRef, replace = false) {
     const url = new URL(window.location.href);
@@ -308,6 +370,9 @@ export default function KnowledgePage() {
     setSearching(false);
     searchRequestRef.current += 1;
     updateUrl(id, focus);
+    void apiJson(`/api/knowledge/projects/${id}/open`, { method: "POST" }).catch(
+      () => undefined,
+    );
     await Promise.all([
       loadSnapshot(id, focus),
       loadProjectCards(id),
@@ -688,6 +753,7 @@ export default function KnowledgePage() {
           if (first) void handleFocus(first.target);
         }}
         onCreateWork={() => setCreateWorkOpen(true)}
+        onOpenMaterials={() => void openMaterialsPanel()}
         onFocus={(ref) => void handleFocus(ref)}
       />
 
@@ -845,6 +911,137 @@ export default function KnowledgePage() {
               <button type="submit" disabled={busy || !cardContent.trim()}>加入项目</button>
             </footer>
           </form>
+        </div>
+      ) : null}
+
+      {materialsOpen ? (
+        <div className={styles.modalBackdrop} role="presentation">
+          <div
+            className={styles.createModal}
+            data-testid="project-materials-modal"
+            style={{ width: "min(720px, calc(100vw - 40px))", maxHeight: "80vh" }}
+          >
+            <header>
+              <div>
+                <span>知识库</span>
+                <h2>本项目材料</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭材料"
+                onClick={() => {
+                  setMaterialsOpen(false);
+                  setMaterialView(null);
+                }}
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <div style={{ display: "grid", gridTemplateColumns: materialView ? "200px 1fr" : "1fr", gap: 12, minHeight: 240 }}>
+              <div style={{ display: "grid", gap: 6, alignContent: "start" }}>
+                {materials.length === 0 ? (
+                  <p style={{ color: "#75787e", fontSize: 12 }}>还没有文件。把 Markdown 放进 data/knowledge/files/项目id/。</p>
+                ) : (
+                  materials.map((file) => (
+                    <button
+                      key={file.id}
+                      type="button"
+                      data-testid={`material-file-${file.id}`}
+                      onClick={() => void openMaterialFile(file.id)}
+                      style={{
+                        textAlign: "left",
+                        padding: "8px 10px",
+                        border: "1px solid #e4e4df",
+                        borderRadius: 10,
+                        background: materialView?.name === file.name ? "#f5f8fd" : "#fff",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <strong style={{ fontSize: 12 }}>{file.name}</strong>
+                      <small style={{ display: "block", color: "#81848a" }}>{file.kind}</small>
+                    </button>
+                  ))
+                )}
+              </div>
+              {materialView ? (
+                <div
+                  data-testid="material-file-view"
+                  style={{
+                    overflow: "auto",
+                    maxHeight: "56vh",
+                    padding: 12,
+                    border: "1px solid #e4e4df",
+                    borderRadius: 12,
+                    background: "#fbfbf9",
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                  }}
+                >
+                  <strong style={{ display: "block", marginBottom: 8 }}>{materialView.name}</strong>
+                  {materialView.preview && materialView.html ? (
+                    <div dangerouslySetInnerHTML={{ __html: materialView.html }} />
+                  ) : (
+                    <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{materialView.content}</pre>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {projectJumpOpen ? (
+        <div className={styles.modalBackdrop} role="presentation">
+          <div className={styles.createModal} data-testid="project-jump-modal">
+            <header>
+              <div>
+                <span>跳转</span>
+                <h2>打开项目</h2>
+              </div>
+              <button type="button" aria-label="关闭跳转" onClick={() => setProjectJumpOpen(false)}>
+                <X size={16} />
+              </button>
+            </header>
+            <label>
+              <span>项目名（⌘/Ctrl+P）</span>
+              <input
+                value={projectJumpQuery}
+                onChange={(event) => setProjectJumpQuery(event.target.value)}
+                autoFocus
+                placeholder="输入项目名称"
+              />
+            </label>
+            <div style={{ display: "grid", gap: 6 }}>
+              {projects
+                .filter((project) =>
+                  project.name.toLowerCase().includes(projectJumpQuery.trim().toLowerCase()),
+                )
+                .map((project) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    data-testid={`project-jump-${project.id}`}
+                    onClick={() => {
+                      setProjectJumpOpen(false);
+                      void handleSelectProject(project.id);
+                    }}
+                    style={{
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      border: "1px solid #e4e4df",
+                      borderRadius: 10,
+                      background: project.id === projectId ? "#f5f8fd" : "#fff",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <strong>{project.name}</strong>
+                    {project.summary ? (
+                      <small style={{ display: "block", color: "#81848a" }}>{project.summary}</small>
+                    ) : null}
+                  </button>
+                ))}
+            </div>
+          </div>
         </div>
       ) : null}
     </main>

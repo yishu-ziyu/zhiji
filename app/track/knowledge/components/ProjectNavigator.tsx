@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Circle,
   Clock3,
+  FolderOpen,
   Inbox,
   ListChecks,
   Layers3,
@@ -43,6 +44,7 @@ type Props = {
   onOpenSearch: () => void;
   onFocusAttention: () => void;
   onCreateWork: () => void;
+  onOpenMaterials: () => void;
   onFocus: (ref: CanvasNodeRef) => void;
 };
 
@@ -65,6 +67,7 @@ export function ProjectNavigator({
   onOpenSearch,
   onFocusAttention,
   onCreateWork,
+  onOpenMaterials,
   onFocus,
 }: Props) {
   const [panel, setPanel] = useState<"work" | "footprint" | null>(
@@ -156,7 +159,13 @@ export function ProjectNavigator({
           <Inbox size={17} /><span>我的未完成</span><b>{myOpenWork.length}</b>
         </button>
         <button type="button" onClick={onFocusAttention}><Target size={17} /><span>当前重点</span></button>
-        <button type="button" disabled><Star size={17} /><span>收藏</span></button>
+        <button
+          type="button"
+          data-testid="open-project-materials"
+          onClick={onOpenMaterials}
+        >
+          <FolderOpen size={17} /><span>本项目材料</span>
+        </button>
         <button
           type="button"
           data-active={panel === "footprint"}
@@ -164,6 +173,7 @@ export function ProjectNavigator({
         >
           <Clock3 size={17} /><span>知识使用记录</span><b>{litCount}</b>
         </button>
+        <button type="button" disabled><Star size={17} /><span>收藏</span></button>
         <button type="button" disabled><Layers3 size={17} /><span>模板</span></button>
       </nav>
 
