@@ -15,6 +15,7 @@ import {
   onboardingExposesInternalFields,
   phaseAfterPickerCancel,
   phaseAfterPickerSelected,
+  shouldRunInitialAnalysis,
 } from "@/app/track/knowledge/mvp/lib/onboarding-folder-choice";
 import { createMvpApi } from "@/app/track/knowledge/mvp/lib/api";
 import fs from "node:fs";
@@ -145,30 +146,36 @@ describe("D-50 first-use progress and understanding", () => {
 
     expect(
       matchedEventIdsFromBootstrap({
+        eventIds: ["alias-1", "alias-2"],
+      }),
+    ).toEqual(["alias-1", "alias-2"]);
+
+    expect(
+      matchedEventIdsFromBootstrap({
         relevantEvents: [{ event: { id: "rel-1" } }, { id: "rel-2" }],
       }),
     ).toEqual(["rel-1", "rel-2"]);
   });
 
-  it("Continue skips reconstruction when persisted understanding is current", () => {
+  it("skips initial analysis when accepted/candidate already exists (Continue)", () => {
     expect(
-      memoryNeedsReconstruction({
+      shouldRunInitialAnalysis({
         candidate: { body: { now: "x" } },
       }),
     ).toBe(false);
     expect(
-      memoryNeedsReconstruction({
+      shouldRunInitialAnalysis({
         accepted: { body: { now: "x" } },
-        head: { reviewState: "current" },
       }),
     ).toBe(false);
+    expect(shouldRunInitialAnalysis({})).toBe(true);
+    expect(memoryNeedsReconstruction({})).toBe(true);
     expect(
       memoryNeedsReconstruction({
         accepted: { body: { now: "x" } },
         head: { reviewState: "review_needed" },
       }),
-    ).toBe(true);
-    expect(memoryNeedsReconstruction({})).toBe(true);
+    ).toBe(false);
   });
 
   it("first meaningful output is source-backed now + explicit unknowns", () => {
@@ -207,7 +214,7 @@ describe("D-50 first-use progress and understanding", () => {
     expect(leadSource).toContain("explicit-unknowns");
   });
 
-  it("fixture first-use: reconcile + matched ids + real candidate for Owner review", async () => {
+  it("fixture first-use: bootstrap matched ids → analysis only when empty → candidate + Owner resolve", async () => {
     const api = createMvpApi("contract-fixture");
     const bootstrap = await api.connectConnection(
       connectPayloadForNewSelection("selection-fixture-product-exploration"),
@@ -215,12 +222,12 @@ describe("D-50 first-use progress and understanding", () => {
     const matchedIds = matchedEventIdsFromBootstrap(bootstrap);
     expect(matchedIds.length).toBeGreaterThan(0);
     expect(matchedIds).not.toContain("event-old-plan-deleted");
+    expect(bootstrap.eventIds).toEqual(matchedIds);
 
-    const reconciled = await api.reconcileGrant(
-      bootstrap.projectId,
-      bootstrap.grant.id,
-    );
-    expect(reconciled.matchedEventIds?.length).toBeGreaterThan(0);
+    const before = await api.getMemory(bootstrap.projectId, bootstrap.matter.id);
+    expect(shouldRunInitialAnalysis(before)).toBe(true);
+    expect(before.candidate).toBeUndefined();
+    expect(before.accepted).toBeUndefined();
 
     const analysisSpy = vi.spyOn(api, "runAnalysis");
     const candidate = await api.runAnalysis(
@@ -242,6 +249,7 @@ describe("D-50 first-use progress and understanding", () => {
     ).toBe(true);
 
     const memory = await api.getMemory(bootstrap.projectId, bootstrap.matter.id);
+    expect(shouldRunInitialAnalysis(memory)).toBe(false);
     expect(memory.candidate || memory.accepted).toBeTruthy();
 
     const resolved = await api.resolveCandidate(
@@ -252,5 +260,22 @@ describe("D-50 first-use progress and understanding", () => {
     );
     expect(resolved.accepted?.kind).toBe("accepted");
     expect(resolved.resolution.decision).toBe("accept");
+  });
+
+  it("Continue with existing understanding does not require analysis", async () => {
+    const api = createMvpApi("contract-fixture");
+    // Seed ready state via continue identity
+    await api.connectConnection(
+      connectPayloadForContinue({
+        projectId: "project-mvp-fixture",
+        grantId: "grant-local-fixture",
+      }),
+    );
+    const memory = await api.getMemory(
+      "project-mvp-fixture",
+      "matter-product-exploration",
+    );
+    expect(shouldRunInitialAnalysis(memory)).toBe(false);
+    expect(memory.candidate || memory.accepted).toBeTruthy();
   });
 });

@@ -40,7 +40,7 @@ import {
   fixtureModeFromSearch,
   folderNameFromPath,
   matchedEventIdsFromBootstrap,
-  memoryNeedsReconstruction,
+  shouldRunInitialAnalysis,
   phaseAfterPickerCancel,
   phaseAfterPickerSelected,
   type FirstUseProgressStep,
@@ -115,9 +115,11 @@ export default function MvpKnowledgeWorkbenchPage() {
   }, [api, connected, isFixture, modeReady]);
 
   /**
-   * First-use chain: authorize → reconcile → reconstruct (when needed).
-   * Progress advances only after each real API returns. Fresh always reconstructs
-   * from matched event ids; Continue shows persisted understanding when current.
+   * First-use chain: authorize → reconcile → reconstruct (only if needed).
+   * Progress advances only after each real API returns — never a timer fake.
+   * - Consume bootstrap matchedEventIds/eventIds from backend connect.
+   * - Fresh: if no accepted/candidate, analysis with matched ids → await candidate → reload.
+   * - Continue with existing accepted/candidate: enter workbench immediately.
    */
   async function runFirstUsePipeline(options: {
     kind: "fresh" | "continue";
@@ -140,27 +142,29 @@ export default function MvpKnowledgeWorkbenchPage() {
     setProjectId(resolvedProjectId);
     setMatterId(resolvedMatterId);
 
+    // Prefer server bootstrap matched ids (backend already reconciled on connect).
     let eventIds = matchedEventIdsFromBootstrap(bootstrap);
-    let nextMemory = await api.getMemory(resolvedProjectId, resolvedMatterId);
-    const shouldReconstruct =
-      options.kind === "fresh" || memoryNeedsReconstruction(nextMemory);
 
-    if (shouldReconstruct) {
-      setProgressStep("reconcile");
+    setProgressStep("reconcile");
+    if (eventIds.length === 0) {
       const reconciled = await api.reconcileGrant(
         resolvedProjectId,
         bootstrap.grant.id,
       );
-      const fromReconcile = matchedEventIdsFromBootstrap({
+      eventIds = matchedEventIdsFromBootstrap({
         matchedEventIds: reconciled.matchedEventIds,
+        eventIds: reconciled.eventIds,
         events: reconciled.events,
       });
-      if (fromReconcile.length > 0) eventIds = fromReconcile;
-      nextMemory = await api.getMemory(resolvedProjectId, resolvedMatterId);
+    }
+
+    let nextMemory = await api.getMemory(resolvedProjectId, resolvedMatterId);
+
+    // Only call analysis when memory has no accepted/candidate yet.
+    if (shouldRunInitialAnalysis(nextMemory)) {
       if (eventIds.length === 0) {
         eventIds = eventIdsForMatterAnalysis(nextMemory);
       }
-
       setProgressStep("reconstruct");
       await api.runAnalysis(resolvedProjectId, resolvedMatterId, eventIds);
       nextMemory = await api.getMemory(resolvedProjectId, resolvedMatterId);

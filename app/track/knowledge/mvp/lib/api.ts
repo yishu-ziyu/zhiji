@@ -165,6 +165,8 @@ export type MvpBootstrap = {
   folderName?: string;
   /** Matched / matter-relevant event ids from reconcile (preferred for analysis). */
   matchedEventIds?: string[];
+  /** Backend alias of matchedEventIds (same content). */
+  eventIds?: string[];
   reconciledEventIds?: string[];
   events?: Array<{ id: string; matched?: boolean }>;
   relevantEvents?: Array<{ id?: string; event?: { id?: string } }>;
@@ -203,6 +205,7 @@ export type ReconcileResult = {
   observed?: number;
   ingested?: number;
   matchedEventIds?: string[];
+  eventIds?: string[];
   events?: Array<{ id: string; matched?: boolean }>;
 };
 
@@ -532,6 +535,7 @@ function fixtureMatchedEventIds(): string[] {
 }
 
 function fixtureBootstrap(mode: "connect" | "continue"): MvpBootstrap {
+  const matched = fixtureMatchedEventIds();
   return clone({
     projectId,
     grant: fixtureGrant,
@@ -539,7 +543,8 @@ function fixtureBootstrap(mode: "connect" | "continue"): MvpBootstrap {
     matter: fixtureMatter,
     mode,
     folderName: "product-exploration",
-    matchedEventIds: fixtureMatchedEventIds(),
+    matchedEventIds: matched,
+    eventIds: matched,
     events: fixtureEvents.map((event) => ({
       id: event.id,
       matched: event.matched,
@@ -548,6 +553,9 @@ function fixtureBootstrap(mode: "connect" | "continue"): MvpBootstrap {
 }
 
 function createFixtureApi(): ContractApi {
+  /** fresh connect starts without understanding until analysis runs; continue is ready. */
+  let fixtureUnderstandingReady = false;
+
   return {
     async getRecentConnection() {
       return null;
@@ -566,20 +574,24 @@ function createFixtureApi(): ContractApi {
         if (body.selectionId !== fixtureSelectionId) {
           throw new Error("未知的 fixture selectionId");
         }
+        fixtureUnderstandingReady = false;
         return fixtureBootstrap("connect");
       }
       if (body.projectId !== projectId || body.grantId !== grantId) {
         throw new Error("未知的 fixture continue identity");
       }
+      fixtureUnderstandingReady = true;
       return fixtureBootstrap("continue");
     },
     async reconcileGrant() {
+      const matched = fixtureMatchedEventIds();
       return {
         projectId,
         grant: clone(fixtureGrant),
         observed: fixtureEvents.length,
         ingested: fixtureEvents.length,
-        matchedEventIds: fixtureMatchedEventIds(),
+        matchedEventIds: matched,
+        eventIds: matched,
         events: fixtureEvents.map((event) => ({
           id: event.id,
           matched: event.matched,
@@ -587,7 +599,20 @@ function createFixtureApi(): ContractApi {
       };
     },
     async getMemory() {
-      return fixtureMemory();
+      const memory = fixtureMemory();
+      if (!fixtureUnderstandingReady) {
+        return clone({
+          ...memory,
+          accepted: undefined,
+          candidate: undefined,
+          head: {
+            ...memory.head,
+            acceptedRevisionId: undefined,
+            reviewState: "review_needed" as const,
+          },
+        });
+      }
+      return memory;
     },
     async updateWatchSet(_projectId, _matterId, input) {
       fixtureWatchSet = {
@@ -600,6 +625,7 @@ function createFixtureApi(): ContractApi {
       return clone(fixtureWatchSet);
     },
     async runAnalysis() {
+      fixtureUnderstandingReady = true;
       return clone(fixtureCandidate);
     },
     async resolveCandidate(_projectId, _matterId, candidateId, decision, editedBody) {
@@ -712,6 +738,7 @@ function bootstrapFromConnectionPayload(
       mode?: "connect" | "continue";
       folderName?: string;
       matchedEventIds?: string[];
+      eventIds?: string[];
       reconciledEventIds?: string[];
       events?: Array<{ id: string; matched?: boolean }>;
       relevantEvents?: Array<{ id?: string; event?: { id?: string } }>;
@@ -736,6 +763,7 @@ function bootstrapFromConnectionPayload(
     mode: data.mode,
     folderName: data.folderName,
     matchedEventIds: data.matchedEventIds,
+    eventIds: data.eventIds,
     reconciledEventIds: data.reconciledEventIds,
     events: data.events,
     relevantEvents: data.relevantEvents,

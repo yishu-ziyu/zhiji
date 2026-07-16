@@ -107,16 +107,21 @@ type EventIdCarrier = {
 
 /**
  * Prefer matched/reconciled ids from the connection bootstrap.
+ * Backend may send `matchedEventIds` and/or alias `eventIds` (same content).
  * Never invent projectId/rootPath; only pass through server-provided event ids.
  */
 export function matchedEventIdsFromBootstrap(payload: {
   matchedEventIds?: string[];
+  eventIds?: string[];
   reconciledEventIds?: string[];
   events?: EventIdCarrier[];
   relevantEvents?: EventIdCarrier[];
 }): string[] {
   if (payload.matchedEventIds?.length) {
     return uniqueIds(payload.matchedEventIds);
+  }
+  if (payload.eventIds?.length) {
+    return uniqueIds(payload.eventIds);
   }
   if (payload.reconciledEventIds?.length) {
     return uniqueIds(payload.reconciledEventIds);
@@ -137,17 +142,32 @@ function uniqueIds(ids: string[]): string[] {
   return [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
 }
 
-/** Continue shows persisted understanding unless memory has no body or needs review. */
+/** True when memory already has an Owner-visible understanding revision. */
+export function hasPersistedUnderstanding(memory: {
+  candidate?: { body?: unknown } | null;
+  accepted?: { body?: unknown } | null;
+}): boolean {
+  return Boolean(memory.candidate?.body || memory.accepted?.body);
+}
+
+/**
+ * Initial analysis runs only when there is no accepted/candidate yet.
+ * Continue with existing understanding must not force analysis.
+ */
+export function shouldRunInitialAnalysis(memory: {
+  candidate?: { body?: unknown } | null;
+  accepted?: { body?: unknown } | null;
+}): boolean {
+  return !hasPersistedUnderstanding(memory);
+}
+
+/** @deprecated use shouldRunInitialAnalysis — kept for tests naming clarity. */
 export function memoryNeedsReconstruction(memory: {
   candidate?: { body?: unknown } | null;
   accepted?: { body?: unknown } | null;
   head?: { reviewState?: string };
 }): boolean {
-  if (memory.candidate?.body) return false;
-  if (memory.accepted?.body && memory.head?.reviewState !== "review_needed") {
-    return false;
-  }
-  return true;
+  return shouldRunInitialAnalysis(memory);
 }
 
 export type UnderstandingUnknowns = {
