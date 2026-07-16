@@ -445,6 +445,100 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
     expect(events2).toHaveLength(3);
   });
 
+  it("custom dedupeKey is namespaced by project+grant; p2 never gets p1 event", async () => {
+    store.upsertGrant({
+      id: "g2",
+      projectId: "p2",
+      kind: "local_folder",
+      rootPath: "/tmp/other",
+      status: "active",
+      createdAt: "2026-07-16T00:00:00.000Z",
+      updatedAt: "2026-07-16T00:00:00.000Z",
+    });
+    const bytes = new TextEncoder().encode("ns-content");
+    const p1 = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "added",
+      relativePath: "shared-name.txt",
+      content: bytes,
+      observedAt: "2026-07-16T18:00:00.000Z",
+      dedupeKey: "caller-raw-key-identical",
+    });
+    const p2 = await store.ingest({
+      projectId: "p2",
+      grantId: "g2",
+      kind: "added",
+      relativePath: "shared-name.txt",
+      content: bytes,
+      observedAt: "2026-07-16T18:00:01.000Z",
+      dedupeKey: "caller-raw-key-identical",
+    });
+    expect(p1.event).toBeTruthy();
+    expect(p2.event).toBeTruthy();
+    expect(p1.event!.id).not.toBe(p2.event!.id);
+    expect(p1.event!.projectId).toBe("p1");
+    expect(p2.event!.projectId).toBe("p2");
+    expect(p1.event!.dedupeKey).toContain("p1|g1|");
+    expect(p2.event!.dedupeKey).toContain("p2|g2|");
+    expect(p1.event!.dedupeKey).not.toBe(p2.event!.dedupeKey);
+    // p2 must not reuse p1 event/revision identity
+    expect(p2.revision!.id).not.toBe(p1.revision!.id);
+  });
+
+  it("resolveCandidate is at most once: retry returns same accepted, no second head move", async () => {
+    const v1 = new TextEncoder().encode("once only");
+    const add = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "added",
+      relativePath: "once.md",
+      content: v1,
+      observedAt: "2026-07-16T19:00:00.000Z",
+    });
+    const cand = await store.saveCandidate(
+      {
+        id: "run-once",
+        projectId: "p1",
+        matterId: "m1",
+        trigger: "retry",
+        eventIds: [add.event!.id],
+        status: "queued",
+        attempt: 1,
+        createdAt: "2026-07-16T19:01:00.000Z",
+        updatedAt: "2026-07-16T19:01:00.000Z",
+      },
+      bodyFor(add.revision!.id, "once.md", "once only"),
+    );
+    const first = await store.resolveCandidate({
+      id: "res-once-1",
+      candidateRevisionId: cand.id,
+      decision: "accept",
+      actor: "owner",
+      createdAt: "2026-07-16T19:02:00.000Z",
+    });
+    expect(first.accepted?.id).toBeTruthy();
+    const acceptedId = first.accepted!.id;
+    const headAfterFirst = first.head.acceptedRevisionId;
+
+    const second = await store.resolveCandidate({
+      id: "res-once-2",
+      candidateRevisionId: cand.id,
+      decision: "accept",
+      actor: "owner",
+      createdAt: "2026-07-16T19:03:00.000Z",
+    });
+    expect(second.resolution.id).toBe(first.resolution.id);
+    expect(second.accepted?.id).toBe(acceptedId);
+    expect(second.head.acceptedRevisionId).toBe(headAfterFirst);
+
+    const state = await store.getMatterState("p1", "m1");
+    expect(state.head.acceptedRevisionId).toBe(acceptedId);
+    // Only one accepted understanding for this matter from this candidate
+    // (no second accepted insert)
+    expect(state.accepted?.id).toBe(acceptedId);
+  });
+
   it("rejects supported WhyClaim when quote not in revision bytes", async () => {
     const v1 = new TextEncoder().encode("hello world");
     const add = await store.ingest({

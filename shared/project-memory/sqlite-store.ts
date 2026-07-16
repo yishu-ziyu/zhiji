@@ -99,7 +99,26 @@ function payloadHash(kind: string, aggregateId: string, payload: unknown): strin
 /**
  * Dedupe includes previous tip occurrence so A→B→A is not swallowed,
  * while re-observing the same tip+bytes remains the same key (plus tip short-circuit).
+ *
+ * Custom ObservationSignal.dedupeKey is always namespaced by projectId+grantId so
+ * identical caller keys in different projects never collide or cross-return events.
  */
+export function namespaceDedupeKey(
+  projectId: string,
+  grantId: string,
+  rawKey: string,
+): string {
+  const raw = rawKey.trim();
+  if (!raw) throw new Error("dedupeKey empty");
+  if (!projectId?.trim() || !grantId?.trim()) {
+    throw new Error("dedupeKey requires projectId and grantId");
+  }
+  const prefix = `${projectId}|${grantId}|`;
+  // Strip accidental double-prefix of this exact namespace only.
+  if (raw.startsWith(prefix)) return raw;
+  return `${prefix}${raw}`;
+}
+
 export function defaultDedupeKey(
   signal: ObservationSignal,
   opts: {
@@ -107,7 +126,13 @@ export function defaultDedupeKey(
     previousRevisionId?: string | null;
   } = {},
 ): string {
-  if (signal.dedupeKey?.trim()) return signal.dedupeKey.trim();
+  if (signal.dedupeKey?.trim()) {
+    return namespaceDedupeKey(
+      signal.projectId,
+      signal.grantId,
+      signal.dedupeKey,
+    );
+  }
   const pathKey = signal.relativePath.replace(/\\/g, "/");
   const prev = opts.previousRevisionId ?? "";
   if (signal.kind === "deleted") {
@@ -303,6 +328,8 @@ export class SqliteProjectMemoryStore
         ON change_events(project_id, observed_at);
       CREATE INDEX IF NOT EXISTS idx_understanding_matter
         ON understanding_revisions(project_id, matter_id, created_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_resolutions_candidate
+        ON owner_resolutions(candidate_revision_id);
     `);
   }
 
@@ -488,11 +515,55 @@ export class SqliteProjectMemoryStore
     return row ? this.mapRevision(row) : null;
   }
 
-  private findEventByDedupe(dedupeKey: string): ChangeEvent | null {
+  private findEventByDedupe(
+    dedupeKey: string,
+    scope?: { projectId: string; grantId: string },
+  ): ChangeEvent | null {
     const row = this.db
       .prepare(`SELECT * FROM change_events WHERE dedupe_key = ?`)
       .get(dedupeKey) as EventRow | undefined;
-    return row ? this.mapEvent(row) : null;
+    if (!row) return null;
+    const event = this.mapEvent(row);
+    if (
+      scope &&
+      (event.projectId !== scope.projectId || event.grantId !== scope.grantId)
+    ) {
+      // Never return another project's event for a colliding raw key.
+      return null;
+    }
+    return event;
+  }
+
+  private findResolutionByCandidate(
+    candidateRevisionId: string,
+  ): OwnerResolution | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM owner_resolutions WHERE candidate_revision_id = ?`,
+      )
+      .get(candidateRevisionId) as
+      | {
+          id: string;
+          candidate_revision_id: string;
+          decision: string;
+          edited_body_json: string | null;
+          actor: string;
+          created_at: string;
+          accepted_revision_id: string | null;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      candidateRevisionId: row.candidate_revision_id,
+      decision: row.decision as OwnerResolution["decision"],
+      editedBody: row.edited_body_json
+        ? (JSON.parse(row.edited_body_json) as UnderstandingBody)
+        : undefined,
+      actor: "owner",
+      createdAt: row.created_at,
+      acceptedRevisionId: row.accepted_revision_id ?? undefined,
+    };
   }
 
   private getRevision(id: string): OriginalRevision | null {
@@ -703,7 +774,10 @@ export class SqliteProjectMemoryStore
         previousRevisionId: beforeId,
       },
     );
-    const existing = this.findEventByDedupe(dedupeKey);
+    const existing = this.findEventByDedupe(dedupeKey, {
+      projectId: signal.projectId,
+      grantId: signal.grantId,
+    });
     if (existing) {
       const rev = existing.afterRevisionId
         ? this.getRevision(existing.afterRevisionId)
@@ -818,7 +892,10 @@ export class SqliteProjectMemoryStore
           previousRevisionId: tip?.id,
         },
       );
-      const existing = this.findEventByDedupe(dedupeKey);
+      const existing = this.findEventByDedupe(dedupeKey, {
+        projectId: signal.projectId,
+        grantId: signal.grantId,
+      });
       if (existing) {
         return {
           event: existing,
@@ -851,7 +928,10 @@ export class SqliteProjectMemoryStore
         previousRevisionId: lastLiveId,
       },
     );
-    const existing = this.findEventByDedupe(dedupeKey);
+    const existing = this.findEventByDedupe(dedupeKey, {
+      projectId: signal.projectId,
+      grantId: signal.grantId,
+    });
     if (existing) {
       return {
         event: existing,
@@ -1149,6 +1229,28 @@ export class SqliteProjectMemoryStore
       throw new Error("can only resolve a candidate revision");
     }
 
+    // At most one resolution per candidate: idempotent replay.
+    const prior = this.findResolutionByCandidate(input.candidateRevisionId);
+    if (prior) {
+      let head = this.getHead(candidate.matterId);
+      if (!head) {
+        head = {
+          matterId: candidate.matterId,
+          acceptedRevisionId: prior.acceptedRevisionId,
+          reviewState: "current",
+          reviewReasonEventIds: [],
+          updatedAt: prior.createdAt,
+        };
+      }
+      return {
+        resolution: prior,
+        accepted: prior.acceptedRevisionId
+          ? this.getUnderstanding(prior.acceptedRevisionId) ?? undefined
+          : undefined,
+        head,
+      };
+    }
+
     let head = this.getHead(candidate.matterId);
     if (!head) {
       head = {
@@ -1175,6 +1277,20 @@ export class SqliteProjectMemoryStore
 
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      // Re-check inside TX against concurrent double-accept.
+      const raced = this.findResolutionByCandidate(input.candidateRevisionId);
+      if (raced) {
+        this.db.exec("ROLLBACK");
+        const h = this.getHead(candidate.matterId) ?? head;
+        return {
+          resolution: raced,
+          accepted: raced.acceptedRevisionId
+            ? this.getUnderstanding(raced.acceptedRevisionId) ?? undefined
+            : undefined,
+          head: h,
+        };
+      }
+
       if (plan.acceptedToInsert) {
         this.insertUnderstanding(plan.acceptedToInsert);
       }
@@ -1212,6 +1328,18 @@ export class SqliteProjectMemoryStore
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
+      // Unique index on candidate_revision_id: treat as idempotent if raced.
+      const raced = this.findResolutionByCandidate(input.candidateRevisionId);
+      if (raced) {
+        const h = this.getHead(candidate.matterId) ?? head;
+        return {
+          resolution: raced,
+          accepted: raced.acceptedRevisionId
+            ? this.getUnderstanding(raced.acceptedRevisionId) ?? undefined
+            : undefined,
+          head: h,
+        };
+      }
       throw error;
     }
 
