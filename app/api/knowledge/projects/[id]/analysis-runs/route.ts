@@ -8,8 +8,8 @@ import {
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
- * AnalysisRun path: AgentMemoryService only (Reader + CandidateWriter).
- * Never injects OwnerDecisionWriter.
+ * AnalysisRun: shared AgentMemoryService only (Reader + CandidateWriter).
+ * Model-first via shared/llm/adapter (deterministic only on failure).
  */
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id: projectId } = await ctx.params;
@@ -25,8 +25,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       return NextResponse.json({ error: "matterId 必填" }, { status: 400 });
     }
     const service = getAgentMemoryService();
+    // Default model-first; AGENT_RUN_MODE=deterministic only for forced offline tests.
     const model = createAgentModelLoop({
-      mode: process.env.AGENT_RUN_MODE === "model" ? "model" : "deterministic",
+      mode:
+        process.env.AGENT_RUN_MODE === "deterministic"
+          ? "deterministic"
+          : "model",
     });
     const result = await runStateReconstruction(service, model, {
       projectId,

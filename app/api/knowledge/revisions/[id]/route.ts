@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  getAgentMemoryService,
+  getProjectMemoryReader,
   revisionBelongsToProject,
 } from "@/shared/project-memory/reconstruct";
 
@@ -12,7 +12,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   if (!projectId) {
     return NextResponse.json({ error: "projectId 必填" }, { status: 400 });
   }
-  const reader = getAgentMemoryService();
+  const reader = getProjectMemoryReader();
   if (!(await revisionBelongsToProject(reader, revisionId, projectId))) {
     return NextResponse.json(
       { error: "版本不存在或无权访问" },

@@ -1,0 +1,14 @@
+
+> fc-opc-ibot@0.1.0 test:unit
+> vitest run --run shared/project-memory/reconstruct.test.ts
+
+
+ RUN  v4.1.10 /Users/mahaoxuan/Desktop/黑客松/fc-opc-ibot-g5-mvp-v0-task4
+
+ ✓ shared/project-memory/reconstruct.test.ts (9 tests) 157ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  19:57:20
+   Duration  312ms (transform 57ms, setup 0ms, import 74ms, tests 157ms, environment 0ms)
+

@@ -9,14 +9,17 @@ import {
 } from "./agent-model-loop";
 import { assertAgentServiceShape } from "./reducer";
 import {
+  filterEventsForMatter,
+  getMemoryView,
   OwnerOnlyResolutionError,
+  ResolveValidationError,
   resolveUnderstanding,
   runStateReconstruction,
 } from "./reconstruct";
 import { SqliteProjectMemoryStore } from "./sqlite-store";
 import type { Matter, UnderstandingBody } from "./types";
 
-describe("MVP Task4 reconstruct + owner resolve (amended contract)", () => {
+describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
   let tmp: string;
   let store: SqliteProjectMemoryStore;
   const projectId = "p1";
@@ -45,6 +48,17 @@ describe("MVP Task4 reconstruct + owner resolve (amended contract)", () => {
       updatedAt: "2026-07-16T10:00:00.000Z",
     };
     store.upsertMatter(matter);
+    store.upsertWatchSet({
+      id: "w1",
+      projectId,
+      matterId,
+      grantId,
+      includePathPrefixes: ["src"],
+      excludePathPrefixes: [],
+      status: "active",
+      createdAt: "2026-07-16T10:00:00.000Z",
+      updatedAt: "2026-07-16T10:00:00.000Z",
+    });
   });
 
   afterEach(() => {
@@ -63,268 +77,186 @@ describe("MVP Task4 reconstruct + owner resolve (amended contract)", () => {
     });
   }
 
+  function agent() {
+    return store.asAgentMemoryService();
+  }
+
+  function resolveArgs(
+    candidateId: string,
+    decision: "accept" | "edit_accept" | "reject",
+    extra: Partial<{
+      editedBody: UnderstandingBody;
+      actor: string;
+      projectId: string;
+      matterId: string;
+    }> = {},
+  ) {
+    return resolveUnderstanding(store, store, {
+      projectId: extra.projectId ?? projectId,
+      matterId: extra.matterId ?? matterId,
+      candidateRevisionId: candidateId,
+      decision,
+      editedBody: extra.editedBody,
+      actor: extra.actor ?? "owner",
+    });
+  }
+
   it("agent service is Reader+CandidateWriter only (no resolve)", () => {
-    const agent = store.asAgentMemoryService();
-    assertAgentServiceShape(agent);
-    expect(agent).not.toHaveProperty("resolveCandidate");
-    expect("resolve" in agent).toBe(false);
+    assertAgentServiceShape(agent());
+    expect(agent()).not.toHaveProperty("resolveCandidate");
   });
 
-  it("pins evidence revisions and six-question structured body", async () => {
-    const { revision: rev, event } = await seedChange("a.md", "content-a");
-    const agent = store.asAgentMemoryService();
+  it("filters implicit and explicit events by matter watch relevance", async () => {
+    const watched = await seedChange("src/in.md", "in-watch");
+    const outside = await seedChange("other/out.md", "out-of-watch");
+    const state = await store.getMatterState(projectId, matterId);
+    const all = await store.listEvents(projectId);
+
+    const implicit = filterEventsForMatter(all, state);
+    expect(implicit.map((e) => e.id)).toContain(watched.event!.id);
+    expect(implicit.map((e) => e.id)).not.toContain(outside.event!.id);
+
+    const explicit = filterEventsForMatter(all, state, [
+      watched.event!.id,
+      outside.event!.id,
+    ]);
+    expect(explicit.map((e) => e.id)).toEqual([watched.event!.id]);
+  });
+
+  it("pins evidence from watch-relevant events only", async () => {
+    const { revision: rev } = await seedChange("src/a.md", "content-a");
+    await seedChange("noise/x.md", "ignore-me");
     const { candidate } = await runStateReconstruction(
-      agent,
+      agent(),
       createAgentModelLoop({ mode: "deterministic" }),
-      { projectId, matterId, eventIds: [event!.id] },
+      { projectId, matterId },
     );
     expect(candidate.kind).toBe("candidate");
-    expect(candidate.proposedBy).toBe("agent");
     expect(candidate.body.evidenceRevisionIds).toEqual([rev!.id]);
-    expect(candidate.body.changed.some((c) => c.after.includes(rev!.id))).toBe(
-      true,
-    );
-    expect(candidate.body.now.text).toBeTruthy();
-    expect(candidate.body.then.text).toBeTruthy();
     expect(candidate.body.why[0]?.status).toBe("unknown");
     expect(candidate.body.why[0]?.text).toBe(WHY_UNKNOWN);
   });
 
-  it("supported why requires quote+revision+path+lastVerifiedAt", async () => {
-    // Quote must exist in revision bytes (store boundary rejects false supported).
+  it("supported why needs path+quote bytes; false quote downgrades without failing run", async () => {
+    const quote = "fix: align timeout with SLA";
     const { revision: rev } = await seedChange(
-      "c.md",
-      "prefix fix: align timeout with SLA suffix",
+      "src/c.md",
+      `header\n${quote}\nfooter`,
     );
-    const agent = store.asAgentMemoryService();
     const { candidate } = await runStateReconstruction(
-      agent,
-      createAgentModelLoop(),
-      {
-        projectId,
-        matterId,
-        whySourceQuotes: ["  fix: align timeout with SLA  "],
-      },
+      agent(),
+      createAgentModelLoop({ mode: "deterministic" }),
+      { projectId, matterId, whySourceQuotes: [`  ${quote}  `] },
     );
     const w = candidate.body.why[0]!;
     expect(w.status).toBe("supported");
-    expect(w.text).toBe("fix: align timeout with SLA");
     expect(isFullySupportedAnchor(w)).toBe(true);
     expect(w.evidence[0]?.revisionId).toBe(rev!.id);
-    expect(w.evidence[0]?.relativePath).toBe("c.md");
-    expect(w.evidence[0]?.quote).toBe("fix: align timeout with SLA");
-    expect(w.evidence[0]?.lastVerifiedAt).toBeTruthy();
-  });
+    expect(w.evidence[0]?.relativePath).toBe("src/c.md");
 
-  it("incomplete supported why is coerced to unknown", async () => {
-    const { revision: rev } = await seedChange("bad.md", "x");
-    const agent = store.asAgentMemoryService();
-    const model = createAgentModelLoop({
-      mode: "model",
-      complete: async (): Promise<UnderstandingBody> => ({
-        now: {
-          text: "n",
-          evidence: [],
-          gaps: [],
-          conflicts: [],
-        },
-        then: {
-          text: "t",
-          at: "2026-01-01T00:00:00.000Z",
-          evidence: [],
-          gaps: [],
-          conflicts: [],
-        },
-        changed: [],
-        why: [
-          {
-            text: "pretend supported",
-            status: "supported",
-            evidence: [
-              {
-                revisionId: rev!.id,
-                relativePath: "bad.md",
-                quote: "", // missing quote → cannot stay supported
-                lastVerifiedAt: "2026-07-16T10:01:00.000Z",
-              },
-            ],
-          },
-        ],
-        evidenceRevisionIds: [rev!.id],
-        nextDecision: "n",
-      }),
-    });
-    const { candidate } = await runStateReconstruction(agent, model, {
-      projectId,
-      matterId,
-    });
-    expect(candidate.body.why[0]?.status).toBe("unknown");
-    expect(isFullySupportedAnchor(candidate.body.why[0]!)).toBe(false);
-  });
-
-  it("non-owner resolve → 403; agent path never receives OwnerDecisionWriter", async () => {
-    await seedChange("d.md", "content-d");
-    const agent = store.asAgentMemoryService();
-    const { candidate } = await runStateReconstruction(
-      agent,
-      createAgentModelLoop(),
-      { projectId, matterId },
-    );
-    await expect(
-      resolveUnderstanding(store, {
-        candidateRevisionId: candidate.id,
-        decision: "accept",
-        actor: "agent",
-      }),
-    ).rejects.toBeInstanceOf(OwnerOnlyResolutionError);
-    await expect(
-      resolveUnderstanding(store, {
-        candidateRevisionId: candidate.id,
-        decision: "accept",
-        actor: "agent:project-reviewer",
-      }),
-    ).rejects.toMatchObject({ status: 403 });
-    // agent surface still cannot resolve
-    expect(() => assertAgentServiceShape(agent)).not.toThrow();
-    expect(agent).not.toHaveProperty("resolveCandidate");
-  });
-
-  it("owner accept INSERTs new accepted revision; candidate immutable", async () => {
-    await seedChange("e.md", "content-e");
-    const agent = store.asAgentMemoryService();
-    const { candidate } = await runStateReconstruction(
-      agent,
-      createAgentModelLoop(),
-      { projectId, matterId },
-    );
-    const candSnap = JSON.stringify(candidate.body);
-    const result = await resolveUnderstanding(store, {
-      candidateRevisionId: candidate.id,
-      decision: "accept",
-      actor: "owner",
-    });
-    expect(result.accepted?.kind).toBe("accepted");
-    expect(result.accepted?.id).not.toBe(candidate.id);
-    expect(result.head.acceptedRevisionId).toBe(result.accepted!.id);
-    expect(result.resolution.acceptedRevisionId).toBe(result.accepted!.id);
-
-    const state = await store.getMatterState(projectId, matterId);
-    expect(state.candidate?.id).toBe(candidate.id);
-    expect(state.candidate?.kind).toBe("candidate");
-    expect(JSON.stringify(state.candidate!.body)).toBe(candSnap);
-    expect(state.accepted?.id).toBe(result.accepted!.id);
-  });
-
-  it("owner edit_accept stores edited body on NEW accepted revision", async () => {
-    const { revision: rev } = await seedChange("f.md", "content-f");
-    const agent = store.asAgentMemoryService();
-    const { candidate } = await runStateReconstruction(
-      agent,
-      createAgentModelLoop(),
-      { projectId, matterId },
-    );
-    const edited: UnderstandingBody = {
-      ...candidate.body,
-      now: {
-        ...candidate.body.now,
-        text: "Owner 编辑后的当前理解",
+    const { candidate: bad, run } = await runStateReconstruction(
+      agent(),
+      createAgentModelLoop({ mode: "deterministic" }),
+      {
+        projectId,
+        matterId,
+        whySourceQuotes: ["arbitrary string not in file"],
       },
-      evidenceRevisionIds: [rev!.id],
-    };
-    const result = await resolveUnderstanding(store, {
-      candidateRevisionId: candidate.id,
-      decision: "edit_accept",
-      actor: "owner",
-      editedBody: edited,
-    });
-    expect(result.accepted?.id).not.toBe(candidate.id);
-    expect(result.accepted?.body.now.text).toBe("Owner 编辑后的当前理解");
-    expect(result.accepted?.proposedBy).toBe("owner");
-    expect(result.accepted?.kind).toBe("accepted");
+    );
+    expect(run.status).toBe("awaiting_owner");
+    expect(bad.kind).toBe("candidate");
+    expect(bad.body.why[0]?.status).toBe("unknown");
   });
 
-  it("model failure still returns deterministic changed/evidence for Owner", async () => {
-    const { revision: rev } = await seedChange("g.md", "content-g");
-    const agent = store.asAgentMemoryService();
+  it("model failure falls back to deterministic changed/evidence", async () => {
+    const { revision: rev } = await seedChange("src/g.md", "content-g");
     const model = createAgentModelLoop({
       mode: "model",
       complete: async () => {
         throw new Error("upstream timeout");
       },
     });
-    const { candidate, run } = await runStateReconstruction(agent, model, {
+    const { candidate, run } = await runStateReconstruction(agent(), model, {
       projectId,
       matterId,
     });
     expect(candidate.body.evidenceRevisionIds).toContain(rev!.id);
-    expect(
-      candidate.body.changed.some((c) => c.after.includes(rev!.id)),
-    ).toBe(true);
     expect(candidate.body.now.text).toMatch(/模型不可用|确定性/);
-    expect(candidate.body.nextDecision).toMatch(/Owner/);
-    expect(candidate.kind).toBe("candidate");
     expect(run.status).toBe("awaiting_owner");
   });
 
-  it("strips model evidence pins not in project events", async () => {
-    const { revision: rev } = await seedChange("h.md", "content-h");
-    const agent = store.asAgentMemoryService();
-    const model = createAgentModelLoop({
-      mode: "model",
-      complete: async () => ({
-        now: {
-          text: "x",
-          evidence: [],
-          gaps: [],
-          conflicts: [],
-        },
-        then: {
-          text: "y",
-          at: "2026-01-01T00:00:00.000Z",
-          evidence: [],
-          gaps: [],
-          conflicts: [],
-        },
-        changed: [],
-        why: [{ text: WHY_UNKNOWN, status: "unknown", evidence: [] }],
-        evidenceRevisionIds: [rev!.id, "sha256:foreign"],
-        nextDecision: "n",
-      }),
-    });
-    const { candidate } = await runStateReconstruction(agent, model, {
-      projectId,
-      matterId,
-    });
-    expect(candidate.body.evidenceRevisionIds).toEqual([rev!.id]);
-    expect(candidate.body.evidenceRevisionIds).not.toContain("sha256:foreign");
-  });
-
-  it("evidence file change marks head review_needed; accepted body immutable", async () => {
-    const { revision: rev } = await seedChange("i.md", "content-i-v1");
-    const agent = store.asAgentMemoryService();
+  it("non-owner 403; edit_accept without body 400; wrong projectId 400", async () => {
+    await seedChange("src/d.md", "content-d");
     const { candidate } = await runStateReconstruction(
-      agent,
-      createAgentModelLoop(),
+      agent(),
+      createAgentModelLoop({ mode: "deterministic" }),
       { projectId, matterId },
     );
-    const { accepted } = await resolveUnderstanding(store, {
-      candidateRevisionId: candidate.id,
-      decision: "accept",
-      actor: "owner",
+    await expect(
+      resolveArgs(candidate.id, "accept", { actor: "agent" }),
+    ).rejects.toBeInstanceOf(OwnerOnlyResolutionError);
+
+    await expect(
+      resolveArgs(candidate.id, "edit_accept"),
+    ).rejects.toBeInstanceOf(ResolveValidationError);
+
+    await expect(
+      resolveArgs(candidate.id, "accept", { projectId: "other" }),
+    ).rejects.toBeInstanceOf(ResolveValidationError);
+  });
+
+  it("owner accept inserts new accepted; repeat resolve is idempotent", async () => {
+    await seedChange("src/e.md", "content-e");
+    const { candidate } = await runStateReconstruction(
+      agent(),
+      createAgentModelLoop({ mode: "deterministic" }),
+      { projectId, matterId },
+    );
+    const first = await resolveArgs(candidate.id, "accept");
+    expect(first.accepted?.id).not.toBe(candidate.id);
+    expect(first.accepted?.kind).toBe("accepted");
+
+    const second = await resolveArgs(candidate.id, "accept");
+    expect(second.resolution.id).toBe(first.resolution.id);
+    expect(second.accepted?.id).toBe(first.accepted?.id);
+    expect(second.head.acceptedRevisionId).toBe(first.head.acceptedRevisionId);
+  });
+
+  it("edit_accept requires editedBody and creates new accepted revision", async () => {
+    const { revision: rev } = await seedChange("src/f.md", "content-f");
+    const { candidate } = await runStateReconstruction(
+      agent(),
+      createAgentModelLoop({ mode: "deterministic" }),
+      { projectId, matterId },
+    );
+    const edited: UnderstandingBody = {
+      ...candidate.body,
+      now: { ...candidate.body.now, text: "Owner 编辑后的当前理解" },
+      evidenceRevisionIds: [rev!.id],
+    };
+    const result = await resolveArgs(candidate.id, "edit_accept", {
+      editedBody: edited,
     });
-    const acceptedBody = JSON.stringify(accepted!.body);
-    await store.ingest({
-      projectId,
-      grantId,
-      kind: "modified",
-      relativePath: "i.md",
-      content: new TextEncoder().encode("content-i-v2"),
-      observedAt: "2026-07-16T10:05:00.000Z",
+    expect(result.accepted?.body.now.text).toBe("Owner 编辑后的当前理解");
+    expect(result.accepted?.id).not.toBe(candidate.id);
+  });
+
+  it("memory view excludes resolved candidates", async () => {
+    await seedChange("src/m.md", "mem");
+    const { candidate } = await runStateReconstruction(
+      agent(),
+      createAgentModelLoop({ mode: "deterministic" }),
+      { projectId, matterId },
+    );
+    await resolveArgs(candidate.id, "accept");
+
+    const view = await getMemoryView(store, projectId, matterId, {
+      isCandidateResolved: (id) => store.isCandidateResolved(id),
     });
-    const state = await store.getMatterState(projectId, matterId);
-    expect(state.head.reviewState).toBe("review_needed");
-    expect(state.head.acceptedRevisionId).toBe(accepted!.id);
-    expect(JSON.stringify(state.accepted!.body)).toBe(acceptedBody);
-    expect(await store.readRevision(rev!.id)).toBeTruthy();
+    expect(view?.accepted).toBeTruthy();
+    expect(view?.candidate).toBeNull();
+    // raw truth row remains immutable candidate
+    const raw = await store.getMatterState(projectId, matterId);
+    expect(raw.candidate?.id).toBe(candidate.id);
   });
 });

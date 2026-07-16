@@ -668,7 +668,13 @@ export class SqliteProjectMemoryStore
     };
   }
 
-  private getRevision(id: string): OriginalRevision | null {
+  
+  /** True when Owner has already resolved this candidate (accept/edit/reject). */
+  isCandidateResolved(candidateRevisionId: string): boolean {
+    return this.findResolutionByCandidate(candidateRevisionId) !== null;
+  }
+
+private getRevision(id: string): OriginalRevision | null {
     const row = this.db
       .prepare(`SELECT * FROM original_revisions WHERE id = ?`)
       .get(id) as RevisionRow | undefined;
@@ -804,6 +810,13 @@ export class SqliteProjectMemoryStore
         if (!rev || rev.projectId !== projectId) {
           throw new Error(
             `supported WhyClaim anchor revision missing or foreign: ${a.revisionId}`,
+          );
+        }
+        const canonical = rev.relativePath.replace(/\\/g, "/");
+        const claimed = a.relativePath.replace(/\\/g, "/").replace(/^\.\//, "");
+        if (canonical !== claimed) {
+          throw new Error(
+            `supported WhyClaim path must match revision canonical path: ${canonical}`,
           );
         }
         const bytes = this.cas.read(rev.sha256);

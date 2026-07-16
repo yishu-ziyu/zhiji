@@ -1,8 +1,9 @@
 /**
  * MVP V0 Task 4 — replaceable Agent model loop.
- * Produces UnderstandingBody candidates only; never writes accepted state.
+ * Default: attempt real model via shared/llm/adapter; deterministic only on failure.
  */
 
+import { complete, extractJson } from "@/shared/llm/adapter";
 import { HONEST_WHY_DEFAULT } from "./reducer";
 import type {
   AgentModelLoop,
@@ -39,7 +40,9 @@ export function buildDeterministicUnderstandingBody(
       e.afterRevisionId ?? e.beforeRevisionId ?? "revision:unavailable";
     const path = e.relativePath;
     const evidence = anchors.filter(
-      (a) => a.revisionId === e.afterRevisionId || a.revisionId === e.beforeRevisionId,
+      (a) =>
+        a.revisionId === e.afterRevisionId ||
+        a.revisionId === e.beforeRevisionId,
     );
     return {
       before: e.previousPath ?? e.beforeRevisionId ?? "",
@@ -121,8 +124,8 @@ function anchorsFromEvents(
     seen.add(rid);
     out.push({
       revisionId: rid,
-      relativePath: e.relativePath,
-      quote: "", // filled only when citable snippet exists
+      relativePath: e.relativePath.replace(/\\/g, "/"),
+      quote: "",
       lastVerifiedAt: e.observedAt || nowIso,
     });
   }
@@ -140,8 +143,7 @@ function buildWhyClaims(
     const text = snip.text?.trim();
     if (!text) continue;
     const match =
-      anchors.find((a) => a.revisionId === snip.revisionId) ??
-      anchors[0];
+      anchors.find((a) => a.revisionId === snip.revisionId) ?? anchors[0];
     if (
       match &&
       snip.revisionId &&
@@ -153,7 +155,10 @@ function buildWhyClaims(
         status: "supported",
         evidence: [
           {
-            revisionId: snip.revisionId === "quote:unpinned" ? match.revisionId : snip.revisionId,
+            revisionId:
+              snip.revisionId === "quote:unpinned"
+                ? match.revisionId
+                : snip.revisionId,
             relativePath: match.relativePath,
             quote: text,
             lastVerifiedAt: match.lastVerifiedAt || nowIso,
@@ -161,11 +166,7 @@ function buildWhyClaims(
         ],
       });
     } else {
-      claims.push({
-        text,
-        status: "unknown",
-        evidence: [],
-      });
+      claims.push({ text, status: "unknown", evidence: [] });
     }
   }
 
@@ -174,13 +175,12 @@ function buildWhyClaims(
       (w) => w.status === "supported" && isFullySupportedAnchor(w),
     );
     if (acceptedSupported.length > 0) {
-      return acceptedSupported.map((w) => ({ ...w, evidence: [...w.evidence] }));
+      return acceptedSupported.map((w) => ({
+        ...w,
+        evidence: [...w.evidence],
+      }));
     }
-    claims.push({
-      text: WHY_UNKNOWN,
-      status: "unknown",
-      evidence: [],
-    });
+    claims.push({ text: WHY_UNKNOWN, status: "unknown", evidence: [] });
   }
 
   return claims.map(normalizeWhyClaim);
@@ -205,7 +205,6 @@ function buildDepends(
   return deps;
 }
 
-/** supported requires non-empty quote + revisionId + relativePath + lastVerifiedAt. */
 export function isFullySupportedAnchor(claim: WhyClaim): boolean {
   if (claim.status !== "supported") return false;
   if (!claim.evidence.length) return false;
@@ -231,12 +230,96 @@ export function normalizeWhyClaim(claim: WhyClaim): WhyClaim {
     return { ...claim, text, evidence: claim.evidence ?? [] };
   }
   if (!text || text === WHY_UNKNOWN) {
-    return { text: WHY_UNKNOWN, status: "unknown", evidence: claim.evidence ?? [] };
+    return {
+      text: WHY_UNKNOWN,
+      status: "unknown",
+      evidence: claim.evidence ?? [],
+    };
   }
   return { ...claim, text };
 }
 
+function buildModelPrompt(input: MatterStateReconstructionInput): string {
+  return [
+    "Return a single JSON object for UnderstandingBody with keys:",
+    "now {text,evidence[],gaps[],conflicts[]}, then {text,at,evidence[],gaps[],conflicts[]},",
+    "changed[{before,after,eventIds[],evidence[]}], why[{text,status,evidence[]}],",
+    "depends[{kind,id,reason}], evidenceRevisionIds[], nextDecision.",
+    "why[].status is supported|unknown|conflicted. supported requires revisionId+relativePath+quote+lastVerifiedAt.",
+    "Only cite revision ids present in the events below.",
+    `projectId=${input.projectId} matterId=${input.matterId}`,
+    `events=${JSON.stringify(input.events)}`,
+    `accepted=${JSON.stringify(input.accepted?.body ?? null)}`,
+    `snippets=${JSON.stringify(input.evidenceSnippets ?? [])}`,
+  ].join("\n");
+}
+
+function coerceModelBody(raw: Record<string, unknown>): UnderstandingBody {
+  const asState = (v: unknown, fallback: StateClaim): StateClaim => {
+    if (!v || typeof v !== "object") return fallback;
+    const o = v as Record<string, unknown>;
+    return {
+      text: typeof o.text === "string" ? o.text : fallback.text,
+      evidence: Array.isArray(o.evidence)
+        ? (o.evidence as EvidenceAnchor[])
+        : fallback.evidence,
+      gaps: Array.isArray(o.gaps) ? (o.gaps as string[]) : fallback.gaps,
+      conflicts: Array.isArray(o.conflicts)
+        ? (o.conflicts as string[])
+        : fallback.conflicts,
+    };
+  };
+  const det = buildDeterministicUnderstandingBody({
+    projectId: "",
+    matterId: "",
+    events: [],
+    evidenceSnippets: [],
+  });
+  const now = asState(raw.now, det.now);
+  const thenBase = asState(raw.then, det.then);
+  const thenAt =
+    raw.then &&
+    typeof raw.then === "object" &&
+    typeof (raw.then as { at?: unknown }).at === "string"
+      ? (raw.then as { at: string }).at
+      : det.then.at;
+  return {
+    now,
+    then: { ...thenBase, at: thenAt },
+    changed: Array.isArray(raw.changed)
+      ? (raw.changed as ChangeClaim[])
+      : det.changed,
+    why: Array.isArray(raw.why) ? (raw.why as WhyClaim[]) : det.why,
+    depends: Array.isArray(raw.depends)
+      ? (raw.depends as UnderstandingBody["depends"])
+      : det.depends,
+    evidenceRevisionIds: Array.isArray(raw.evidenceRevisionIds)
+      ? (raw.evidenceRevisionIds as string[])
+      : det.evidenceRevisionIds,
+    nextDecision:
+      typeof raw.nextDecision === "string"
+        ? raw.nextDecision
+        : det.nextDecision,
+  };
+}
+
+/** Default live completion via shared/llm/adapter. */
+export async function completeUnderstandingViaLlm(
+  input: MatterStateReconstructionInput,
+): Promise<UnderstandingBody> {
+  const text = await complete(
+    buildModelPrompt(input),
+    "You are a project-memory reconstruction agent. Output JSON only.",
+    { maxRetries: 1, timeout: 15000 },
+  );
+  return coerceModelBody(extractJson(text));
+}
+
 export type AgentModelLoopOptions = {
+  /**
+   * Default `model`: attempt complete (llm adapter or inject), fall back deterministic on failure.
+   * `deterministic` forces template path (tests).
+   */
   mode?: "deterministic" | "model";
   complete?: (
     input: MatterStateReconstructionInput,
@@ -246,30 +329,31 @@ export type AgentModelLoopOptions = {
 export function createAgentModelLoop(
   options: AgentModelLoopOptions = {},
 ): AgentModelLoop {
-  const mode = options.mode ?? "deterministic";
+  // PRD: attempt model by default; never silent-template under "model".
+  const mode = options.mode ?? "model";
+  const completeFn = options.complete ?? completeUnderstandingViaLlm;
   return {
     async propose(input) {
-      if (mode === "model" && options.complete) {
-        try {
-          return sanitizeModelBody(await options.complete(input), input);
-        } catch {
-          const fallback = buildDeterministicUnderstandingBody(input);
-          return {
-            ...fallback,
-            now: {
-              ...fallback.now,
-              text: `${fallback.now.text}（模型不可用，已保留确定性 changed/evidence）`,
-            },
-            nextDecision: "需 Owner 判断（模型失败，仅确定性摘要可用）",
-          };
-        }
+      if (mode === "deterministic") {
+        return buildDeterministicUnderstandingBody(input);
       }
-      return buildDeterministicUnderstandingBody(input);
+      try {
+        return sanitizeModelBody(await completeFn(input), input);
+      } catch {
+        const fallback = buildDeterministicUnderstandingBody(input);
+        return {
+          ...fallback,
+          now: {
+            ...fallback.now,
+            text: `${fallback.now.text}（模型不可用，已保留确定性 changed/evidence）`,
+          },
+          nextDecision: "需 Owner 判断（模型失败，仅确定性摘要可用）",
+        };
+      }
     },
   };
 }
 
-/** Schema sanitize: drop foreign pins; coerce incomplete supported why → unknown. */
 export function sanitizeModelBody(
   body: UnderstandingBody,
   input: MatterStateReconstructionInput,
@@ -279,11 +363,11 @@ export function sanitizeModelBody(
   for (const e of input.events) {
     if (e.afterRevisionId) {
       allowed.add(e.afterRevisionId);
-      pathByRev.set(e.afterRevisionId, e.relativePath);
+      pathByRev.set(e.afterRevisionId, e.relativePath.replace(/\\/g, "/"));
     }
     if (e.beforeRevisionId) {
       allowed.add(e.beforeRevisionId);
-      pathByRev.set(e.beforeRevisionId, e.relativePath);
+      pathByRev.set(e.beforeRevisionId, e.relativePath.replace(/\\/g, "/"));
     }
   }
   for (const snip of input.evidenceSnippets ?? []) {
@@ -292,10 +376,15 @@ export function sanitizeModelBody(
 
   const filterAnchors = (anchors: EvidenceAnchor[]): EvidenceAnchor[] =>
     (anchors ?? [])
-      .filter((a) => (allowed.size === 0 ? Boolean(a.revisionId) : allowed.has(a.revisionId)))
+      .filter((a) =>
+        allowed.size === 0 ? Boolean(a.revisionId) : allowed.has(a.revisionId),
+      )
       .map((a) => ({
         revisionId: a.revisionId,
-        relativePath: a.relativePath?.trim() || pathByRev.get(a.revisionId) || "",
+        relativePath:
+          a.relativePath?.trim().replace(/\\/g, "/") ||
+          pathByRev.get(a.revisionId) ||
+          "",
         quote: a.quote ?? "",
         lastVerifiedAt: a.lastVerifiedAt?.trim() || new Date().toISOString(),
       }));
@@ -316,35 +405,29 @@ export function sanitizeModelBody(
     }),
   );
 
-  const now: StateClaim = {
-    text: body.now?.text?.trim() || det.now.text,
-    evidence: filterAnchors(body.now?.evidence ?? det.now.evidence),
-    gaps: body.now?.gaps ?? det.now.gaps,
-    conflicts: body.now?.conflicts ?? det.now.conflicts,
-  };
-
-  const then: StateClaim & { at: string } = {
-    text: body.then?.text?.trim() || det.then.text,
-    at: body.then?.at || det.then.at,
-    evidence: filterAnchors(body.then?.evidence ?? det.then.evidence),
-    gaps: body.then?.gaps ?? det.then.gaps,
-    conflicts: body.then?.conflicts ?? det.then.conflicts,
-  };
-
-  const changed: ChangeClaim[] =
-    body.changed?.length > 0
-      ? body.changed.map((c) => ({
-          before: c.before ?? "",
-          after: c.after ?? "",
-          eventIds: c.eventIds ?? [],
-          evidence: filterAnchors(c.evidence ?? []),
-        }))
-      : det.changed;
-
   return {
-    now,
-    then,
-    changed,
+    now: {
+      text: body.now?.text?.trim() || det.now.text,
+      evidence: filterAnchors(body.now?.evidence ?? det.now.evidence),
+      gaps: body.now?.gaps ?? det.now.gaps,
+      conflicts: body.now?.conflicts ?? det.now.conflicts,
+    },
+    then: {
+      text: body.then?.text?.trim() || det.then.text,
+      at: body.then?.at || det.then.at,
+      evidence: filterAnchors(body.then?.evidence ?? det.then.evidence),
+      gaps: body.then?.gaps ?? det.then.gaps,
+      conflicts: body.then?.conflicts ?? det.then.conflicts,
+    },
+    changed:
+      body.changed?.length > 0
+        ? body.changed.map((c) => ({
+            before: c.before ?? "",
+            after: c.after ?? "",
+            eventIds: c.eventIds ?? [],
+            evidence: filterAnchors(c.evidence ?? []),
+          }))
+        : det.changed,
     why: why.length > 0 ? why : det.why,
     depends: body.depends?.length ? body.depends : det.depends,
     evidenceRevisionIds: pins,
