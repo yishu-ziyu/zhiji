@@ -59,7 +59,7 @@ KNOWLEDGE_DATA_DIR=/tmp/k015-empty npm run dev
 ## Commit
 
 分支：`feature/first-user-real-entry`  
-HEAD：`a64bbeb07d5f87ebe84e4ed2376378af034bdd8d`
+HEAD：`a938b6bc`
 
 | SHA | message |
 |-----|---------|
@@ -68,6 +68,7 @@ HEAD：`a64bbeb07d5f87ebe84e4ed2376378af034bdd8d`
 | `912ac585` | feat(knowledge): honest empty workspace with create and upload |
 | `0220a03a` | test(knowledge): cover first-user empty path for 015 |
 | `a64bbeb0` | docs(ship): record G3-015 handoff and board W2-W5 done |
+| `a938b6bc` | docs(ship): pin G3-015 commit SHAs on handoff and board |
 
 ## 未做（合同非目标 / 留给 G4）
 
