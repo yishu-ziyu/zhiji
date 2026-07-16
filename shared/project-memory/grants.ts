@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { SqliteProjectMemoryStore } from "./sqlite-store";
 import {
   createLocalObservationAdapter,
   relativePathWithinGrantRoot,
 } from "./observer";
+import {
+  getSharedProjectMemoryStore,
+  resetSharedProjectMemoryStoreForTests,
+} from "./runtime";
+import type { SqliteProjectMemoryStore } from "./sqlite-store";
 import type {
   ChangeEvent,
   MatterWatchSet,
@@ -398,13 +402,13 @@ export class SourceGrantManager {
 
 let defaultManager: SourceGrantManager | undefined;
 
+/**
+ * Default manager shares the process-wide Project Memory SQLite via runtime.ts.
+ * Must not open a separate data/knowledge or .data/project-memory store.
+ */
 export function getDefaultSourceGrantManager(): SourceGrantManager {
   if (!defaultManager) {
-    const dataDir =
-      process.env.MVP_MEMORY_DATA_DIR ??
-      process.env.KNOWLEDGE_DATA_DIR ??
-      path.join(process.cwd(), "data", "knowledge");
-    const store = new SqliteProjectMemoryStore({ dataDir });
+    const store = getSharedProjectMemoryStore();
     defaultManager = new SourceGrantManager({
       store,
       adapter: createLocalObservationAdapter(),
@@ -413,6 +417,9 @@ export function getDefaultSourceGrantManager(): SourceGrantManager {
   return defaultManager;
 }
 
-export function resetDefaultSourceGrantManagerForTests(): void {
+export function resetDefaultSourceGrantManagerForTests(dataDir?: string): void {
   defaultManager = undefined;
+  if (dataDir !== undefined) {
+    resetSharedProjectMemoryStoreForTests(dataDir || undefined);
+  }
 }

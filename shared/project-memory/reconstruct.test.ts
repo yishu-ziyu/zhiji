@@ -91,7 +91,11 @@ describe("MVP Task4 reconstruct + owner resolve (amended contract)", () => {
   });
 
   it("supported why requires quote+revision+path+lastVerifiedAt", async () => {
-    const { revision: rev } = await seedChange("c.md", "quote body here");
+    // Quote must exist in revision bytes (store boundary rejects false supported).
+    const { revision: rev } = await seedChange(
+      "c.md",
+      "prefix fix: align timeout with SLA suffix",
+    );
     const agent = store.asAgentMemoryService();
     const { candidate } = await runStateReconstruction(
       agent,

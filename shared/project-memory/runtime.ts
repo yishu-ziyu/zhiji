@@ -57,20 +57,23 @@ export function getSharedProjectMemoryStore(options?: {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
 }): SqliteProjectMemoryStore {
-  const dataDir = path.resolve(
-    options?.dataDir ??
-      resolveProjectMemoryDataDir(options?.env ?? process.env, options?.cwd),
-  );
-
+  // Already open: return same instance. Only an *explicit* other dataDir is rejected.
   if (runtime) {
-    if (runtime.dataDir !== dataDir) {
-      throw new Error(
-        `Project Memory store already open at ${runtime.dataDir}; refusing second dataDir ${dataDir}`,
-      );
+    if (options?.dataDir !== undefined) {
+      const wanted = path.resolve(options.dataDir);
+      if (runtime.dataDir !== wanted) {
+        throw new Error(
+          `Project Memory store already open at ${runtime.dataDir}; refusing second dataDir ${wanted}`,
+        );
+      }
     }
     return runtime.store;
   }
 
+  const dataDir = path.resolve(
+    options?.dataDir ??
+      resolveProjectMemoryDataDir(options?.env ?? process.env, options?.cwd),
+  );
   const store = openProjectMemoryStore(dataDir);
   runtime = { dataDir, store };
   return store;

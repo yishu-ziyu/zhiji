@@ -75,4 +75,35 @@ describe("project-memory shared runtime identity", () => {
       fs.rmSync(bDir, { recursive: true, force: true });
     }
   });
+
+  it("agent route defaults bind to the shared runtime singleton (same SQLite path)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pm-runtime-loop-"));
+    try {
+      resetSharedProjectMemoryStoreForTests();
+      const {
+        getDefaultSqliteStore,
+        getAgentMemoryService,
+        getOwnerDecisionWriter,
+        resetDefaultProjectMemoryStoreForTests,
+      } = await import("./reconstruct");
+
+      resetDefaultProjectMemoryStoreForTests(tmp);
+
+      const shared = getSharedProjectMemoryStore({ dataDir: tmp });
+      const fromRoutes = getDefaultSqliteStore();
+      const agent = getAgentMemoryService();
+      const owner = getOwnerDecisionWriter();
+
+      expect(fromRoutes).toBe(shared);
+      expect(owner).toBe(shared);
+      expect(fromRoutes.dbPath).toBe(projectMemorySqlitePath(tmp));
+      expect(getSharedProjectMemoryDataDir()).toBe(path.resolve(tmp));
+      expect("resolveCandidate" in agent).toBe(false);
+      // grants.ts getDefaultSourceGrantManager() also calls getSharedProjectMemoryStore()
+      // (wired in production; not imported here — @parcel/watcher optional in unit env)
+    } finally {
+      resetSharedProjectMemoryStoreForTests();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

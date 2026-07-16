@@ -5,7 +5,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import {
   buildDeterministicUnderstandingBody,
   createAgentModelLoop,
@@ -17,9 +16,11 @@ import {
 } from "./agent-model-loop";
 import { assertAgentServiceShape } from "./reducer";
 import {
-  openProjectMemoryStore,
-  type SqliteProjectMemoryStore,
-} from "./sqlite-store";
+  getSharedAgentMemoryService,
+  getSharedProjectMemoryStore,
+  resetSharedProjectMemoryStoreForTests,
+} from "./runtime";
+import type { SqliteProjectMemoryStore } from "./sqlite-store";
 import type {
   AgentMemoryService,
   AnalysisRun,
@@ -274,36 +275,24 @@ export async function resolveUnderstanding(
   return writer.resolveCandidate(resolution);
 }
 
-/** Default full store for process (routes pick agent vs owner surface). */
-let defaultStore: SqliteProjectMemoryStore | null = null;
-
+/**
+ * Default full store for process (routes pick agent vs owner surface).
+ * Delegates to shared runtime so observer manager and Agent APIs share one SQLite.
+ */
 export function getDefaultSqliteStore(): SqliteProjectMemoryStore {
-  if (!defaultStore) {
-    const dataDir =
-      process.env.PROJECT_MEMORY_DIR ??
-      path.join(process.cwd(), ".data", "project-memory");
-    defaultStore = openProjectMemoryStore(dataDir);
-  }
-  return defaultStore;
+  return getSharedProjectMemoryStore();
 }
 
 /** AnalysisRun / memory GET — Reader + CandidateWriter only. */
 export function getAgentMemoryService(): AgentMemoryService {
-  return getDefaultSqliteStore().asAgentMemoryService();
+  return getSharedAgentMemoryService();
 }
 
 /** Resolve route — OwnerDecisionWriter only (full store implements the port). */
 export function getOwnerDecisionWriter(): OwnerDecisionWriter {
-  return getDefaultSqliteStore();
+  return getSharedProjectMemoryStore();
 }
 
 export function resetDefaultProjectMemoryStoreForTests(dataDir?: string): void {
-  if (defaultStore) {
-    try {
-      defaultStore.close();
-    } catch {
-      /* ignore */
-    }
-  }
-  defaultStore = dataDir ? openProjectMemoryStore(dataDir) : null;
+  resetSharedProjectMemoryStoreForTests(dataDir);
 }
