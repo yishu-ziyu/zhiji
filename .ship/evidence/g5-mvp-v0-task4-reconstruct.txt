@@ -1,0 +1,17 @@
+> fc-opc-ibot@0.1.0 test:unit
+> vitest run --run shared/project-memory/reconstruct.test.ts shared/project-memory/sqlite-store.test.ts shared/project-memory/reducer.test.ts
+
+ RUN  v4.1.10
+
+ ✓ shared/project-memory/reducer.test.ts (7 tests)
+ ✓ shared/project-memory/sqlite-store.test.ts (7 tests)
+ ✓ shared/project-memory/reconstruct.test.ts (10 tests)
+
+ Test Files  3 passed (3)
+      Tests  24 passed (24)
+
+EXIT:0
+
+Base: g2/mvp-v0-integration @ 3d4c097a (source amend ab242b67)
+Frozen old Task4: 59302d20 — NOT integrated
+No types.ts in this commit (uses G3 amended contract)
