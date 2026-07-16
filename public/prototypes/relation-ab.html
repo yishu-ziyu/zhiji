@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>关系原型 · A → B</title>
+  <style>
+    :root {
+      --bg: #f6f6f3;
+      --card: #fff;
+      --line: #e4e4df;
+      --ink: #1d1f23;
+      --muted: #75787e;
+      --accent: #2f6fed;
+      --ok: #5a9a3a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.9);
+    }
+    header h1 { margin: 0; font-size: 16px; }
+    header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .stage {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr 1fr;
+      gap: 20px;
+      align-items: center;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 40px 24px 24px;
+      min-height: 420px;
+    }
+    .col { display: grid; gap: 12px; align-content: center; }
+    .col.left { justify-items: end; }
+    .col.right { justify-items: start; }
+    .col.center { justify-items: center; }
+    .node {
+      width: min(100%, 220px);
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card);
+      box-shadow: 0 8px 24px rgba(30,32,36,.06);
+      text-align: left;
+      cursor: pointer;
+      transition: border-color .15s, transform .15s;
+    }
+    .node:hover { border-color: #c5d4ea; transform: translateY(-1px); }
+    .node.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(47,111,237,.12);
+    }
+    .node strong { display: block; font-size: 14px; }
+    .node small { color: var(--muted); font-size: 11px; }
+    .edge {
+      margin-top: 8px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: #f3f5f8;
+      font-size: 11px;
+      color: #3d4450;
+    }
+    .edge b { color: var(--accent); }
+    .edge .ev {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+    .edge.suggested { border: 1px dashed #dfc48d; background: #fffaf0; }
+    .center-card {
+      width: min(100%, 240px);
+      min-height: 140px;
+      display: grid;
+      place-content: center;
+      gap: 6px;
+      padding: 20px;
+      border: 2px solid var(--accent);
+      border-radius: 20px;
+      background: var(--card);
+      text-align: center;
+      box-shadow: 0 12px 32px rgba(30,32,36,.08);
+    }
+    .center-card span { color: var(--muted); font-size: 12px; }
+    .panel {
+      max-width: 1100px;
+      margin: 0 auto 32px;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 16px;
+    }
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card);
+      padding: 16px;
+    }
+    .box h2 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 650; }
+    .box p { margin: 0 0 8px; font-size: 13px; }
+    .steps { font-size: 12px; color: var(--muted); }
+    .steps li { margin: 4px 0; }
+    button.primary {
+      margin-top: 10px;
+      padding: 8px 12px;
+      border: 0;
+      border-radius: 9px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button.primary:disabled { opacity: .4; cursor: not-allowed; }
+    label { display: grid; gap: 4px; margin: 8px 0; font-size: 11px; color: var(--muted); }
+    select, input, textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font: inherit;
+      color: var(--ink);
+    }
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 12px;
+      opacity: 0;
+      transition: opacity .2s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+    a.back { color: var(--accent); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>关系原型：A → B + 类型 + 来源句</h1>
+    <p>点左右卡片换焦点。这是可点原型，数据在本页内存；正式产品走 /track/knowledge 同一套逻辑。</p>
+    <p><a class="back" href="/track/knowledge?projectId=project-fc-opc-ibot&focus=card%3Akc-seed-2">打开真产品（焦点=检索验收标准）</a></p>
+  </header>
+
+  <div class="stage" id="stage"></div>
+
+  <div class="panel">
+    <div class="box">
+      <h2>当前焦点在说什么</h2>
+      <p id="explain">—</p>
+      <ol class="steps">
+        <li>中心 = 当前卡 A</li>
+        <li>旁边 = 一层直接相关的卡 B</li>
+        <li>标签 = 关系类型 + 方向</li>
+        <li>灰字 = 来源句（凭什么这么连）</li>
+      </ol>
+    </div>
+    <div class="box">
+      <h2>新建一条关系</h2>
+      <label>从当前焦点连到
+        <select id="toCard"></select>
+      </label>
+      <label>类型
+        <select id="type">
+          <option value="supports">支持</option>
+          <option value="depends_on">依赖</option>
+          <option value="same_topic">同题</option>
+        </select>
+      </label>
+      <label>来源句（必填）
+        <input id="evidence" placeholder="写一句能指回材料的话" />
+      </label>
+      <button class="primary" id="createBtn" type="button">建立关系</button>
+    </div>
+  </div>
+  <div class="toast" id="toast">已建立</div>
+
+  <script>
+    const TYPE_LABEL = {
+      supports: "支持",
+      depends_on: "依赖",
+      same_topic: "同题",
+    };
+
+    const cards = {
+      "kc-seed-1": { id: "kc-seed-1", title: "知识工作者主路径", source: "文档" },
+      "kc-seed-2": { id: "kc-seed-2", title: "检索验收标准", source: "会议" },
+      "kc-seed-3": { id: "kc-seed-3", title: "协作状态四态", source: "手记" },
+      "kc-seed-4": { id: "kc-seed-4", title: "Demo 金句", source: "聊天" },
+    };
+
+    let focusId = "kc-seed-2";
+    let relations = [
+      {
+        id: "rel-seed-1",
+        from: "kc-seed-2",
+        to: "kc-seed-1",
+        type: "supports",
+        directed: true,
+        evidence: "好的检索结果必须带来源：路径、链接或会议原文片段；没有来源的摘要不当成事实。",
+        status: "confirmed",
+      },
+      {
+        id: "rel-seed-2",
+        from: "kc-seed-4",
+        to: "kc-seed-1",
+        type: "supports",
+        directed: true,
+        evidence: "不是再做一个全能笔记，而是让找过的材料下次还能用，并且能变成可勾选的下一步。",
+        status: "confirmed",
+      },
+      {
+        id: "rel-seed-3",
+        from: "kc-seed-3",
+        to: "kc-seed-1",
+        type: "depends_on",
+        directed: true,
+        evidence: "进行中须有负责人与下一步。",
+        status: "confirmed",
+      },
+    ];
+
+    function neighborsOf(id) {
+      const out = [];
+      for (const r of relations) {
+        if (r.from === id) {
+          out.push({
+            otherId: r.to,
+            direction: r.directed ? "out" : "both",
+            rel: r,
+          });
+        } else if (r.to === id) {
+          out.push({
+            otherId: r.from,
+            direction: r.directed ? "in" : "both",
+            rel: r,
+          });
+        }
+      }
+      return out;
+    }
+
+    function dirCopy(d) {
+      if (d === "out") return "指向";
+      if (d === "in") return "来自";
+      return "相互";
+    }
+
+    function setFocus(id) {
+      focusId = id;
+      render();
+    }
+
+    function render() {
+      const stage = document.getElementById("stage");
+      const focus = cards[focusId];
+      const neigh = neighborsOf(focusId);
+
+      const left = neigh.filter((_, i) => i % 2 === 0);
+      const right = neigh.filter((_, i) => i % 2 === 1);
+
+      const nodeHtml = (item) => {
+        const c = cards[item.otherId];
+        const r = item.rel;
+        return `
+          <button class="node" type="button" data-id="${c.id}">
+            <strong>${c.title}</strong>
+            <small>${c.source}</small>
+            <div class="edge ${r.status === "suggested" ? "suggested" : ""}">
+              <b>${dirCopy(item.direction)}</b> · ${TYPE_LABEL[r.type] || r.type}
+              <span class="ev">来源：${r.evidence}</span>
+            </div>
+          </button>`;
+      };
+
+      stage.innerHTML = `
+        <div class="col left">${left.map(nodeHtml).join("") || "<span style='color:#999;font-size:12px'>左侧无邻居</span>"}</div>
+        <div class="col center">
+          <div class="center-card">
+            <strong>${focus.title}</strong>
+            <span>当前焦点 · ${focus.source}</span>
+          </div>
+        </div>
+        <div class="col right">${right.map(nodeHtml).join("") || "<span style='color:#999;font-size:12px'>右侧无邻居</span>"}</div>
+      `;
+
+      stage.querySelectorAll(".node").forEach((el) => {
+        el.addEventListener("click", () => setFocus(el.dataset.id));
+      });
+
+      document.getElementById("explain").textContent =
+        `你在看「${focus.title}」。旁边每张卡都是一层直接关系：有类型、有方向、有来源句。点邻居会换成新焦点。`;
+
+      const sel = document.getElementById("toCard");
+      sel.innerHTML = Object.values(cards)
+        .filter((c) => c.id !== focusId)
+        .map((c) => `<option value="${c.id}">${c.title}</option>`)
+        .join("");
+    }
+
+    document.getElementById("createBtn").addEventListener("click", () => {
+      const to = document.getElementById("toCard").value;
+      const type = document.getElementById("type").value;
+      const evidence = document.getElementById("evidence").value.trim();
+      if (!evidence) {
+        toast("来源句不能空");
+        return;
+      }
+      relations.push({
+        id: "rel-" + Date.now(),
+        from: focusId,
+        to,
+        type,
+        directed: type !== "same_topic",
+        evidence,
+        status: "confirmed",
+      });
+      document.getElementById("evidence").value = "";
+      toast("关系已建立");
+      render();
+    });
+
+    function toast(msg) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.classList.add("show");
+      setTimeout(() => el.classList.remove("show"), 1600);
+    }
+
+    render();
+  </script>
+</body>
+</html>
