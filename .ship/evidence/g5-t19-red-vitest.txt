@@ -1,0 +1,153 @@
+
+> fc-opc-ibot@0.1.0 test:unit
+> vitest run --run tests/unit/project-scope-api.test.ts
+
+
+ RUN  v4.1.10 /Users/mahaoxuan/Desktop/黑客松/fc-opc-ibot-g5-t19-scope-red
+
+ ❯ tests/unit/project-scope-api.test.ts (7 tests | 7 failed) 50ms
+       × rejects search/list/state/library/footprint without projectId 19ms
+       × keeps search/list/relations hard to the named project 11ms
+       × denies get/patch/evidence for B ids when scoped to A 5ms
+       × rejects add card/action without projectId even when demo DEFAULT project exists 4ms
+       × denies unapproved cross-project ref and pins approved revision receipt 6ms
+       × flips approved reference to needs_review when source revision changes 3ms
+       × never leaks sensitive project title or hit into another project search 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/project-scope-api.test.ts > T-19 project scope RED gates > 1) missing projectId cannot fall back to all projects > rejects search/list/state/library/footprint without projectId
+AssertionError: expected 200 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 200
+
+ ❯ expectMissingProjectScope tests/unit/project-scope-api.test.ts:135:18
+    133|
+    134| function expectMissingProjectScope(status: number, body: unknown) {
+    135|   expect(status).toBe(400);
+       |                  ^
+    136|   const text = JSON.stringify(body);
+    137|   expect(text).toMatch(/projectId|项目|scope|范围/i);
+ ❯ tests/unit/project-scope-api.test.ts:152:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  tests/unit/project-scope-api.test.ts > T-19 project scope RED gates > 2) project A never returns B objects > keeps search/list/relations hard to the named project
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/unit/project-scope-api.test.ts:322:46
+    320|       expect(relBody.items.length).toBeGreaterThan(0);
+    321|       for (const rel of relBody.items) {
+    322|         expect(aCardIds.has(rel.fromCardId)).toBe(true);
+       |                                              ^
+    323|         expect(aCardIds.has(rel.toCardId)).toBe(true);
+    324|         expect(bCardIds.has(rel.fromCardId)).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  tests/unit/project-scope-api.test.ts > T-19 project scope RED gates > 3) foreign id cannot be read or mutated under A > denies get/patch/evidence for B ids when scoped to A
+AssertionError: expected [ 403, 404 ] to include 200
+ ❯ tests/unit/project-scope-api.test.ts:373:26
+    371|         { params: Promise.resolve({ id: workB.id }) },
+    372|       );
+    373|       expect([403, 404]).toContain(getForeign.status);
+       |                          ^
+    374|       const getBody = await getForeign.json();
+    375|       expect(JSON.stringify(getBody)).not.toContain("B工作项");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  tests/unit/project-scope-api.test.ts > T-19 project scope RED gates > 4) silent default write into demo project is banned > rejects add card/action without projectId even when demo DEFAULT project exists
+AssertionError: expected 201 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 201
+
+ ❯ expectMissingProjectScope tests/unit/project-scope-api.test.ts:135:18
+    133|
+    134| function expectMissingProjectScope(status: number, body: unknown) {
+    135|   expect(status).toBe(400);
+       |                  ^
+    136|   const text = JSON.stringify(body);
+    137|   expect(text).toMatch(/projectId|项目|scope|范围/i);
+ ❯ tests/unit/project-scope-api.test.ts:436:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  tests/unit/project-scope-api.test.ts > T-19 project scope RED gates > 5) explicit cross-project reference requires Owner approval and pins revision > denies unapproved cross-project ref and pins approved revision receipt
+AssertionError: missing POST /api/knowledge/projects/[id]/cross-project-references (T-19 explicit ref surface): expected null to be truthy
+
+- Expected:
+true
+
++ Received:
+null
+
+ ❯ tests/unit/project-scope-api.test.ts:498:9
+    496|         refRoute,
+    497|         "missing POST /api/knowledge/projects/[id]/cross-project-refer…
+    498|       ).toBeTruthy();
+       |         ^
+    499|
+    500|       const sourceRevision =
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  tests/unit/project-scope-api.test.ts > T-19 project scope RED gates > 6) changed source revision marks reference for review > flips approved reference to needs_review when source revision changes
+AssertionError: missing cross-project-references route for source-change recheck: expected null to be truthy
+
+- Expected:
+true
+
++ Received:
+null
+
+ ❯ tests/unit/project-scope-api.test.ts:579:9
+    577|         refRoute,
+    578|         "missing cross-project-references route for source-change rech…
+    579|       ).toBeTruthy();
+       |         ^
+    580|
+    581|       const initialRevision = `card:${sourceCard.id}:v1`;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  tests/unit/project-scope-api.test.ts > T-19 project scope RED gates > 7) sensitive project zero disclosure > never leaks sensitive project title or hit into another project search
+AssertionError: project create must persist a sensitive marker (sensitive|sensitivity|visibility): expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/unit/project-scope-api.test.ts:681:9
+    679|         sensitiveFlag,
+    680|         "project create must persist a sensitive marker (sensitive|sen…
+    681|       ).toBe(true);
+       |         ^
+    682|
+    683|       await addCard(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  7 failed (7)
+   Start at  17:43:11
+   Duration  309ms (transform 98ms, setup 0ms, import 145ms, tests 50ms, environment 0ms)
+
+EXIT:1
