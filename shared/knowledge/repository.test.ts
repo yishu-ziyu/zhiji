@@ -280,7 +280,7 @@ describe("knowledge repository persistence", () => {
     expect(fs.readFileSync(file, "utf-8")).toBe("{not-json");
   });
 
-  it("migrates legacy cards and work items into the default project", async () => {
+  it("does not silently rehome legacy rows missing projectId (T-19)", async () => {
     fs.writeFileSync(
       path.join(tmpDir, "cards.json"),
       JSON.stringify({
@@ -308,10 +308,13 @@ describe("knowledge repository persistence", () => {
 
     const repo = await loadRepo();
     expect(repo.DEFAULT_PROJECT_ID).toBe("project-fc-opc-ibot");
-    expect(repo.listCards({ projectId: repo.DEFAULT_PROJECT_ID })[0].projectId)
-      .toBe(repo.DEFAULT_PROJECT_ID);
-    expect(repo.listActions({ projectId: repo.DEFAULT_PROJECT_ID })[0].projectId)
-      .toBe(repo.DEFAULT_PROJECT_ID);
+    // Missing projectId stays empty — excluded from project-scoped lists.
+    expect(repo.getCard("legacy")?.projectId).toBe("");
+    expect(repo.getAction("legacyAction")?.projectId).toBe("");
+    expect(repo.listCards({ projectId: repo.DEFAULT_PROJECT_ID })).toEqual([]);
+    expect(repo.listActions({ projectId: repo.DEFAULT_PROJECT_ID })).toEqual(
+      [],
+    );
   });
 
   it("isolates cards and work items by project", async () => {
@@ -425,6 +428,7 @@ describe("knowledge repository persistence", () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
     const created = repo.addCard({
+      projectId: repo.DEFAULT_PROJECT_ID,
       content: "持久化验收：写入后必须能从文件读回",
       source: "manual",
       tags: ["persist"],
@@ -445,7 +449,11 @@ describe("knowledge repository persistence", () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
     expect(() =>
-      repo.addCard({ content: "非法来源", source: "bogus" as never }),
+      repo.addCard({
+        projectId: repo.DEFAULT_PROJECT_ID,
+        content: "非法来源",
+        source: "bogus" as never,
+      }),
     ).toThrow(/来源无效/);
   });
 
@@ -453,6 +461,7 @@ describe("knowledge repository persistence", () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
     const item = repo.addAction({
+      projectId: repo.DEFAULT_PROJECT_ID,
       description: "完成状态落盘检查",
       assignee: "tester",
       nextStep: "勾完成",
@@ -525,6 +534,7 @@ describe("knowledge repository persistence", () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
     const item = repo.addAction({
+      projectId: repo.DEFAULT_PROJECT_ID,
       description: "时间线验收",
       assignee: "自己",
       nextStep: "写评论",
@@ -548,6 +558,7 @@ describe("knowledge repository persistence", () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
     const item = repo.addAction({
+      projectId: repo.DEFAULT_PROJECT_ID,
       description: "无负责人",
       assignee: "待定",
       nextStep: "开始",
@@ -562,6 +573,7 @@ describe("knowledge repository persistence", () => {
     const cards = repo.listCards();
     const card = cards[0];
     const item = repo.addAction({
+      projectId: repo.DEFAULT_PROJECT_ID,
       description: "挂依据",
       assignee: "自己",
       nextStep: "关联卡",
@@ -576,11 +588,14 @@ describe("knowledge repository persistence", () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
     const { searchKnowledge } = await import("./search");
-    const hits = searchKnowledge("检索 来源");
+    const hits = searchKnowledge("检索 来源", {
+      projectId: repo.DEFAULT_PROJECT_ID,
+    });
     expect(hits.length).toBeGreaterThan(0);
     const { querySessionId } = repo.recordSearchFootprint("检索 来源", hits);
     const fp = repo.getFootprintData({
       mode: "current_query",
+      projectId: repo.DEFAULT_PROJECT_ID,
       querySessionId,
     });
     const litIds = fp.lit.map((e) => e.cardId).sort();
@@ -596,6 +611,7 @@ describe("knowledge repository persistence", () => {
     repo.resetKnowledgeStoreForTests();
     const card = repo.listCards()[0];
     const item = repo.addAction({
+      projectId: repo.DEFAULT_PROJECT_ID,
       description: "足迹工作项",
       assignee: "自己",
       nextStep: "挂卡",
@@ -603,6 +619,7 @@ describe("knowledge repository persistence", () => {
     repo.linkEvidence(item.id, card.id);
     const fp = repo.getFootprintData({
       mode: "work_item",
+      projectId: repo.DEFAULT_PROJECT_ID,
       workItemId: item.id,
     });
     expect(fp.lit.some((e) => e.cardId === card.id && e.depth >= 3)).toBe(
@@ -614,18 +631,24 @@ describe("knowledge repository persistence", () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
     const usedOlder = repo.addCard({
+      projectId: repo.DEFAULT_PROJECT_ID,
       title: "刚查看的旧材料",
       content: "这条材料创建得早，但刚刚被查看",
       timestamp: "2026-07-10T08:00:00.000Z",
     });
     repo.addCard({
+      projectId: repo.DEFAULT_PROJECT_ID,
       title: "未查看的新材料",
       content: "这条材料更新，但没有被使用",
       timestamp: "2026-07-15T09:00:00.000Z",
     });
 
     repo.recordOpenedFootprint(usedOlder.id);
-    const footprint = repo.getFootprintData({ mode: "window", sinceDays: 7 });
+    const footprint = repo.getFootprintData({
+      mode: "window",
+      projectId: repo.DEFAULT_PROJECT_ID,
+      sinceDays: 7,
+    });
     expect(footprint.lit).toContainEqual(
       expect.objectContaining({ cardId: usedOlder.id, depth: 2 }),
     );

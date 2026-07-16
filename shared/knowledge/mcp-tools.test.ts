@@ -35,24 +35,29 @@ describe("knowledge mcp tools", () => {
     expect(listKnowledgeMcpTools()).toHaveLength(5);
   });
 
-  it("search_knowledge works", () => {
+  it("search_knowledge works", async () => {
+    const repo = await import("./repository");
     const result = invokeKnowledgeMcpTool("search_knowledge", {
       query: "知识",
+      filters: { projectId: repo.DEFAULT_PROJECT_ID },
     });
     expect(result.ok).toBe(true);
     const hits = (result.result as { hits: unknown[] }).hits;
     expect(hits.length).toBeGreaterThan(0);
   });
 
-  it("add_knowledge + update_collaboration_state", () => {
+  it("add_knowledge + update_collaboration_state", async () => {
+    const repo = await import("./repository");
     const added = invokeKnowledgeMcpTool("add_knowledge", {
       content: "测试卡片",
       tags: ["test"],
+      projectId: repo.DEFAULT_PROJECT_ID,
     });
     expect(added.ok).toBe(true);
 
     const dissected = invokeKnowledgeMcpTool("dissect_task", {
       goal: "完成 Demo 并写验收清单",
+      projectId: repo.DEFAULT_PROJECT_ID,
     });
     expect(dissected.ok).toBe(true);
     const items = (

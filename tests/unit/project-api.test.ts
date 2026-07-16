@@ -237,7 +237,11 @@ it("derives the actor on every public work mutation", async () => {
   const patchResponse = await patchWorkItem(
     new NextRequest("http://test/api/knowledge/work-items/ka-seed-1", {
       method: "PATCH",
-      body: JSON.stringify({ assignee: "新的负责人", actor: "agent:forged" }),
+      body: JSON.stringify({
+        assignee: "新的负责人",
+        actor: "agent:forged",
+        projectId: "project-fc-opc-ibot",
+      }),
     }),
     { params: Promise.resolve({ id: "ka-seed-1" }) },
   );
@@ -305,9 +309,14 @@ it("records why an Agent cannot start when the work item has no evidence", async
   const created = await addWorkItemPost(
     new NextRequest("http://test/api/knowledge/work-items", {
       method: "POST",
-      body: JSON.stringify({ title: "缺少依据", nextStep: "开始分析" }),
+      body: JSON.stringify({
+        title: "缺少依据",
+        nextStep: "开始分析",
+        projectId: "project-fc-opc-ibot",
+      }),
     }),
   );
+  expect(created.status).toBe(201);
   const { item } = (await created.json()) as { item: { id: string } };
   const response = await agentRunPost(
     new NextRequest(`http://test/api/knowledge/work-items/${item.id}/agent-run`, {
