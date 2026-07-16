@@ -1,6 +1,12 @@
-# FC-OPC iBot · 项目理解（知识工作台）
+# 知几 · 本地项目情报 Agent
 
-授权本地项目文件夹后：在边界内真读材料 → 有出处的理解 → 你确认 → 画布上看得见结构与任务。
+<p align="center">
+  <img src="public/brand/zhiji-logo.png" alt="知几" width="300" />
+</p>
+
+> 参赛队伍：**不俟终日**
+
+在用户明确授权的本地项目文件夹内持续观察变化，把零散材料整理成有依据、可核验的项目判断，帮助用户用最少注意力完成下一步决定。
 
 > 入口唯一：`/track/knowledge`  
 > 不是全机监控，不是 Coding 网关，不是纯搜文档。
@@ -8,8 +14,8 @@
 ## 克隆后怎么跑
 
 ```bash
-git clone https://github.com/yishu-ziyu/fc-opc-ibot.git
-cd fc-opc-ibot
+git clone https://github.com/yishu-ziyu/zhiji.git zhiji
+cd zhiji
 npm install
 
 # 可选：真模型（Agent 读夹）
