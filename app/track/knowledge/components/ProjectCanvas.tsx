@@ -1,18 +1,21 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BackgroundVariant,
   Controls,
   Handle,
+  MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useStoreApi,
+  useUpdateNodeInternals,
   type Edge,
   type Node,
   type NodeProps,
@@ -39,6 +42,8 @@ type Props = {
   snapshot: ProjectCanvasSnapshot | null;
   loading: boolean;
   onFocus: (ref: CanvasNodeRef) => void;
+  /** Optional: pulse these node ids after search hit */
+  highlightNodeIds?: string[];
 };
 
 type GraphNodeData = {
@@ -50,6 +55,7 @@ type GraphNodeData = {
   relationStatus?: CanvasEdge["status"];
   relationStrength?: CanvasEdge["strength"];
   isCenter: boolean;
+  pulse?: boolean;
 };
 
 type GraphEdgeData = {
@@ -57,10 +63,52 @@ type GraphEdgeData = {
 };
 
 type GraphNode = Node<GraphNodeData, "graph">;
+type PosMap = Record<string, { x: number; y: number }>;
 
 const MAX_VISIBLE_NEIGHBORS = 10;
-const RADIUS_X = 280;
-const RADIUS_Y = 200;
+const RADIUS_X = 300;
+const RADIUS_Y = 210;
+const POS_KEY_PREFIX = "fc-opc-canvas-pos:";
+
+function posStorageKey(projectId: string, focusKey: string) {
+  return `${POS_KEY_PREFIX}${projectId}:${focusKey}`;
+}
+
+function readSavedPositions(projectId: string, focusKey: string): PosMap {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = sessionStorage.getItem(posStorageKey(projectId, focusKey));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as PosMap;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSavedPositions(
+  projectId: string,
+  focusKey: string,
+  positions: PosMap,
+) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(
+      posStorageKey(projectId, focusKey),
+      JSON.stringify(positions),
+    );
+  } catch {
+    /* quota */
+  }
+}
+
+type EdgeFilterId = "all" | "strong" | "hide_weak";
+
+const EDGE_FILTERS: Array<{ id: EdgeFilterId; label: string }> = [
+  { id: "all", label: "全部边" },
+  { id: "strong", label: "仅重点" },
+  { id: "hide_weak", label: "藏弱边" },
+];
 
 function refKey(ref: CanvasNodeRef) {
   return `${ref.kind}:${ref.id}`;
@@ -161,16 +209,27 @@ function edgeVisual(edge: CanvasEdge, opts: {
   };
 }
 
-/** Radial layout: center at origin, neighbors on ellipse. Prefer strong edges first. */
-function layoutFromSnapshot(snapshot: ProjectCanvasSnapshot): {
+/**
+ * Radial base layout + optional session positions.
+ * Center fixed at origin; neighbors free after user drag (P1).
+ */
+function layoutFromSnapshot(
+  snapshot: ProjectCanvasSnapshot,
+  saved: PosMap,
+  options?: {
+    edgeFilter?: EdgeFilterId;
+    highlightIds?: Set<string>;
+  },
+): {
   nodes: GraphNode[];
   edges: Edge[];
   overflow: CanvasNode[];
   canvasEdges: CanvasEdge[];
 } {
+  const edgeFilter = options?.edgeFilter ?? "hide_weak";
+  const highlightIds = options?.highlightIds ?? new Set<string>();
   const center = snapshot.nodes.find((n) => n.depth === 0);
   const neighbors = snapshot.nodes.filter((n) => n.depth === 1);
-  // Prefer neighbors that have a strong edge to the center.
   const strengthRank = (node: CanvasNode) => {
     const edge = edgesTouching(snapshot, node)[0];
     if (!edge) return 0;
@@ -188,19 +247,41 @@ function layoutFromSnapshot(snapshot: ProjectCanvasSnapshot): {
   ];
 
   const nodes: GraphNode[] = [];
+  // Declarative handles so edges can resolve before ResizeObserver/handleBounds.
+  const centerHandles = [
+    { type: "target" as const, position: Position.Top, x: 100, y: 0, width: 8, height: 8 },
+    { type: "source" as const, position: Position.Bottom, x: 100, y: 148, width: 8, height: 8 },
+    { type: "source" as const, position: Position.Left, x: 0, y: 74, width: 8, height: 8 },
+    { type: "source" as const, position: Position.Right, x: 200, y: 74, width: 8, height: 8 },
+  ];
+  const neighborHandles = [
+    { type: "target" as const, position: Position.Left, x: 0, y: 48, width: 8, height: 8 },
+    { type: "target" as const, position: Position.Top, x: 98, y: 0, width: 8, height: 8 },
+    { type: "source" as const, position: Position.Right, x: 196, y: 48, width: 8, height: 8 },
+    { type: "source" as const, position: Position.Bottom, x: 98, y: 96, width: 8, height: 8 },
+  ];
+
   if (center) {
+    const cid = refKey(center.ref);
     nodes.push({
-      id: refKey(center.ref),
+      id: cid,
       type: "graph",
-      position: { x: 0, y: 0 },
+      position: saved[cid] ?? { x: 0, y: 0 },
+      // Explicit size helps edges initialize before ResizeObserver fires.
+      width: 200,
+      height: 148,
+      initialWidth: 200,
+      initialHeight: 148,
+      handles: centerHandles,
       data: {
         ref: center.ref,
         label: center.label,
         subtitle: center.subtitle ?? "当前关注",
         state: center.state,
         isCenter: true,
+        pulse: highlightIds.has(cid),
       },
-      draggable: true,
+      draggable: false,
       selectable: true,
     });
   }
@@ -209,13 +290,20 @@ function layoutFromSnapshot(snapshot: ProjectCanvasSnapshot): {
   visible.forEach((node, index) => {
     const angle = -Math.PI / 2 + (index * 2 * Math.PI) / n;
     const relation = edgesTouching(snapshot, node)[0];
+    const id = refKey(node.ref);
+    const defaultPos = {
+      x: Math.cos(angle) * RADIUS_X - 90,
+      y: Math.sin(angle) * RADIUS_Y - 36,
+    };
     nodes.push({
-      id: refKey(node.ref),
+      id,
       type: "graph",
-      position: {
-        x: Math.cos(angle) * RADIUS_X - 90,
-        y: Math.sin(angle) * RADIUS_Y - 36,
-      },
+      position: saved[id] ?? defaultPos,
+      width: 196,
+      height: 96,
+      initialWidth: 196,
+      initialHeight: 96,
+      handles: neighborHandles,
       data: {
         ref: node.ref,
         label: node.label,
@@ -225,6 +313,7 @@ function layoutFromSnapshot(snapshot: ProjectCanvasSnapshot): {
         relationStatus: relation?.status,
         relationStrength: relation?.strength,
         isCenter: false,
+        pulse: highlightIds.has(id),
       },
       draggable: true,
       selectable: true,
@@ -232,16 +321,22 @@ function layoutFromSnapshot(snapshot: ProjectCanvasSnapshot): {
   });
 
   const nodeIds = new Set(nodes.map((node) => node.id));
-  const canvasEdges = snapshot.edges.filter(
+  let canvasEdges = snapshot.edges.filter(
     (edge) =>
       nodeIds.has(refKey(edge.source)) && nodeIds.has(refKey(edge.target)),
   );
+  if (edgeFilter === "hide_weak") {
+    canvasEdges = canvasEdges.filter((edge) => edge.strength !== "weak");
+  } else if (edgeFilter === "strong") {
+    canvasEdges = canvasEdges.filter((edge) => edge.strength === "strong");
+  }
   const edges: Edge[] = canvasEdges.map((edge) => {
     const strength = edge.strength ?? "medium";
-    // Weak edges: no permanent labels (industrial: reduce clutter).
     const showLabel = strength === "strong";
+    // React Flow treats some punctuation poorly in ids; keep stable slug.
+    const safeId = edge.id.replace(/>/g, "__");
     return {
-      id: edge.id,
+      id: safeId,
       source: refKey(edge.source),
       target: refKey(edge.target),
       type: "default",
@@ -258,13 +353,25 @@ function layoutFromSnapshot(snapshot: ProjectCanvasSnapshot): {
   return { nodes, edges, overflow, canvasEdges };
 }
 
+function kindLabel(kind: CanvasNodeKind): string {
+  if (kind === "card") return "材料";
+  if (kind === "work_item") return "工作";
+  if (kind === "event") return "记录";
+  if (kind === "agent") return "Agent";
+  if (kind === "project") return "项目";
+  return kind;
+}
+
 function GraphNodeView({ data, selected }: NodeProps) {
   const node = data as GraphNodeData;
   if (node.isCenter) {
     return (
       <div
-        className={`${styles.rfCenter} ${selected ? styles.rfSelected : ""}`}
+        className={`${styles.rfCenter} ${selected ? styles.rfSelected : ""} ${
+          node.pulse ? styles.rfPulse : ""
+        }`}
         data-state={node.state}
+        data-kind={node.ref.kind}
         data-testid={
           node.ref.kind === "project"
             ? "focus-state"
@@ -279,8 +386,8 @@ function GraphNodeView({ data, selected }: NodeProps) {
           <Image
             src="/project-canvas/logo-source.png"
             alt=""
-            width={52}
-            height={52}
+            width={56}
+            height={56}
             className={styles.centerLogo}
             priority
           />
@@ -299,11 +406,12 @@ function GraphNodeView({ data, selected }: NodeProps) {
     <div
       className={`${styles.rfNode} ${selected ? styles.rfSelected : ""} ${
         node.ref.kind === "agent" ? styles.rfNodeAgent : ""
-      }`}
+      } ${node.pulse ? styles.rfPulse : ""}`}
       data-state={node.state}
       data-kind={node.ref.kind}
       data-testid={`canvas-node-${node.ref.kind}-${node.ref.id}`}
     >
+      <i className={styles.rfKindBar} aria-hidden data-kind={node.ref.kind} />
       <Handle type="target" position={Position.Left} className={styles.rfHandle} />
       <Handle type="target" position={Position.Top} className={styles.rfHandle} />
       <Handle type="source" position={Position.Right} className={styles.rfHandle} />
@@ -312,6 +420,7 @@ function GraphNodeView({ data, selected }: NodeProps) {
         <NodeIcon kind={node.ref.kind} />
       </span>
       <span className={styles.relationNodeCopy}>
+        <em className={styles.rfKindTag}>{kindLabel(node.ref.kind)}</em>
         <strong title={node.label}>{displayLabel(node.label)}</strong>
         <small>{node.subtitle ?? "直接相关"}</small>
       </span>
@@ -338,30 +447,106 @@ function CanvasFlow({
   onFocus,
   selectedEdgeId,
   onSelectEdge,
+  edgeFilter,
+  highlightNodeIds,
 }: {
   snapshot: ProjectCanvasSnapshot;
   onFocus: (ref: CanvasNodeRef) => void;
   selectedEdgeId: string | null;
   onSelectEdge: (edge: CanvasEdge | null) => void;
+  edgeFilter: EdgeFilterId;
+  highlightNodeIds?: string[];
 }) {
-  const layout = useMemo(() => layoutFromSnapshot(snapshot), [snapshot]);
+  const projectId = snapshot.project.id;
+  const focusKey = refKey(snapshot.focus);
+  // Stabilize highlight key so parent re-renders don't thrash layout/setNodes.
+  const highlightKey = (highlightNodeIds ?? []).slice().sort().join("|");
+  const highlightSet = useMemo(
+    () => new Set(highlightKey ? highlightKey.split("|") : []),
+    [highlightKey],
+  );
+
+  const layout = useMemo(() => {
+    const saved = readSavedPositions(projectId, focusKey);
+    return layoutFromSnapshot(snapshot, saved, {
+      edgeFilter,
+      highlightIds: highlightSet,
+    });
+  }, [snapshot, projectId, focusKey, edgeFilter, highlightSet]);
+
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
   const [foldOpen, setFoldOpen] = useState(false);
   const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
   const { fitView } = useReactFlow();
-  const focusKey = refKey(snapshot.focus);
+  const updateNodeInternals = useUpdateNodeInternals();
+  const storeApi = useStoreApi();
+  const prevFocusKeyRef = useRef<string>("");
+  const prevLayoutSigRef = useRef<string>("");
+
+  // Topology signature: ignore pulse-only churn; include filter + node/edge ids.
+  const layoutSig = useMemo(() => {
+    const nodeIds = layout.nodes.map((n) => n.id).join(",");
+    const edgeIds = layout.edges.map((e) => e.id).join(",");
+    return `${focusKey}|${edgeFilter}|${nodeIds}|${edgeIds}|${highlightKey}`;
+  }, [layout.nodes, layout.edges, focusKey, edgeFilter, highlightKey]);
 
   useEffect(() => {
+    if (prevLayoutSigRef.current === layoutSig) return;
+    const focusChanged = prevFocusKeyRef.current !== focusKey;
+    prevFocusKeyRef.current = focusKey;
+    prevLayoutSigRef.current = layoutSig;
+
     setNodes(layout.nodes);
     setEdges(layout.edges);
     setFoldOpen(false);
     setHoverNodeId(null);
-    const t = requestAnimationFrame(() => {
-      void fitView({ padding: 0.22, duration: 220, maxZoom: 1.05 });
-    });
-    return () => cancelAnimationFrame(t);
-  }, [focusKey, layout.edges, layout.nodes, setEdges, setNodes, fitView]);
+
+    const ids = layout.nodes.map((n) => n.id);
+    const t = window.setTimeout(() => {
+      const st = storeApi.getState();
+      const updates = new Map<
+        string,
+        { id: string; nodeElement: HTMLElement; force: boolean }
+      >();
+      for (const id of ids) {
+        const el = st.domNode?.querySelector(
+          `.react-flow__node[data-id="${id}"]`,
+        ) as HTMLElement | null;
+        if (el) updates.set(id, { id, nodeElement: el, force: true });
+      }
+      if (updates.size > 0) st.updateNodeInternals(updates);
+      for (const id of ids) updateNodeInternals(id);
+      if (focusChanged) {
+        void fitView({ padding: 0.22, duration: 220, maxZoom: 1.05 });
+      }
+      window.setTimeout(() => {
+        const st2 = storeApi.getState();
+        const updates2 = new Map<
+          string,
+          { id: string; nodeElement: HTMLElement; force: boolean }
+        >();
+        for (const id of ids) {
+          const el = st2.domNode?.querySelector(
+            `.react-flow__node[data-id="${id}"]`,
+          ) as HTMLElement | null;
+          if (el) updates2.set(id, { id, nodeElement: el, force: true });
+        }
+        if (updates2.size > 0) st2.updateNodeInternals(updates2);
+      }, 80);
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [
+    layoutSig,
+    focusKey,
+    layout.nodes,
+    layout.edges,
+    setEdges,
+    setNodes,
+    fitView,
+    updateNodeInternals,
+    storeApi,
+  ]);
 
   // Hover / selection: emphasize 1-hop edges, show labels on demand.
   useEffect(() => {
@@ -373,12 +558,12 @@ function CanvasFlow({
         const touchesHover =
           hoverNodeId != null &&
           (edge.source === hoverNodeId || edge.target === hoverNodeId);
-        const selected = selectedEdgeId === edge.id;
+        const selected =
+          selectedEdgeId === edge.id ||
+          selectedEdgeId === canvasEdge.id;
         const strength = canvasEdge.strength ?? "medium";
         const showLabel =
-          selected ||
-          touchesHover ||
-          strength === "strong";
+          selected || touchesHover || strength === "strong";
         const anyFocus = hoverNodeId != null || selectedEdgeId != null;
         const visual = edgeVisual(canvasEdge, {
           emphasized: selected || touchesHover,
@@ -401,6 +586,34 @@ function CanvasFlow({
       onFocus(data.ref);
     },
     [onFocus, onSelectEdge],
+  );
+
+  const onNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      const data = node.data as GraphNodeData;
+      onSelectEdge(null);
+      onFocus(data.ref);
+    },
+    [onFocus, onSelectEdge],
+  );
+
+  const onNodeDragStop = useCallback(
+    (_event: MouseEvent | TouchEvent, dragged: Node) => {
+      setNodes((current) => {
+        const next = current.map((n) =>
+          n.id === dragged.id
+            ? { ...n, position: dragged.position }
+            : n,
+        );
+        const positions: PosMap = {};
+        for (const n of next) {
+          positions[n.id] = { x: n.position.x, y: n.position.y };
+        }
+        writeSavedPositions(projectId, focusKey, positions);
+        return next;
+      });
+    },
+    [projectId, focusKey, setNodes],
   );
 
   const onEdgeClick = useCallback(
@@ -427,6 +640,8 @@ function CanvasFlow({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
+        onNodeDoubleClick={onNodeDoubleClick}
+        onNodeDragStop={onNodeDragStop}
         onEdgeClick={onEdgeClick}
         onNodeMouseEnter={(_, node) => setHoverNodeId(node.id)}
         onNodeMouseLeave={() => setHoverNodeId(null)}
@@ -448,12 +663,32 @@ function CanvasFlow({
         }}
         className={styles.rfRoot}
         data-testid="project-canvas-flow"
+        data-edge-count={String(edges.length)}
+        data-node-count={String(nodes.length)}
       >
         <Background
           variant={BackgroundVariant.Dots}
           gap={22}
           size={1.1}
           color="rgba(180, 184, 190, 0.45)"
+        />
+        <MiniMap
+          className={styles.rfMiniMap}
+          position="bottom-left"
+          pannable
+          zoomable
+          nodeStrokeWidth={2}
+          nodeColor={(node) => {
+            const data = node.data as GraphNodeData | undefined;
+            if (!data) return "#d0d3d8";
+            if (data.isCenter) return "#3d6fd8";
+            if (data.ref.kind === "card") return "#6b8f71";
+            if (data.ref.kind === "work_item") return "#c48a3a";
+            if (data.ref.kind === "event") return "#8a7bb8";
+            if (data.ref.kind === "agent") return "#3d6fd8";
+            return "#9aa3ad";
+          }}
+          maskColor="rgba(246, 246, 243, 0.72)"
         />
         <Controls
           showInteractive={false}
@@ -493,9 +728,15 @@ function CanvasFlow({
   );
 }
 
-export function ProjectCanvas({ snapshot, loading, onFocus }: Props) {
+export function ProjectCanvas({
+  snapshot,
+  loading,
+  onFocus,
+  highlightNodeIds,
+}: Props) {
   const [showAllAttention, setShowAllAttention] = useState(false);
   const [selectedEdge, setSelectedEdge] = useState<CanvasEdge | null>(null);
+  const [edgeFilter, setEdgeFilter] = useState<EdgeFilterId>("hide_weak");
 
   useEffect(() => {
     setSelectedEdge(null);
@@ -618,7 +859,7 @@ export function ProjectCanvas({ snapshot, loading, onFocus }: Props) {
           </>
         ) : (
           <p className={styles.agentAttentionEmpty}>
-            点节点会把焦点移到那里（以前端文件为中心时，周围是它的关系与依据）。空白拖平移 · 滚轮缩放。
+            点节点进摘要 · 双击同样进入 · 拖邻居记住位置 · 空白平移 · 滚轮缩放。
           </p>
         )}
         {selectedEdge ? (
@@ -672,9 +913,27 @@ export function ProjectCanvas({ snapshot, loading, onFocus }: Props) {
           </button>
         ) : null}
         <p className={styles.canvasHint}>
-          悬停高亮邻边 · 点边看原因 · 点节点进摘要 · 弱边（如最近打开）默认淡显
+          悬停高亮邻边 · 点边看原因 · 中心固定、邻居可拖 · 弱边默认隐藏
         </p>
       </aside>
+
+      <div
+        className={styles.edgeFilterBar}
+        data-testid="canvas-edge-filter"
+        data-no-pan
+      >
+        {EDGE_FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            data-active={edgeFilter === f.id ? "true" : "false"}
+            data-testid={`canvas-edge-filter-${f.id}`}
+            onClick={() => setEdgeFilter(f.id)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
 
       <div className={styles.rfStage}>
         <ReactFlowProvider>
@@ -683,6 +942,8 @@ export function ProjectCanvas({ snapshot, loading, onFocus }: Props) {
             onFocus={onFocus}
             selectedEdgeId={selectedEdge?.id ?? null}
             onSelectEdge={setSelectedEdge}
+            edgeFilter={edgeFilter}
+            highlightNodeIds={highlightNodeIds}
           />
         </ReactFlowProvider>
       </div>

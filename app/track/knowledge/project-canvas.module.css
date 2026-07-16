@@ -793,13 +793,13 @@
 }
 
 .rfHandle {
-  width: 6px !important;
-  height: 6px !important;
-  opacity: 0;
+  width: 8px !important;
+  height: 8px !important;
+  opacity: 0.01;
   border: none !important;
   background: transparent !important;
-  min-width: 0 !important;
-  min-height: 0 !important;
+  min-width: 8px !important;
+  min-height: 8px !important;
 }
 
 .rfCenter {
@@ -811,18 +811,19 @@
   justify-content: center;
   gap: 7px;
   padding: 18px 14px;
-  border: 1px solid #e6e6e1;
+  border: 1px solid #c9d7ea;
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.97);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 0 0 3px rgba(61, 111, 216, 0.08),
     0 14px 36px rgba(37, 40, 45, 0.08);
   text-align: center;
-  cursor: grab;
+  cursor: default;
 }
 
 .rfCenter:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 .rfCenter strong {
@@ -841,13 +842,14 @@
 }
 
 .rfNode {
+  position: relative;
   width: 196px;
   min-height: 64px;
   display: grid;
   grid-template-columns: 32px 1fr;
   grid-template-rows: auto auto;
   gap: 4px 10px;
-  padding: 11px 12px 10px;
+  padding: 11px 12px 10px 16px;
   border: 1px solid #e6e6e1;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.96);
@@ -861,11 +863,104 @@
   cursor: grabbing;
 }
 
+.rfKindBar {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 5px;
+  width: 3px;
+  border-radius: 999px;
+  background: #c5c9cf;
+}
+
+.rfKindBar[data-kind="card"] { background: #6b8f71; }
+.rfKindBar[data-kind="work_item"] { background: #c48a3a; }
+.rfKindBar[data-kind="event"] { background: #8a7bb8; }
+.rfKindBar[data-kind="agent"] { background: #3d6fd8; }
+.rfKindBar[data-kind="project"] { background: #3d6fd8; }
+
+.rfKindTag {
+  display: block;
+  margin: 0 0 1px;
+  color: #8a8d93;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rfPulse {
+  animation: rfPulseRing 1.4s ease-out 2;
+}
+
+@keyframes rfPulseRing {
+  0% {
+    box-shadow:
+      0 0 0 0 rgba(0, 122, 255, 0.35),
+      0 10px 28px rgba(37, 40, 45, 0.06);
+  }
+  70% {
+    box-shadow:
+      0 0 0 10px rgba(0, 122, 255, 0),
+      0 14px 34px rgba(37, 40, 45, 0.1);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(0, 122, 255, 0),
+      0 10px 28px rgba(37, 40, 45, 0.06);
+  }
+}
+
 .rfSelected {
   border-color: #007aff !important;
   box-shadow:
     0 0 0 3px rgba(0, 122, 255, 0.14),
     0 14px 34px rgba(37, 40, 45, 0.1) !important;
+}
+
+.rfMiniMap {
+  margin: 0 0 12px 12px !important;
+  border: 1px solid #e4e4df !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  box-shadow: 0 10px 24px rgba(29, 32, 37, 0.06) !important;
+}
+
+.edgeFilterBar {
+  position: absolute;
+  z-index: 6;
+  top: 14px;
+  right: 18px;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #e6e6e1;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 8px 20px rgba(29, 32, 37, 0.05);
+  backdrop-filter: blur(10px);
+}
+
+.edgeFilterBar button {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5c5f66;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.edgeFilterBar button[data-active="true"] {
+  background: #eef3fb;
+  color: #1f3f7a;
+}
+
+.edgeFilterBar button:hover {
+  background: #f3f3ef;
 }
 
 .rfNode[data-state="blocked"],

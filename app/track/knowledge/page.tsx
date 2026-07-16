@@ -5,6 +5,7 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -106,6 +107,10 @@ export default function KnowledgePage() {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<ProjectSearchHit[]>([]);
+  const canvasHighlightIds = useMemo(
+    () => searchResults.map((hit) => `${hit.ref.kind}:${hit.ref.id}`),
+    [searchResults],
+  );
   const [searching, setSearching] = useState(false);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [createWorkOpen, setCreateWorkOpen] = useState(false);
@@ -1756,7 +1761,12 @@ export default function KnowledgePage() {
               </div>
             </section>
           ) : (
-            <ProjectCanvas snapshot={snapshot} loading={loading} onFocus={handleFocus} />
+            <ProjectCanvas
+              snapshot={snapshot}
+              loading={loading}
+              onFocus={handleFocus}
+              highlightNodeIds={canvasHighlightIds}
+            />
           )}
           <ProjectInspector
             key={`${snapshot?.focus.kind ?? "none"}:${snapshot?.focus.id ?? "none"}:${snapshot?.inspector.workItem?.updatedAt ?? "static"}:${checkpointOpen ? "checkpoint" : "view"}`}

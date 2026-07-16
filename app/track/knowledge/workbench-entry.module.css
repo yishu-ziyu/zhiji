@@ -790,9 +790,18 @@
   }
 }
 
+@keyframes agent-spin {
+  to { transform: rotate(360deg); }
+}
+.spin {
+  animation: agent-spin 0.85s linear infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .entryStage {
     animation: none !important;
+  }
+  .spin {
+    animation: none;
   }
 }
 

@@ -658,7 +658,7 @@ export function ProjectInspector({
             {/* E7: eight-step process (data-backed, not decorative). */}
             <div
               className={styles.agentProcessBlock}
-              data-testid="inspector-agent-process"
+              data-testid="inspector-agent-process-activity"
               data-has-agent={snapshot.agentActivity?.hasAgentEvents ? "true" : "false"}
             >
               <div className={styles.listHeading}>
