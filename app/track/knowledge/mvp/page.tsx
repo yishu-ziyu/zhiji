@@ -140,8 +140,7 @@ export default function MvpKnowledgeWorkbenchPage() {
     setBusy(true);
     setError(null);
     try {
-      // Watch-matched events only (`events`); do not send full project dump or unmatched `filteredEvents`.
-      const eventIds = memory.events.map((event) => event.id);
+      const eventIds = memory.filteredEvents.map((event) => event.id);
       await api.runAnalysis(projectId, matterId, eventIds);
       await loadMemory();
       setNotice("已按匹配变化运行一次状态重建；结果仍是 candidate。");
