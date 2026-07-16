@@ -60,21 +60,35 @@ function buildNodes(memory: MemoryResponse): FocusNode[] {
     id: event.id,
     kind: "change" as const,
     label: event.relativePath,
-    detail: `${eventLabel(event)} · ${event.matchReason || "匹配当前事项"}`,
+    detail: eventLabel(event),
     revisionId: revisionIdToOpenForEvent(event),
   }));
-  const evidenceNodes = (memory.candidate?.body.now.evidence || []).map((anchor) => ({
-    id: anchor.revisionId,
-    kind: "evidence" as const,
-    label: anchor.relativePath,
-    detail: `exact revision · ${anchor.revisionId.slice(0, 22)}…`,
-    revisionId: anchor.revisionId,
-  }));
+  const evidenceNodes = (memory.candidate?.body.now.evidence || []).map(
+    (anchor) => ({
+      id: anchor.revisionId,
+      kind: "evidence" as const,
+      label: anchor.relativePath,
+      detail: "点开看原文",
+      revisionId: anchor.revisionId,
+    }),
+  );
   return [
-    { id: memory.matter.id, kind: "matter", label: memory.matter.title, detail: "当前事项 · 判断中心" },
+    {
+      id: memory.matter.id,
+      kind: "matter",
+      label: memory.matter.title,
+      detail: "当前焦点",
+    },
     ...eventNodes,
-    ...evidenceNodes.filter((node, index, all) => all.findIndex((item) => item.id === node.id) === index),
-    { id: "action-demo-scope", kind: "action", label: "Demo 的 4 项行动", detail: "受影响的 action · 等 Owner 决定" },
+    ...evidenceNodes.filter(
+      (node, index, all) => all.findIndex((item) => item.id === node.id) === index,
+    ),
+    {
+      id: "action-demo-scope",
+      kind: "action",
+      label: "可能要跟进的行动",
+      detail: "等你决定",
+    },
   ];
 }
 
@@ -88,15 +102,20 @@ export function MatterFocusCanvas({ memory, focusId, onFocus, onOpenRevision }: 
     <section className={styles.canvasSection} aria-labelledby="focus-heading">
       <div className={styles.canvasHeader}>
         <div>
-          <span className={styles.kicker}><Workflow size={13} />非线性一跳画布</span>
-          <h2 id="focus-heading">一件事项居中，只展开一层直接关系</h2>
-          <p>点击变化、依据或行动换中心；每条关系都保留证据句和 match reason。</p>
+          <span className={styles.kicker}>
+            <Workflow size={13} />
+            关系
+          </span>
+          <h2 id="focus-heading">围绕一件事，只看直接相关的</h2>
+          <p>点一下就能换中心。多余的噪音不会挤进来。</p>
         </div>
-        <div className={styles.canvasRule}><span>当前焦点</span><strong>{focused.label}</strong></div>
+        <div className={styles.canvasRule}>
+          <span>正在看</span>
+          <strong>{focused.label}</strong>
+        </div>
       </div>
       <div className={styles.canvas}>
-        <div className={styles.canvasHint}>默认中心 · {memory.matter.title} <span>·</span> 仅显示一层
-        </div>
+        <div className={styles.canvasHint}>{memory.matter.title}</div>
         <div className={styles.edgeLayer} aria-hidden="true">
           {neighbors.map((node, index) => (
             <span key={node.id} className={styles.edgeLine} style={{ left: "50%", top: "50%", transform: `rotate(${index * 72 - 36}deg)`, width: `${35 + (index % 2) * 5}%` }} />
@@ -116,21 +135,54 @@ export function MatterFocusCanvas({ memory, focusId, onFocus, onOpenRevision }: 
               <span className={styles.nodeKind}>{node.kind === "change" ? "变化" : node.kind === "evidence" ? "依据" : node.kind === "action" ? "行动" : "事项"}</span>
               <strong>{node.label}</strong>
               <small>{node.detail}</small>
-              {node.revisionId && <span className={styles.nodeLink} onClick={(event) => { event.stopPropagation(); onOpenRevision(node.revisionId!); }}><FileText size={11} />打开 exact revision</span>}
+              {node.revisionId && (
+                <span
+                  className={styles.nodeLink}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenRevision(node.revisionId!);
+                  }}
+                >
+                  <FileText size={11} />
+                  看原文
+                </span>
+              )}
             </button>
           );
         })}
-        <div className={styles.canvasFootnote}><span className={styles.blueDot} />当前中心不是确认真相 · 关系只显示一跳</div>
+        <div className={styles.canvasFootnote}>
+          <span className={styles.blueDot} />
+          只展开一层，避免绕晕
+        </div>
       </div>
       <div className={styles.eventStrip}>
-        <div><span className={styles.stripLabel}>匹配变化</span><strong>{memory.events.length} 条</strong></div>
-        <div><span className={styles.stripLabel}>非匹配 trace</span><strong>{memory.filteredEvents.length} 条</strong></div>
-        <div className={styles.stripWarning}><TriangleAlert size={14} /><span>非匹配变化不进入中心</span></div>
-        <button type="button" className={styles.textButton} onClick={() => {
-          const event = memory.events[0];
-          const revisionId = event ? revisionIdToOpenForEvent(event) : undefined;
-          if (revisionId) onOpenRevision(revisionId);
-        }}>查看最新依据 <ArrowRight size={13} /></button>
+        <div>
+          <span className={styles.stripLabel}>相关变化</span>
+          <strong>{memory.events.length}</strong>
+        </div>
+        <div>
+          <span className={styles.stripLabel}>先放一边</span>
+          <strong>{memory.filteredEvents.length}</strong>
+        </div>
+        {memory.filteredEvents.length > 0 && (
+          <div className={styles.stripWarning}>
+            <TriangleAlert size={14} />
+            <span>无关变化不会占中心</span>
+          </div>
+        )}
+        <button
+          type="button"
+          className={styles.textButton}
+          onClick={() => {
+            const event = memory.events[0];
+            const revisionId = event
+              ? revisionIdToOpenForEvent(event)
+              : undefined;
+            if (revisionId) onOpenRevision(revisionId);
+          }}
+        >
+          看最新依据 <ArrowRight size={13} />
+        </button>
       </div>
     </section>
   );

@@ -13,8 +13,8 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { FirstUseProgress } from "./components/FirstUseProgress";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AgentProcessPanel } from "./components/AgentProcessPanel";
 import { InitialUnderstandingLead } from "./components/InitialUnderstandingLead";
 import { MatterFocusCanvas, type FocusNode } from "./components/MatterFocusCanvas";
 import { RevisionViewer } from "./components/RevisionViewer";
@@ -32,6 +32,10 @@ import {
   type UnderstandingBody,
   type WatchSetUpdate,
 } from "./lib/api";
+import {
+  resolveProcessStatuses,
+  type AgentPipelinePhase,
+} from "./lib/agent-process";
 import { eventIdsForMatterAnalysis } from "./lib/event-revision-open";
 import {
   DEFAULT_PERMISSION_COPY,
@@ -43,7 +47,6 @@ import {
   shouldRunInitialAnalysis,
   phaseAfterPickerCancel,
   phaseAfterPickerSelected,
-  type FirstUseProgressStep,
   type FolderSelection,
   type OnboardingPhase,
 } from "./lib/onboarding-folder-choice";
@@ -73,7 +76,8 @@ export default function MvpKnowledgeWorkbenchPage() {
   const [onboardingPhase, setOnboardingPhase] = useState<OnboardingPhase>("entry");
   const [recentConnection, setRecentConnection] = useState<RecentConnection | null>(null);
   const [pendingSelection, setPendingSelection] = useState<FolderSelection | null>(null);
-  const [progressStep, setProgressStep] = useState<FirstUseProgressStep | null>(null);
+  /** Live phase while first-use pipeline runs; null when idle (derive from memory). */
+  const [pipelinePhase, setPipelinePhase] = useState<AgentPipelinePhase | null>(null);
   const [progressFolderName, setProgressFolderName] = useState<string>("");
 
   useEffect(() => {
@@ -115,11 +119,8 @@ export default function MvpKnowledgeWorkbenchPage() {
   }, [api, connected, isFixture, modeReady]);
 
   /**
-   * First-use chain: authorize → reconcile → reconstruct (only if needed).
+   * First-use chain maps onto the Owner-visible 8-step Agent process.
    * Progress advances only after each real API returns — never a timer fake.
-   * - Consume bootstrap matchedEventIds/eventIds from backend connect.
-   * - Fresh: if no accepted/candidate, analysis with matched ids → await candidate → reload.
-   * - Continue with existing accepted/candidate: enter workbench immediately.
    */
   async function runFirstUsePipeline(options: {
     kind: "fresh" | "continue";
@@ -127,7 +128,7 @@ export default function MvpKnowledgeWorkbenchPage() {
     folderHint?: string;
     successNotice: string;
   }) {
-    setProgressStep("authorize");
+    setPipelinePhase("observe");
     setProgressFolderName(options.folderHint || "");
     const bootstrap: MvpBootstrap = await api.connectConnection(options.body);
     const resolvedProjectId = bootstrap.projectId;
@@ -145,7 +146,7 @@ export default function MvpKnowledgeWorkbenchPage() {
     // Prefer server bootstrap matched ids (backend already reconciled on connect).
     let eventIds = matchedEventIdsFromBootstrap(bootstrap);
 
-    setProgressStep("reconcile");
+    setPipelinePhase("map");
     if (eventIds.length === 0) {
       const reconciled = await api.reconcileGrant(
         resolvedProjectId,
@@ -165,8 +166,9 @@ export default function MvpKnowledgeWorkbenchPage() {
       if (eventIds.length === 0) {
         eventIds = eventIdsForMatterAnalysis(nextMemory);
       }
-      setProgressStep("reconstruct");
+      setPipelinePhase("tools");
       await api.runAnalysis(resolvedProjectId, resolvedMatterId, eventIds);
+      setPipelinePhase("candidate");
       nextMemory = await api.getMemory(resolvedProjectId, resolvedMatterId);
     }
 
@@ -175,9 +177,19 @@ export default function MvpKnowledgeWorkbenchPage() {
     setConnected(true);
     setPendingSelection(null);
     setOnboardingPhase("entry");
-    setProgressStep(null);
+    setPipelinePhase(null);
     setNotice(options.successNotice);
   }
+
+  const processView = useMemo(
+    () =>
+      resolveProcessStatuses({
+        pipelinePhase,
+        memory,
+        connected,
+      }),
+    [pipelinePhase, memory, connected],
+  );
 
   async function chooseProjectFolder() {
     setBusy(true);
@@ -217,12 +229,12 @@ export default function MvpKnowledgeWorkbenchPage() {
         body: connectPayloadForNewSelection(pendingSelection.selectionId),
         folderHint: pendingSelection.folderName,
         successNotice: isFixture
-          ? "已连接显式 contract fixture，并生成有依据的 candidate 理解。"
-          : "已授权文件夹并完成对账与状态重建；请审阅当前理解与未知项。",
+          ? "演示数据已就绪，可以开始看理解。"
+          : "已接上项目。请看右侧「下一步」，确认这段理解是否对。",
       });
     } catch (nextError) {
-      setProgressStep(null);
-      setError(nextError instanceof Error ? nextError.message : "连接失败");
+      setPipelinePhase(null);
+      setError(nextError instanceof Error ? nextError.message : "接不上，请重试");
     } finally {
       setBusy(false);
     }
@@ -237,11 +249,11 @@ export default function MvpKnowledgeWorkbenchPage() {
         kind: "continue",
         body: connectPayloadForContinue(recentConnection),
         folderHint: recentConnection.folderName,
-        successNotice: "已继续上次项目；先展示已有理解，仅在需要时重建。",
+        successNotice: "已回到上次项目。",
       });
     } catch (nextError) {
-      setProgressStep(null);
-      setError(nextError instanceof Error ? nextError.message : "继续连接失败");
+      setPipelinePhase(null);
+      setError(nextError instanceof Error ? nextError.message : "接不上上次项目");
     } finally {
       setBusy(false);
     }
@@ -262,9 +274,9 @@ export default function MvpKnowledgeWorkbenchPage() {
       const eventIds = eventIdsForMatterAnalysis(memory);
       await api.runAnalysis(projectId, matterId, eventIds);
       await loadMemory();
-      setNotice("已按匹配变化运行一次状态重建；结果仍是 candidate。");
+      setNotice("已根据最新变化更新理解，请你再确认一次。");
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "状态重建失败");
+      setError(nextError instanceof Error ? nextError.message : "更新理解失败");
     } finally {
       setBusy(false);
     }
@@ -276,7 +288,7 @@ export default function MvpKnowledgeWorkbenchPage() {
     try {
       const watchSet = await api.updateWatchSet(projectId, matterId, input);
       setMemory((current) => (current ? { ...current, watchSet } : current));
-      setNotice("当前 matter 的 watch set 已更新；未匹配变化不会进入中心。");
+      setNotice("关注范围已更新。");
     } finally {
       setBusy(false);
     }
@@ -289,7 +301,7 @@ export default function MvpKnowledgeWorkbenchPage() {
       excludePathPrefixes: memory?.watchSet.excludePathPrefixes || [],
       status: "disabled",
     });
-    setNotice("watch 已停止；历史 revision 保持可读。");
+    setNotice("已暂停关注。之前看过的内容仍可打开。");
   }
 
   async function openRevision(revisionId: string) {
@@ -320,16 +332,14 @@ export default function MvpKnowledgeWorkbenchPage() {
       );
       await loadMemory();
       if (decision === "reject") {
-        setResolutionMessage(
-          `已写入 Owner resolution：reject。candidate ${result.resolution.candidateRevisionId} 保持不变。`,
-        );
+        setResolutionMessage("已放下这段理解。需要时可以再生成。");
+      } else if (result.accepted || decision === "accept" || decision === "edit_accept") {
+        setResolutionMessage("已确认。当前理解已按你的决定更新。");
       } else {
-        setResolutionMessage(
-          `已新建 accepted revision ${result.accepted?.id}；candidate ${result.resolution.candidateRevisionId} 未被原地改写。`,
-        );
+        setResolutionMessage("已记下你的决定。");
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Owner 决议失败");
+      setError(nextError instanceof Error ? nextError.message : "没能记下你的决定");
     } finally {
       setBusy(false);
     }
@@ -352,89 +362,33 @@ export default function MvpKnowledgeWorkbenchPage() {
 
   if (!connected || !grant || !matter || !memory) {
     const showReview = onboardingPhase === "review" && pendingSelection;
-    const showProgress = progressStep !== null;
+    const showPipeline = pipelinePhase !== null;
     return (
-      <main className={styles.shell}>
-        <aside className={styles.rail} aria-label="MVP 知识工作台导航">
-          <div className={styles.windowDots}>
-            <span />
-            <span />
-            <span />
-          </div>
-          <div className={styles.profileRow}>
-            <span className={styles.avatar}>
-              <Bot size={18} />
-            </span>
-            <div>
-              <strong>知识工作台</strong>
-              <small>Owner 视角</small>
-            </div>
-            <ChevronRight size={15} />
-          </div>
-          <div className={styles.railSection}>
-            <span className={styles.railLabel}>MVP-V0</span>
-            <div className={styles.railItemActive}>
-              <LayoutGrid size={15} />
-              非线性工作台
-            </div>
-          </div>
-          <div className={styles.railSection}>
-            <span className={styles.railLabel}>状态</span>
-            <div className={styles.railItem}>
-              <ShieldCheck size={15} />
-              {showProgress ? "正在建立理解" : "等待选择本地项目"}
-            </div>
-          </div>
-        </aside>
-        <section className={styles.onboarding}>
-          <div className={styles.onboardingTop}>
-            <span className={styles.readOnly}>
-              <span />
-              Task 5 · {isFixture ? "explicit fixture" : "HTTP adapter"}
-            </span>
-            <span>Owner 授权 · 不扫全机</span>
-          </div>
+      <main className={`${styles.shell} ${styles.shellEntry}`}>
+        <section className={styles.onboarding} aria-label="选择本地项目">
           <div className={styles.onboardingBody}>
-            <span className={styles.onboardingIcon}>
-              <FolderGit2 size={25} />
+            <span className={styles.onboardingIcon} aria-hidden>
+              <FolderGit2 size={28} />
             </span>
-            <span className={styles.kicker}>
-              <ShieldCheck size={13} />
-              Owner 明确授权
-            </span>
-            <h1>选择一个本地项目，开始重建当前理解</h1>
-            <p>
-              你只负责指出授权文件夹；Agent 在边界内对账与重建有依据的当前理解。不需要项目 UUID、绝对路径语法或关注路径前缀。
-            </p>
-            <div className={styles.promiseList}>
-              <div>
-                <span>01</span>
-                <strong>授权边界</strong>
-                <small>Continue 或系统文件夹选择；仅所选目录可读。</small>
-              </div>
-              <div>
-                <span>02</span>
-                <strong>真实进度</strong>
-                <small>授权 → 对账 → 重建，每步跟真实接口，不用假计时。</small>
-              </div>
-              <div>
-                <span>03</span>
-                <strong>理解优先</strong>
-                <small>先看有依据的现状与明确未知；Owner 只纠正/确认。</small>
-              </div>
-            </div>
+            <h1>选一个本地项目</h1>
+            <p>只读你授权的文件夹，帮你看清现在怎样。</p>
 
-            {showProgress && progressStep && (
-              <FirstUseProgress step={progressStep} folderName={progressFolderName} />
+            {showPipeline && (
+              <AgentProcessPanel
+                statuses={processView.statuses}
+                active={processView.active}
+                caption={processView.caption}
+                folderName={progressFolderName}
+                compact
+              />
             )}
 
-            {!showProgress && showReview ? (
+            {!showPipeline && showReview ? (
               <div className={styles.folderChoiceCard} data-testid="folder-selection-review">
-                <span className={styles.stripLabel}>已选文件夹</span>
+                <span className={styles.stripLabel}>已选</span>
                 <strong>{pendingSelection.folderName}</strong>
                 <code>{pendingSelection.rootPath}</code>
                 <p className={styles.permissionCopy}>{DEFAULT_PERMISSION_COPY}</p>
-                <small>授权边界：{pendingSelection.permissionBoundary}</small>
                 <div className={styles.choiceActions}>
                   <button
                     className={styles.secondaryButton}
@@ -450,17 +404,16 @@ export default function MvpKnowledgeWorkbenchPage() {
                     onClick={() => void connectWithSelection()}
                     disabled={busy}
                   >
-                    <FolderGit2 size={17} />
-                    {busy ? "连接中…" : "连接"}
+                    {busy ? "接上中…" : "用这个文件夹"}
                     <ArrowRight size={16} />
                   </button>
                 </div>
               </div>
-            ) : !showProgress ? (
+            ) : !showPipeline ? (
               <div className={styles.folderChoiceActions} data-testid="folder-choice-entry">
                 {recentConnection && !isFixture && (
                   <div className={styles.folderChoiceCard} data-testid="recent-connection">
-                    <span className={styles.stripLabel}>最近项目</span>
+                    <span className={styles.stripLabel}>上次</span>
                     <strong>{recentConnection.folderName}</strong>
                     <code>{recentConnection.rootPath}</code>
                     <button
@@ -469,8 +422,7 @@ export default function MvpKnowledgeWorkbenchPage() {
                       onClick={() => void continueRecent()}
                       disabled={busy}
                     >
-                      <FolderGit2 size={17} />
-                      {busy ? "连接中…" : "继续"}
+                      {busy ? "连接中…" : "继续上次"}
                       <ArrowRight size={16} />
                     </button>
                   </div>
@@ -482,22 +434,15 @@ export default function MvpKnowledgeWorkbenchPage() {
                   disabled={busy}
                   data-testid="choose-project-folder"
                 >
-                  <FolderGit2 size={17} />
-                  {busy
-                    ? "打开中…"
-                    : isFixture
-                      ? "选择显式 fixture 文件夹"
-                      : "选择项目文件夹"}
+                  {busy ? "打开中…" : isFixture ? "用演示文件夹" : "选择项目文件夹"}
                   <ArrowRight size={16} />
                 </button>
               </div>
             ) : null}
 
-            <span className={styles.fixtureNote}>
-              {isFixture
-                ? "仅 ?fixture=1 启用；fixture 不作为生产事实或持久化真相。"
-                : "默认路径为真实 HTTP API；后端负责 native picker、source grant 与默认 matter/watch。"}
-            </span>
+            {isFixture && (
+              <span className={styles.fixtureNote}>演示数据，不会写入真实项目记忆。</span>
+            )}
             {error && <div className={styles.errorBanner}>{error}</div>}
           </div>
         </section>
@@ -507,7 +452,7 @@ export default function MvpKnowledgeWorkbenchPage() {
 
   return (
     <main className={styles.shell}>
-      <aside className={styles.rail} aria-label="MVP 知识工作台导航">
+      <aside className={styles.rail} aria-label="导航">
         <div className={styles.windowDots}>
           <span />
           <span />
@@ -518,8 +463,8 @@ export default function MvpKnowledgeWorkbenchPage() {
             <Bot size={18} />
           </span>
           <div>
-            <strong>知识工作台</strong>
-            <small>Owner 视角</small>
+            <strong>项目理解</strong>
+            <small>回到现状</small>
           </div>
           <ChevronRight size={15} />
         </div>
@@ -527,50 +472,42 @@ export default function MvpKnowledgeWorkbenchPage() {
           <span className={styles.railLabel}>项目</span>
           <button className={styles.projectButton} type="button">
             <CircleDot size={14} />
-            {projectLabel} <small>MVP</small>
+            {projectLabel}
           </button>
         </div>
         <div className={styles.railSection}>
-          <span className={styles.railLabel}>工作对象</span>
+          <span className={styles.railLabel}>现在</span>
           <div className={styles.railItemActive}>
             <LayoutGrid size={15} />
-            一件事项
+            当前理解
           </div>
           <div className={styles.railItem}>
             <Search size={15} />
-            来源与依据
+            依据
           </div>
           <div className={styles.railItem}>
             <MessageCircleQuestion size={15} />
-            六问重建
+            细节
           </div>
         </div>
         <div className={styles.railBottom}>
           <span className={styles.statusLight} />
-          {isFixture ? "explicit fixture" : "HTTP adapter"}
-          <br />
-          <small>{isFixture ? "test switch only" : "persisted API"}</small>
+          只读你授权的文件夹
         </div>
       </aside>
       <section className={styles.mainColumn}>
         <header className={styles.topbar}>
           <div className={styles.breadcrumb}>
-            <span>项目</span>
-            <ChevronRight size={13} />
             <span>{projectLabel}</span>
             <ChevronRight size={13} />
             <strong>{matter.title}</strong>
           </div>
           <div className={styles.topActions}>
-            <span className={styles.readOnly}>
-              <span />
-              {isFixture ? "只读 explicit fixture" : "只读 HTTP memory"}
-            </span>
             <button
               className={styles.iconButton}
               type="button"
               onClick={() => void loadMemory()}
-              aria-label="刷新 memory"
+              aria-label="刷新"
             >
               <RefreshCw size={15} />
             </button>
@@ -580,7 +517,7 @@ export default function MvpKnowledgeWorkbenchPage() {
           <div>
             <span className={styles.kicker}>
               <Sparkles size={13} />
-              当前事项
+              正在推进
             </span>
             <h1>{matter.title}</h1>
             <p>{matter.goal}</p>
@@ -592,10 +529,16 @@ export default function MvpKnowledgeWorkbenchPage() {
             onClick={() => void runAnalysis()}
           >
             <Sparkles size={14} />
-            运行一次状态重建
+            再读一遍变化
           </button>
         </div>
         <div className={styles.scrollArea}>
+          <AgentProcessPanel
+            statuses={processView.statuses}
+            active={processView.active}
+            caption={processView.caption}
+            folderName={projectLabel}
+          />
           <InitialUnderstandingLead
             memory={memory}
             onOpenRevision={(revisionId) => void openRevision(revisionId)}
@@ -616,33 +559,44 @@ export default function MvpKnowledgeWorkbenchPage() {
           />
         </div>
       </section>
-      <aside className={styles.inspector} aria-label="事项状态与 Owner 决议">
+      <aside className={styles.inspector} aria-label="理解与下一步">
         <div className={styles.inspectorScroll}>
-          <StateReconstructionPanel
-            memory={memory}
-            onOpenRevision={(revisionId) => void openRevision(revisionId)}
-          />
           <UnderstandingReviewCard
             candidate={memory.candidate}
             accepted={memory.accepted}
             onResolve={resolveCandidate}
             resolutionMessage={resolutionMessage}
           />
+          <StateReconstructionPanel
+            memory={memory}
+            onOpenRevision={(revisionId) => void openRevision(revisionId)}
+          />
           <div className={styles.inspectorFooter}>
             <ShieldCheck size={13} />
-            <span>所有决议都通过 OwnerDecisionWriter 边界；Agent 不能自我确认。</span>
+            <span>最终由你确认。Agent 不会替你拍板。</span>
           </div>
         </div>
       </aside>
       <footer className={styles.footer}>
         <span>
           <span className={styles.statusLight} />
-          事项：{matter.title}
+          {projectLabel}
         </span>
-        <span>focus：{focusId === matter.id ? "matter" : "one-hop relation"}</span>
-        <span>accepted：{memory.head.acceptedRevisionId || "none"}</span>
-        <span>review：{memory.head.reviewState}</span>
-        <span>{isFixture ? "fixture=1" : "HTTP persisted"}</span>
+        <span>
+          {memory.candidate
+            ? "有一段理解待你确认"
+            : memory.accepted
+              ? "理解已确认"
+              : "还在准备理解"}
+        </span>
+        <span>
+          {processView.active === "owner"
+            ? "请你确认右侧理解"
+            : processView.active === "persist" &&
+                processView.statuses.persist === "done"
+              ? "已就绪"
+              : processView.caption}
+        </span>
       </footer>
       {notice && (
         <button className={styles.toast} type="button" onClick={() => setNotice(null)}>

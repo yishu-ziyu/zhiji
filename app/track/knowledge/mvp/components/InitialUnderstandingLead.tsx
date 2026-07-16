@@ -10,40 +10,43 @@ type Props = {
   onOpenRevision: (revisionId: string) => void;
 };
 
-/**
- * First meaningful output after connect: source-backed current understanding
- * plus explicit unknown/conflict gaps — not IDs or an empty canvas.
- */
 export function InitialUnderstandingLead({ memory, onOpenRevision }: Props) {
   const body = memory.candidate?.body || memory.accepted?.body;
   if (!body) {
     return (
-      <section className={styles.understandingLead} data-testid="understanding-lead-empty">
+      <section
+        className={styles.understandingLead}
+        data-testid="understanding-lead-empty"
+      >
         <span className={styles.kicker}>
           <Sparkles size={13} />
           当前理解
         </span>
-        <h2>还没有可审阅的理解</h2>
-        <p>连接后应出现有依据的当前状态与明确未知项；若仍为空，请检查授权文件夹内是否有可读材料。</p>
+        <h2>还没有读出内容</h2>
+        <p>文件夹里有可读材料后，这里会出现简短、有来源的现状。</p>
       </section>
     );
   }
 
   const lead = extractUnderstandingLead(body);
-  const kind = memory.candidate ? "candidate · 待 Owner 确认" : "accepted · 已确认";
 
   return (
-    <section className={styles.understandingLead} data-testid="understanding-lead">
+    <section
+      className={styles.understandingLead}
+      data-testid="understanding-lead"
+    >
       <div className={styles.understandingLeadHeader}>
         <div>
           <span className={styles.kicker}>
             <Sparkles size={13} />
             当前理解
           </span>
-          <h2>有依据的现状，先于任何内部编号</h2>
+          <h2>现在这样</h2>
         </div>
-        <span className={`${styles.statusTag} ${memory.candidate ? styles.statusCandidate : styles.statusAccepted}`}>
-          {kind}
+        <span
+          className={`${styles.statusTag} ${memory.candidate ? styles.statusCandidate : styles.statusAccepted}`}
+        >
+          {memory.candidate ? "待你确认" : "已确认"}
         </span>
       </div>
       <p className={styles.understandingNow}>{lead.nowText}</p>
@@ -66,10 +69,10 @@ export function InitialUnderstandingLead({ memory, onOpenRevision }: Props) {
       <div className={styles.unknownList} data-testid="explicit-unknowns">
         <span className={styles.questionLabel}>
           <CircleHelp size={12} />
-          明确未知 / 冲突
+          还不确定
         </span>
         {lead.unknowns.length === 0 ? (
-          <p className={styles.unknownEmpty}>当前没有列出的 unknown / conflicted 缺口。</p>
+          <p className={styles.unknownEmpty}>目前没有标出的缺口。</p>
         ) : (
           <ul>
             {lead.unknowns.map((item) => (

@@ -34,7 +34,7 @@ export const ONBOARDING_FORBIDDEN_FIELD_LABELS = [
 ] as const;
 
 export const DEFAULT_PERMISSION_COPY =
-  "仅授权当前所选文件夹。系统使用安全默认排除规则（如生成物与私有内部路径）；高级关注范围可在连接后调整。";
+  "只会读你选中的这个文件夹。生成物等默认会跳过；需要时再细调范围。";
 
 export const FIRST_USE_PROGRESS_STEPS: FirstUseProgressStep[] = [
   "authorize",
@@ -43,9 +43,9 @@ export const FIRST_USE_PROGRESS_STEPS: FirstUseProgressStep[] = [
 ];
 
 export const FIRST_USE_PROGRESS_LABELS: Record<FirstUseProgressStep, string> = {
-  authorize: "授权所选文件夹",
-  reconcile: "对账可读项目文件",
-  reconstruct: "重建当前理解",
+  authorize: "接上文件夹",
+  reconcile: "浏览项目内容",
+  reconstruct: "整理当前理解",
 };
 
 export function folderNameFromPath(rootPath: string): string {

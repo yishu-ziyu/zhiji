@@ -17,9 +17,9 @@ type Props = {
 export function FirstUseProgress({ step, folderName }: Props) {
   return (
     <div className={styles.firstUseProgress} data-testid="first-use-progress" aria-live="polite">
-      <span className={styles.kicker}>正在建立当前理解</span>
+      <span className={styles.kicker}>正在阅读</span>
       <strong>{folderName || "所选项目"}</strong>
-      <p>进度只随真实接口完成推进，不会用空计时假装完成。</p>
+      <p>每一步都是真的在做，不会假装完成。</p>
       <ol className={styles.firstUseSteps}>
         {FIRST_USE_PROGRESS_STEPS.map((item) => {
           const done = isProgressStepDone(step, item);
