@@ -27,4 +27,4 @@
 ## 日志
 - 2026-07-16 G1: 建板；G2/G3/G4 已派 015
 - 2026-07-16 13:10 G1: 建工作管理板；巡检 G2 done / G3 doing / G4 watching
-- 2026-07-16 G3: W2–W5 done · 分支 feature/first-user-real-entry · handoff G3-015-done.md · unit 144 pass
+- 2026-07-16 G3: W2–W5 done · 分支 feature/first-user-real-entry · HEAD a64bbeb0 · handoff G3-015-done.md · unit 144 pass

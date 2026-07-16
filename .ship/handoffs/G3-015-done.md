@@ -58,7 +58,16 @@ KNOWLEDGE_DATA_DIR=/tmp/k015-empty npm run dev
 
 ## Commit
 
-见分支 `feature/first-user-real-entry` 上本 handoff 对应 commits（`git log --oneline`）。
+分支：`feature/first-user-real-entry`  
+HEAD：`a64bbeb07d5f87ebe84e4ed2376378af034bdd8d`
+
+| SHA | message |
+|-----|---------|
+| `281e09ea` | feat(knowledge): gate demo seed behind SEED_DEMO |
+| `6b91c0d2` | feat(knowledge): write single files under project materials |
+| `912ac585` | feat(knowledge): honest empty workspace with create and upload |
+| `0220a03a` | test(knowledge): cover first-user empty path for 015 |
+| `a64bbeb0` | docs(ship): record G3-015 handoff and board W2-W5 done |
 
 ## 未做（合同非目标 / 留给 G4）
 
