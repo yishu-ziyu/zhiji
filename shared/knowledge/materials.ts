@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -22,11 +23,22 @@ export type MaterialFile = {
   updatedAt: string;
   /** Byte size when known (list/detail). */
   sizeBytes?: number;
+  /**
+   * SHA-256 hex of current file bytes (T-16 / D-24).
+   * Identity remains `id` = relativePath; hash is side field only.
+   */
+  contentHash?: string;
   /** B-1: linked KnowledgeCard id (citable object). */
   citationCardId?: string;
   /** B-1: display title for citation (not only disk basename). */
   citationTitle?: string;
 };
+
+/** Content-address of material bytes (utf8 string or raw Buffer). */
+export function materialContentHash(input: string | Buffer): string {
+  const buf = typeof input === "string" ? Buffer.from(input, "utf8") : input;
+  return createHash("sha256").update(buf).digest("hex");
+}
 
 export type MaterialReadResult = {
   meta: MaterialFile;
@@ -365,6 +377,7 @@ function walkMaterials(
     if (!entry.isFile()) continue;
     const relativePath = path.relative(root, full).split(path.sep).join("/");
     const stat = fs.statSync(full);
+    const bytes = fs.readFileSync(full);
     out.push({
       id: relativePath,
       projectId,
@@ -373,6 +386,7 @@ function walkMaterials(
       kind: kindFromName(entry.name),
       updatedAt: stat.mtime.toISOString(),
       sizeBytes: stat.size,
+      contentHash: materialContentHash(bytes),
     });
   }
 }
@@ -391,6 +405,7 @@ function materialMeta(
   relativePath: string,
   updatedAt: string,
   sizeBytes?: number,
+  contentHash?: string,
 ): MaterialFile {
   return {
     id: relativePath,
@@ -400,6 +415,7 @@ function materialMeta(
     kind: kindFromName(relativePath),
     updatedAt,
     sizeBytes,
+    contentHash,
   };
 }
 
@@ -430,13 +446,14 @@ export function readProjectMaterial(
     return null;
   }
   const stat = fs.statSync(resolvedFull);
+  const buf = fs.readFileSync(resolvedFull);
   const meta = materialMeta(
     projectId,
     relativePath,
     stat.mtime.toISOString(),
     stat.size,
+    materialContentHash(buf),
   );
-  const buf = fs.readFileSync(resolvedFull);
   const mimeType = mimeFromName(relativePath);
   const typeLabel = typeLabelFromName(relativePath);
   const fileName = meta.name;
@@ -551,17 +568,18 @@ export function writeProjectMaterial(
     throw new Error("文件名无效");
   }
   fs.mkdirSync(path.dirname(resolvedFull), { recursive: true });
-  if (options?.encoding === "base64") {
-    fs.writeFileSync(resolvedFull, Buffer.from(content, "base64"));
-  } else {
-    fs.writeFileSync(resolvedFull, content, "utf8");
-  }
+  const bytes =
+    options?.encoding === "base64"
+      ? Buffer.from(content, "base64")
+      : Buffer.from(content, "utf8");
+  fs.writeFileSync(resolvedFull, bytes);
   const stat = fs.statSync(resolvedFull);
   return materialMeta(
     projectId,
     relativePath,
     stat.mtime.toISOString(),
     stat.size,
+    materialContentHash(bytes),
   );
 }
 

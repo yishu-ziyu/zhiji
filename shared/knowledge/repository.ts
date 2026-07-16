@@ -78,6 +78,8 @@ type NewCardInput = {
   id?: string;
   timestamp?: string;
   sourceFileId?: string;
+  sourceContentHash?: string;
+  sourceCitedAt?: string;
 };
 
 type NewActionInput = {
@@ -359,6 +361,8 @@ function normalizeCard(
     links: raw.links ?? [],
     title: raw.title?.trim() || undefined,
     sourceFileId: raw.sourceFileId?.trim() || undefined,
+    sourceContentHash: raw.sourceContentHash?.trim() || undefined,
+    sourceCitedAt: raw.sourceCitedAt?.trim() || undefined,
   };
 }
 
@@ -848,27 +852,71 @@ export function getCardBySourceFileId(
   return null;
 }
 
+export type MaterialCitationFreshness =
+  | "fresh"
+  | "stale"
+  | "missing"
+  | "unstamped";
+
+/**
+ * Compare a path citation's stamped hash to current material bytes.
+ * Does not mutate cards. Missing material → missing; no stamp → unstamped.
+ */
+export function assertMaterialCitationFresh(input: {
+  sourceContentHash?: string;
+  currentContentHash?: string | null;
+  materialExists: boolean;
+}): MaterialCitationFreshness {
+  if (!input.materialExists) return "missing";
+  const stamped = input.sourceContentHash?.trim();
+  if (!stamped) return "unstamped";
+  const current = input.currentContentHash?.trim();
+  if (!current) return "missing";
+  return stamped === current ? "fresh" : "stale";
+}
+
 /**
  * B-1: ensure a real KnowledgeCard cites this material (stable material id = sourceFileId).
  * Reuses existing card; never invents materials without a real file id.
+ * T-16: stamps sourceContentHash on create; one-time backfill if absent; never rewrites stamp.
  */
 export function ensureMaterialCitationCard(input: {
   projectId: string;
   materialId: string;
   title: string;
   contentSummary: string;
+  contentHash?: string;
 }): KnowledgeCard {
   if (!getProject(input.projectId)) throw new Error("项目不存在");
   const materialId = input.materialId.trim();
   if (!materialId) throw new Error("材料 ID 无效");
+  const contentHash = input.contentHash?.trim() || undefined;
   const existing = getCardBySourceFileId(input.projectId, materialId);
-  if (existing) return existing;
+  if (existing) {
+    // One-time backfill for legacy path-only cards (scion-safe: no id change).
+    if (!existing.sourceContentHash?.trim() && contentHash) {
+      const cards = workingCards();
+      const live = cards.get(existing.id);
+      if (live && !live.sourceContentHash?.trim()) {
+        const now = new Date().toISOString();
+        live.sourceContentHash = contentHash;
+        live.sourceCitedAt = now;
+        cards.set(live.id, live);
+        saveCards(cards);
+        return copyCard(live);
+      }
+    }
+    return existing;
+  }
+  const now = new Date().toISOString();
   return addCard({
     projectId: input.projectId,
     title: input.title.trim() || materialId,
     content: input.contentSummary.trim() || `材料：${materialId}`,
     source: "doc",
     sourceFileId: materialId,
+    sourceContentHash: contentHash,
+    sourceCitedAt: contentHash ? now : undefined,
     tags: ["material", "citable"],
   });
 }
@@ -884,6 +932,7 @@ export function addCard(input: NewCardInput): KnowledgeCard {
 
   const cards = workingCards();
   const now = new Date().toISOString();
+  const sourceContentHash = input.sourceContentHash?.trim() || undefined;
   const card: KnowledgeCard = {
     id: input.id ?? randomUUID(),
     projectId,
@@ -894,6 +943,10 @@ export function addCard(input: NewCardInput): KnowledgeCard {
     links: input.links ?? [],
     title: input.title?.trim() || undefined,
     sourceFileId: input.sourceFileId?.trim() || undefined,
+    sourceContentHash,
+    sourceCitedAt:
+      input.sourceCitedAt?.trim() ||
+      (sourceContentHash ? now : undefined),
   };
   cards.set(card.id, card);
   saveCards(cards);

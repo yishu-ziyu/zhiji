@@ -118,6 +118,101 @@ describe("knowledge repository persistence", () => {
     );
   });
 
+  it("T-16: material citation stamps content hash and detects stale overwrite", async () => {
+    delete process.env.SEED_DEMO;
+    const repo = await loadRepo();
+    const {
+      writeProjectMaterial,
+      materialContentHash,
+      readProjectMaterial,
+    } = await import("./materials");
+    repo.resetKnowledgeStoreForTests();
+    const project = repo.addProject({ name: "hash cite project" });
+    const bodyA = "# A\n\ncite-me-token";
+    const materialA = writeProjectMaterial(project.id, "spec.md", bodyA);
+    expect(materialA.id).toBe("spec.md");
+    expect(materialA.contentHash).toBe(materialContentHash(bodyA));
+
+    const card = repo.ensureMaterialCitationCard({
+      projectId: project.id,
+      materialId: materialA.id,
+      title: materialA.name,
+      contentSummary: bodyA,
+      contentHash: materialA.contentHash,
+    });
+    expect(card.sourceFileId).toBe("spec.md");
+    expect(card.sourceContentHash).toBe(materialA.contentHash);
+    expect(card.sourceCitedAt).toBeTruthy();
+    expect(
+      repo.assertMaterialCitationFresh({
+        sourceContentHash: card.sourceContentHash,
+        currentContentHash: materialA.contentHash,
+        materialExists: true,
+      }),
+    ).toBe("fresh");
+
+    const bodyB = "# B\n\noverwritten";
+    const materialB = writeProjectMaterial(project.id, "spec.md", bodyB);
+    expect(materialB.id).toBe("spec.md");
+    expect(materialB.contentHash).not.toBe(card.sourceContentHash);
+    expect(
+      repo.assertMaterialCitationFresh({
+        sourceContentHash: card.sourceContentHash,
+        currentContentHash: materialB.contentHash,
+        materialExists: true,
+      }),
+    ).toBe("stale");
+
+    // ensure reuse must not rewrite the original stamp
+    const again = repo.ensureMaterialCitationCard({
+      projectId: project.id,
+      materialId: "spec.md",
+      title: "spec.md",
+      contentSummary: bodyB,
+      contentHash: materialB.contentHash,
+    });
+    expect(again.id).toBe(card.id);
+    expect(again.sourceContentHash).toBe(card.sourceContentHash);
+
+    // one-time backfill for legacy path-only card
+    const legacy = repo.addCard({
+      projectId: project.id,
+      title: "legacy.md",
+      content: "old",
+      source: "doc",
+      sourceFileId: "legacy.md",
+    });
+    expect(legacy.sourceContentHash).toBeUndefined();
+    writeProjectMaterial(project.id, "legacy.md", "legacy-body");
+    const hash = materialContentHash("legacy-body");
+    const backfilled = repo.ensureMaterialCitationCard({
+      projectId: project.id,
+      materialId: "legacy.md",
+      title: "legacy.md",
+      contentSummary: "legacy-body",
+      contentHash: hash,
+    });
+    expect(backfilled.id).toBe(legacy.id);
+    expect(backfilled.sourceContentHash).toBe(hash);
+    expect(
+      repo.assertMaterialCitationFresh({
+        sourceContentHash: undefined,
+        currentContentHash: hash,
+        materialExists: true,
+      }),
+    ).toBe("unstamped");
+    expect(
+      repo.assertMaterialCitationFresh({
+        sourceContentHash: hash,
+        currentContentHash: hash,
+        materialExists: false,
+      }),
+    ).toBe("missing");
+    expect(readProjectMaterial(project.id, "spec.md")?.meta.contentHash).toBe(
+      materialB.contentHash,
+    );
+  });
+
   it("fails closed when persisted JSON is corrupt instead of reseeding over it", async () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();

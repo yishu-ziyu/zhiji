@@ -9,6 +9,7 @@ import {
   type MaterialFile,
 } from "@/shared/knowledge/materials";
 import {
+  assertMaterialCitationFresh,
   ensureMaterialCitationCard,
   getProject,
 } from "@/shared/knowledge/repository";
@@ -32,6 +33,7 @@ function citeMaterial(
     materialId: material.id,
     title: material.name,
     contentSummary: summary,
+    contentHash: material.contentHash,
   });
   return {
     ...material,
@@ -120,6 +122,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       materialId: material.id,
       title: body.title?.trim() || material.name,
       contentSummary: cardContent,
+      contentHash: material.contentHash,
     });
     const cited: MaterialFile = {
       ...material,
@@ -132,6 +135,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         card,
         citationCardId: card.id,
         citationTitle: cited.citationTitle,
+        contentHash: material.contentHash,
+        sourceContentHash: card.sourceContentHash,
+        citationFreshness: assertMaterialCitationFresh({
+          sourceContentHash: card.sourceContentHash,
+          currentContentHash: material.contentHash,
+          materialExists: true,
+        }),
       },
       { status: 201 },
     );

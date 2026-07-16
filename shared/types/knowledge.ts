@@ -165,6 +165,13 @@ export type KnowledgeCard = {
   title?: string;
   /** Optional path into project materials store (knowledge base file). */
   sourceFileId?: string;
+  /**
+   * SHA-256 of material bytes when this citation was stamped (T-16 / D-24).
+   * Path id remains sourceFileId; hash pins cited version (2a stamp-on-cite).
+   */
+  sourceContentHash?: string;
+  /** ISO time when sourceContentHash was first set (create or one-time backfill). */
+  sourceCitedAt?: string;
 };
 
 /** Global status dictionary (shared language). */

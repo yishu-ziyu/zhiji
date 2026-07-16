@@ -9,12 +9,14 @@ import {
   POST as materialsPost,
 } from "@/app/api/knowledge/projects/[id]/materials/route";
 import {
+  assertMaterialCitationFresh,
   ensureMaterialCitationCard,
   getCardBySourceFileId,
   listCards,
   resetKnowledgeStoreForTests,
   searchProjectRecords,
 } from "@/shared/knowledge/repository";
+import { materialContentHash } from "@/shared/knowledge/materials";
 
 /** B-1: import real material → stable id + citable KnowledgeCard, searchable, openable. */
 let tmpDir = "";
@@ -60,32 +62,55 @@ it("import creates stable material id linked to a citation card", async () => {
       id: string;
       citationCardId?: string;
       citationTitle?: string;
+      contentHash?: string;
     };
-    card: { id: string; sourceFileId?: string; title?: string };
+    card: {
+      id: string;
+      sourceFileId?: string;
+      title?: string;
+      sourceContentHash?: string;
+    };
     citationCardId: string;
+    sourceContentHash?: string;
+    citationFreshness?: string;
   };
   expect(body.material.id).toBe("spec-note.md");
   expect(body.citationCardId).toBeTruthy();
   expect(body.material.citationCardId).toBe(body.citationCardId);
   expect(body.card.sourceFileId).toBe("spec-note.md");
   expect(body.card.id).toBe(body.citationCardId);
+  const expectedHash = materialContentHash("# 规格\n\n可引用 token-b1-cite");
+  expect(body.material.contentHash).toBe(expectedHash);
+  expect(body.card.sourceContentHash).toBe(expectedHash);
+  expect(body.sourceContentHash).toBe(expectedHash);
+  expect(body.citationFreshness).toBe("fresh");
 
   const linked = getCardBySourceFileId(project.id, "spec-note.md");
   expect(linked?.id).toBe(body.citationCardId);
+  expect(linked?.sourceContentHash).toBe(expectedHash);
 
-  // Idempotent ensure: same material → same card
+  // Idempotent ensure: same material → same card; stamp not rewritten
   const again = ensureMaterialCitationCard({
     projectId: project.id,
     materialId: "spec-note.md",
     title: "spec-note.md",
     contentSummary: "again",
+    contentHash: materialContentHash("different-bytes-must-not-restamp"),
   });
   expect(again.id).toBe(body.citationCardId);
+  expect(again.sourceContentHash).toBe(expectedHash);
   expect(
     listCards({ projectId: project.id }).filter(
       (c) => c.sourceFileId === "spec-note.md",
     ),
   ).toHaveLength(1);
+  expect(
+    assertMaterialCitationFresh({
+      sourceContentHash: again.sourceContentHash,
+      currentContentHash: materialContentHash("different-bytes-must-not-restamp"),
+      materialExists: true,
+    }),
+  ).toBe("stale");
 
   const hits = searchProjectRecords(project.id, "token-b1-cite", 8);
   expect(hits.some((h) => h.ref.kind === "card" && h.ref.id === body.card.id)).toBe(

@@ -8,6 +8,7 @@ import {
   listProjectMaterials,
   looksLikeBinaryText,
   materialCardSummary,
+  materialContentHash,
   readProjectMaterial,
   renderMarkdownLite,
   sanitizeMaterialFileName,
@@ -65,6 +66,57 @@ describe("materials", () => {
     expect(read?.previewMode).toBe("text");
     expect(fs.existsSync(path.join(tmpDir, "files", projectId, "note.md"))).toBe(
       true,
+    );
+  });
+
+  it("materialContentHash is stable sha256 hex of raw bytes", () => {
+    const a = materialContentHash("hello material");
+    const b = materialContentHash(Buffer.from("hello material", "utf8"));
+    expect(a).toMatch(/^[a-f0-9]{64}$/);
+    expect(a).toBe(b);
+    expect(materialContentHash("hello material")).toBe(a);
+    expect(materialContentHash("other")).not.toBe(a);
+    expect(materialContentHash(Buffer.alloc(0))).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("write/read/list expose contentHash while id stays relativePath", () => {
+    const projectId = "proj-hash-1";
+    const bodyA = "# v1\n\nstable path cite";
+    const metaA = writeProjectMaterial(projectId, "brief.md", bodyA);
+    expect(metaA.id).toBe("brief.md");
+    expect(metaA.relativePath).toBe("brief.md");
+    expect(metaA.contentHash).toBe(materialContentHash(bodyA));
+
+    const readA = readProjectMaterial(projectId, "brief.md");
+    expect(readA?.meta.id).toBe("brief.md");
+    expect(readA?.meta.contentHash).toBe(metaA.contentHash);
+
+    const listed = listProjectMaterials(projectId);
+    expect(listed[0]?.id).toBe("brief.md");
+    expect(listed[0]?.contentHash).toBe(metaA.contentHash);
+
+    const bodyB = "# v2\n\noverwritten bytes";
+    const metaB = writeProjectMaterial(projectId, "brief.md", bodyB);
+    expect(metaB.id).toBe("brief.md");
+    expect(metaB.contentHash).toBe(materialContentHash(bodyB));
+    expect(metaB.contentHash).not.toBe(metaA.contentHash);
+  });
+
+  it("base64 write hashes decoded bytes not the base64 text", () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const meta = writeProjectMaterial(
+      "p-hash-bin",
+      "dot.png",
+      png.toString("base64"),
+      { encoding: "base64" },
+    );
+    expect(meta.id).toBe("dot.png");
+    expect(meta.contentHash).toBe(materialContentHash(png));
+    expect(meta.contentHash).not.toBe(
+      materialContentHash(png.toString("base64")),
     );
   });
 
