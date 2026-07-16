@@ -15,6 +15,35 @@ export type Project = {
   updatedAt: string;
   /** Last time the user opened this project in the workbench (attention). */
   lastOpenedAt?: string;
+  /**
+   * T-19: sensitive projects never disclose title or hits across projects by default.
+   */
+  sensitive?: boolean;
+};
+
+/**
+ * Owner-approved, revision-pinned reference from host project to a source object
+ * in another project (T-19 / D-27 minimum cross-project path).
+ */
+export type CrossProjectReference = {
+  id: string;
+  hostProjectId: string;
+  sourceProjectId: string;
+  sourceKind: "card" | "material";
+  /** Card id or material relativePath (material.id). */
+  sourceObjectId: string;
+  /** SHA-256 (or equivalent) of source content at approval time. */
+  sourceContentHash: string;
+  approvedBy: string;
+  approvedAt: string;
+  lastVerifiedAt: string;
+  /** True when current source hash differs from pinned hash. */
+  reviewRequired: boolean;
+  /**
+   * Display title at approval — empty when source project is sensitive
+   * (never leak sensitive titles into host project).
+   */
+  sourceTitle?: string;
 };
 
 export type CanvasNodeKind = "project" | "card" | "work_item" | "event";
