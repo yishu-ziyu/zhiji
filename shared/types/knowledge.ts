@@ -153,6 +153,9 @@ export type ProjectCanvasSnapshot = {
   timeline: CanvasTimeline;
 };
 
+/** Knowledge state is distinct from ActionStatus (which describes work). */
+export type KnowledgeIdentity = "candidate" | "evidence" | "claim" | "stale";
+
 export type KnowledgeCard = {
   id: string;
   projectId: string;
@@ -172,6 +175,10 @@ export type KnowledgeCard = {
   sourceContentHash?: string;
   /** ISO time when sourceContentHash was first set (create or one-time backfill). */
   sourceCitedAt?: string;
+  /** Candidate/evidence/claim state; never inferred from ActionStatus.confirmed. */
+  identity?: KnowledgeIdentity;
+  /** Stable locator for the result WorkEvent that produced this candidate. */
+  resultEventLocator?: string;
 };
 
 /** Global status dictionary (shared language). */
