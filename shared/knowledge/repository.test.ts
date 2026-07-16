@@ -213,6 +213,63 @@ describe("knowledge repository persistence", () => {
     );
   });
 
+  it("T-16: persists one project-scoped candidate per result event", async () => {
+    delete process.env.SEED_DEMO;
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const project = repo.addProject({ name: "result candidate project" });
+    const otherProject = repo.addProject({ name: "foreign project" });
+    const evidence = repo.addCard({
+      projectId: project.id,
+      content: "项目依据",
+      source: "doc",
+    });
+    const foreignEvidence = repo.addCard({
+      projectId: otherProject.id,
+      content: "其他项目依据",
+      source: "doc",
+    });
+    const item = repo.addAction({
+      projectId: project.id,
+      description: "复核项目",
+      nextStep: "等待 Owner",
+      evidenceIds: [evidence.id],
+    });
+    const resultEvent = repo.addWorkEvent(item.id, {
+      type: "result",
+      actor: "agent:project-reviewer",
+      body: "当前判断：项目可以继续推进。",
+      meta: { review: { evidenceIds: [evidence.id] } },
+    });
+
+    const first = repo.ensureResultCandidateCard({
+      projectId: project.id,
+      resultEvent,
+      evidence: [evidence, foreignEvidence],
+    });
+    const second = repo.ensureResultCandidateCard({
+      projectId: project.id,
+      resultEvent,
+      evidence: [evidence, foreignEvidence],
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(
+      repo.listCards({ projectId: project.id }).filter(
+        (card) => card.identity === "candidate",
+      ),
+    ).toHaveLength(1);
+    expect(first).toEqual(
+      expect.objectContaining({
+        projectId: project.id,
+        identity: "candidate",
+        resultEventLocator: `event:${resultEvent.id}`,
+        links: [evidence.id],
+      }),
+    );
+    expect(repo.listCards({ projectId: otherProject.id })).toHaveLength(1);
+  });
+
   it("fails closed when persisted JSON is corrupt instead of reseeding over it", async () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();

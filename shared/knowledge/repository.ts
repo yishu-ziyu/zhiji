@@ -34,6 +34,10 @@ import {
   UNDIRECTED_RELATION_TYPES,
 } from "@/shared/types/knowledge";
 import { materialCardSummary } from "@/shared/knowledge/materials";
+import {
+  projectResultToCandidateCard,
+  type ResultCandidateInput,
+} from "@/shared/knowledge/result-candidate";
 
 export { DEFAULT_PROJECT_ID } from "@/shared/types/knowledge";
 
@@ -80,6 +84,8 @@ type NewCardInput = {
   sourceFileId?: string;
   sourceContentHash?: string;
   sourceCitedAt?: string;
+  identity?: KnowledgeCard["identity"];
+  resultEventLocator?: string;
 };
 
 type NewActionInput = {
@@ -363,6 +369,8 @@ function normalizeCard(
     sourceFileId: raw.sourceFileId?.trim() || undefined,
     sourceContentHash: raw.sourceContentHash?.trim() || undefined,
     sourceCitedAt: raw.sourceCitedAt?.trim() || undefined,
+    identity: raw.identity,
+    resultEventLocator: raw.resultEventLocator?.trim() || undefined,
   };
 }
 
@@ -947,6 +955,8 @@ export function addCard(input: NewCardInput): KnowledgeCard {
     sourceCitedAt:
       input.sourceCitedAt?.trim() ||
       (sourceContentHash ? now : undefined),
+    identity: input.identity,
+    resultEventLocator: input.resultEventLocator?.trim() || undefined,
   };
   cards.set(card.id, card);
   saveCards(cards);
@@ -955,6 +965,28 @@ export function addCard(input: NewCardInput): KnowledgeCard {
 
 export function addCards(inputs: NewCardInput[]): KnowledgeCard[] {
   return inputs.map((input) => addCard(input));
+}
+
+/** Persist one project-scoped candidate for a stable result event locator. */
+export function ensureResultCandidateCard(
+  input: ResultCandidateInput,
+): KnowledgeCard {
+  if (!getProject(input.projectId)) throw new Error("项目不存在");
+  const item = getAction(input.resultEvent.workItemId);
+  if (!item || item.projectId !== input.projectId) {
+    throw new Error("结果事件和项目不匹配");
+  }
+
+  const projected = projectResultToCandidateCard(input);
+  const existing = listCards({ projectId: projected.projectId }).find(
+    (card) => card.resultEventLocator === projected.resultEventLocator,
+  );
+  if (existing) return existing;
+
+  return addCard({
+    ...projected,
+    id: `candidate:${projected.projectId}:${input.resultEvent.id}`,
+  });
 }
 
 export function listActions(filter?: {
