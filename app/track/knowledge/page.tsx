@@ -514,11 +514,12 @@ export default function KnowledgePage() {
               body: JSON.stringify({
                 name: entry.relativePath,
                 content: entry.content,
+                encoding: entry.encoding === "base64" ? "base64" : "utf8",
               }),
             });
             n += 1;
           } catch {
-            // Binary / invalid path: skip one file, do not abort whole folder.
+            // One bad file: skip, do not abort whole folder.
             skipped += 1;
           }
         }
@@ -789,38 +790,46 @@ export default function KnowledgePage() {
   async function handleWebkitDirectoryFiles(
     files: FileList | File[] | null | undefined,
   ) {
+    // Caller must pass a snapshot array (not a live FileList after input clear).
     const list = Array.from(files ?? []).filter((file) => file && file.name);
     if (list.length === 0) {
-      setError("未选中任何文件");
+      // Cancel usually does not fire onChange; empty snapshot is a soft no-op.
       return;
     }
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const payloads: Array<{
         name: string;
         content: string;
+        encoding?: "utf8" | "base64";
         webkitRelativePath?: string;
       }> = [];
+      let readFailed = 0;
       for (const file of list) {
+        if (file.size === 0) continue;
         try {
-          // Skip empty / clearly binary-heavy reads that break utf-8 pipeline.
-          if (file.size === 0) continue;
-          const content = await file.text();
+          const material = await fileToMaterialPayload(file);
           payloads.push({
             name: file.name,
-            content,
+            content: material.content,
+            encoding: material.encoding,
             webkitRelativePath:
               (file as File & { webkitRelativePath?: string })
                 .webkitRelativePath ?? file.name,
           });
         } catch {
-          // continue other files
+          readFailed += 1;
         }
       }
       if (payloads.length === 0) {
         setBusy(false);
-        setError("文件夹内没有可读文本文件（图片/二进制暂不接入）");
+        setError(
+          readFailed > 0
+            ? "文件夹内文件无法读取"
+            : "文件夹内没有可接入的文件",
+        );
         return;
       }
       const classified = classifyWebkitRelativeFiles(payloads);
@@ -829,10 +838,15 @@ export default function KnowledgePage() {
         return;
       }
       if (classified.looseFiles.length > 0) {
-        const loose = classified.looseFiles.map(
-          (item) => new File([item.content], item.name, { type: "text/plain" }),
-        );
-        await handleIncomingFiles(loose);
+        // Prefer original File objects so binary upload path stays intact.
+        const looseNames = new Set(classified.looseFiles.map((f) => f.name));
+        const originalLoose = list.filter((file) => looseNames.has(file.name));
+        if (originalLoose.length > 0) {
+          await handleIncomingFiles(originalLoose);
+          return;
+        }
+        setBusy(false);
+        setError("未能接入所选文件");
         return;
       }
       setBusy(false);
@@ -1295,9 +1309,11 @@ export default function KnowledgePage() {
         data-testid="workspace-upload-file"
         style={{ display: "none" }}
         onChange={(event) => {
-          const files = event.target.files;
+          // Snapshot before clearing: FileList is live and empties with value="".
+          const list = Array.from(event.target.files ?? []);
           event.target.value = "";
-          void handleIncomingFiles(files);
+          if (list.length === 0) return;
+          void handleIncomingFiles(list);
         }}
       />
       <input
@@ -1310,9 +1326,11 @@ export default function KnowledgePage() {
         data-testid="workspace-upload-folder"
         style={{ display: "none" }}
         onChange={(event) => {
-          const files = event.target.files;
+          // Snapshot before clearing: FileList is live and empties with value="".
+          const list = Array.from(event.target.files ?? []);
           event.target.value = "";
-          void handleWebkitDirectoryFiles(files);
+          if (list.length === 0) return;
+          void handleWebkitDirectoryFiles(list);
         }}
       />
       {dragOver ? (

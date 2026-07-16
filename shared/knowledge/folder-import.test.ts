@@ -39,9 +39,11 @@ describe("folder-import A5", () => {
       "sub/b.md",
     ]);
     expect(beta?.files).toEqual([
-      { relativePath: "only.md", content: "beta-only" },
+      { relativePath: "only.md", content: "beta-only", encoding: "utf8" },
     ]);
-    expect(result.looseFiles).toEqual([{ name: "loose.md", content: "loose" }]);
+    expect(result.looseFiles).toEqual([
+      { name: "loose.md", content: "loose", encoding: "utf8" },
+    ]);
   });
 
   it("treats single-level folder of only files as one project", () => {
@@ -61,8 +63,8 @@ describe("folder-import A5", () => {
       {
         projectName: "FlatNotes",
         files: [
-          { relativePath: "one.md", content: "1" },
-          { relativePath: "two.md", content: "2" },
+          { relativePath: "one.md", content: "1", encoding: "utf8" },
+          { relativePath: "two.md", content: "2", encoding: "utf8" },
         ],
       },
     ]);
@@ -73,5 +75,28 @@ describe("folder-import A5", () => {
     // ".." segments are stripped; remaining parts join (no absolute escape).
     expect(normalizeImportRelativePath("sub/../ok.md")).toBe("sub/ok.md");
     expect(normalizeImportRelativePath("a/b/c.md")).toBe("a/b/c.md");
+  });
+
+  it("preserves base64 encoding on folder materials", () => {
+    const result = classifyWebkitRelativeFiles([
+      {
+        name: "a.md",
+        content: "# hi",
+        encoding: "utf8",
+        webkitRelativePath: "Pack/a.md",
+      },
+      {
+        name: "pic.png",
+        content: "iVBORw0KGgo=",
+        encoding: "base64",
+        webkitRelativePath: "Pack/pic.png",
+      },
+    ]);
+    expect(result.folderProjects).toHaveLength(1);
+    const files = result.folderProjects[0].files;
+    expect(files.find((f) => f.relativePath === "a.md")?.encoding).toBe("utf8");
+    expect(files.find((f) => f.relativePath === "pic.png")?.encoding).toBe(
+      "base64",
+    );
   });
 });

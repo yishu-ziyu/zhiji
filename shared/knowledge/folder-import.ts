@@ -7,6 +7,8 @@ export type ImportFilePayload = {
   /** Path relative to the top-level folder, e.g. "a.md" or "sub/a.md". */
   relativePath: string;
   content: string;
+  /** utf8 text or base64 binary (A7 materials API). */
+  encoding?: "utf8" | "base64";
 };
 
 export type FolderProjectImport = {
@@ -19,7 +21,11 @@ export type DropClassification = {
   /** A5: one project per top-level folder. */
   folderProjects: FolderProjectImport[];
   /** Loose files (no parent folder in the drop) → A1/A2/A3. */
-  looseFiles: Array<{ name: string; content: string }>;
+  looseFiles: Array<{
+    name: string;
+    content: string;
+    encoding?: "utf8" | "base64";
+  }>;
 };
 
 const SKIP_NAMES = new Set([
@@ -65,22 +71,28 @@ export function classifyWebkitRelativeFiles(
   files: Array<{
     name: string;
     content: string;
+    encoding?: "utf8" | "base64";
     webkitRelativePath?: string;
   }>,
 ): DropClassification {
   const folderMap = new Map<string, ImportFilePayload[]>();
-  const looseFiles: Array<{ name: string; content: string }> = [];
+  const looseFiles: Array<{
+    name: string;
+    content: string;
+    encoding?: "utf8" | "base64";
+  }> = [];
 
   for (const file of files) {
     if (shouldSkipImportName(file.name)) continue;
+    const encoding = file.encoding === "base64" ? "base64" : "utf8";
     const rel = (file.webkitRelativePath ?? "").replace(/\\/g, "/").trim();
     if (!rel || !rel.includes("/")) {
-      looseFiles.push({ name: file.name, content: file.content });
+      looseFiles.push({ name: file.name, content: file.content, encoding });
       continue;
     }
     const segments = rel.split("/").filter(Boolean);
     if (segments.length < 2) {
-      looseFiles.push({ name: file.name, content: file.content });
+      looseFiles.push({ name: file.name, content: file.content, encoding });
       continue;
     }
     const projectName = segments[0];
@@ -88,7 +100,7 @@ export function classifyWebkitRelativeFiles(
     const relativePath = normalizeImportRelativePath(segments.slice(1).join("/"));
     if (shouldSkipImportName(relativePath)) continue;
     const list = folderMap.get(projectName) ?? [];
-    list.push({ relativePath, content: file.content });
+    list.push({ relativePath, content: file.content, encoding });
     folderMap.set(projectName, list);
   }
 
@@ -120,6 +132,7 @@ export function classifyTopLevelDrop(input: {
       .map((file) => ({
         relativePath: normalizeImportRelativePath(file.relativePath),
         content: file.content,
+        encoding: file.encoding === "base64" ? ("base64" as const) : ("utf8" as const),
       }));
     // Single-level folder with only files still becomes one project (A5).
     folderProjects.push({ projectName, files });
