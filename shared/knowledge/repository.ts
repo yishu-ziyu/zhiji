@@ -33,7 +33,12 @@ import {
   KNOWLEDGE_SOURCES,
   UNDIRECTED_RELATION_TYPES,
 } from "@/shared/types/knowledge";
-import type { CrossProjectReference } from "@/shared/types/knowledge";
+import type {
+  CrossProjectReference,
+  ProjectSourceGrant,
+  RedactedCrossProjectHint,
+} from "@/shared/types/knowledge";
+import { REDACTED_CROSS_PROJECT_HINT_MESSAGE } from "@/shared/types/knowledge";
 import { materialCardSummary, materialContentHash, readProjectMaterial } from "@/shared/knowledge/materials";
 import {
   projectResultToCandidateCard,
@@ -179,6 +184,10 @@ function relationsPath(): string {
 
 function crossProjectRefsPath(): string {
   return path.join(resolveDataDir(), "cross-project-refs.json");
+}
+
+function projectSourceGrantsPath(): string {
+  return path.join(resolveDataDir(), "project-source-grants.json");
 }
 
 function ensureDataDir(): void {
@@ -1486,6 +1495,7 @@ export function resetKnowledgeStoreForTests(): void {
     querySessionsPath(),
     relationsPath(),
     crossProjectRefsPath(),
+    projectSourceGrantsPath(),
   ]) {
     if (fs.existsSync(p)) fs.unlinkSync(p);
   }
@@ -2115,6 +2125,183 @@ export function toCrossProjectReferenceView(ref: CrossProjectReference): {
     reviewStatus: ref.reviewRequired ? "needs_review" : "current",
     sourceTitle: ref.sourceTitle,
   };
+}
+
+// --- T-19 S2: Owner project/source grants + redacted zero-leak hint ---
+
+function loadProjectSourceGrants(): Map<string, ProjectSourceGrant> {
+  return readJsonMap<ProjectSourceGrant>(projectSourceGrantsPath());
+}
+
+function saveProjectSourceGrants(map: Map<string, ProjectSourceGrant>): void {
+  writeJsonMap(projectSourceGrantsPath(), map);
+}
+
+function copyProjectSourceGrant(grant: ProjectSourceGrant): ProjectSourceGrant {
+  return structuredClone(grant);
+}
+
+/** Pure effective-grant predicate (testable; no I/O). */
+export function isEffectiveProjectSourceGrant(
+  grant: ProjectSourceGrant,
+  nowIso: string,
+): boolean {
+  if (grant.disabledAt || grant.revokedAt) return false;
+  if (grant.expiresAt != null && grant.expiresAt.trim() !== "") {
+    if (grant.expiresAt.trim() <= nowIso) return false;
+  }
+  return true;
+}
+
+export function makeRedactedCrossProjectHint(): RedactedCrossProjectHint {
+  return {
+    kind: "approved_source_may_be_relevant",
+    message: REDACTED_CROSS_PROJECT_HINT_MESSAGE,
+  };
+}
+
+/**
+ * Create Owner-preauthorized host→source grant receipt.
+ * Does not store credentials or source content; does not create object refs.
+ */
+export function createProjectSourceGrant(input: {
+  hostProjectId: string;
+  sourceProjectId: string;
+  approvedBy: string;
+  expiresAt?: string | null;
+  now?: string;
+}): ProjectSourceGrant {
+  const hostProjectId = requireProjectId(input.hostProjectId);
+  const sourceProjectId = requireProjectId(input.sourceProjectId);
+  if (hostProjectId === sourceProjectId) {
+    throw new ProjectScopeError("源项目授权的源项目不能与宿主项目相同");
+  }
+  if (!getProject(hostProjectId)) throw new Error("宿主项目不存在");
+  const source = getProject(sourceProjectId);
+  if (!source) throw new Error("源项目不存在");
+  if (source.sensitive) {
+    throw new ProjectScopeError("敏感源项目不可创建来源授权");
+  }
+  const approvedBy = assertOwnerApprover(input.approvedBy);
+  const now = input.now ?? new Date().toISOString();
+  let expiresAt: string | null = null;
+  if (input.expiresAt !== undefined && input.expiresAt !== null) {
+    const exp = String(input.expiresAt).trim();
+    if (!exp) throw new Error("expiresAt 无效");
+    expiresAt = exp;
+  }
+  const grant: ProjectSourceGrant = {
+    id: randomUUID(),
+    hostProjectId,
+    sourceProjectId,
+    approvedBy,
+    approvedAt: now,
+    expiresAt,
+  };
+  const map = loadProjectSourceGrants();
+  map.set(grant.id, grant);
+  saveProjectSourceGrants(map);
+  return copyProjectSourceGrant(grant);
+}
+
+/** Host-scoped list for Owner inspect (other hosts see nothing of these). */
+export function listProjectSourceGrants(
+  hostProjectId: string,
+): ProjectSourceGrant[] {
+  const host = requireProjectId(hostProjectId);
+  return [...loadProjectSourceGrants().values()]
+    .filter((g) => g.hostProjectId === host)
+    .map(copyProjectSourceGrant)
+    .sort((a, b) => b.approvedAt.localeCompare(a.approvedAt));
+}
+
+export function getProjectSourceGrant(
+  hostProjectId: string,
+  grantId: string,
+): ProjectSourceGrant | null {
+  const host = requireProjectId(hostProjectId);
+  const id = grantId?.trim();
+  if (!id) return null;
+  const grant = loadProjectSourceGrants().get(id);
+  if (!grant || grant.hostProjectId !== host) return null;
+  return copyProjectSourceGrant(grant);
+}
+
+export function disableProjectSourceGrant(
+  hostProjectId: string,
+  grantId: string,
+  input?: { disabledBy?: string; now?: string },
+): ProjectSourceGrant {
+  const host = requireProjectId(hostProjectId);
+  const id = grantId?.trim();
+  if (!id) throw new Error("grantId 必填");
+  const map = loadProjectSourceGrants();
+  const live = map.get(id);
+  if (!live || live.hostProjectId !== host) {
+    throw new ProjectAccessError("授权不存在或不在当前项目范围内");
+  }
+  if (live.revokedAt) {
+    throw new ProjectScopeError("已吊销的授权不能再停用");
+  }
+  const now = input?.now ?? new Date().toISOString();
+  live.disabledAt = now;
+  if (input?.disabledBy?.trim()) live.disabledBy = input.disabledBy.trim();
+  map.set(live.id, live);
+  saveProjectSourceGrants(map);
+  return copyProjectSourceGrant(live);
+}
+
+export function revokeProjectSourceGrant(
+  hostProjectId: string,
+  grantId: string,
+  input?: { revokedBy?: string; reason?: string; now?: string },
+): ProjectSourceGrant {
+  const host = requireProjectId(hostProjectId);
+  const id = grantId?.trim();
+  if (!id) throw new Error("grantId 必填");
+  const map = loadProjectSourceGrants();
+  const live = map.get(id);
+  if (!live || live.hostProjectId !== host) {
+    throw new ProjectAccessError("授权不存在或不在当前项目范围内");
+  }
+  const now = input?.now ?? new Date().toISOString();
+  live.revokedAt = now;
+  if (input?.revokedBy?.trim()) live.revokedBy = input.revokedBy.trim();
+  if (input?.reason?.trim()) live.revokeReason = input.reason.trim();
+  map.set(live.id, live);
+  saveProjectSourceGrants(map);
+  return copyProjectSourceGrant(live);
+}
+
+/**
+ * Zero-leak redacted hint for host project.
+ * - At most one generic hint when any effective grant points at a non-sensitive source.
+ * - Consults grant receipts only — no search/cards/relations/materials.
+ * - Creates no Card, WorkEvent, evidence, candidate, claim, or CrossProjectReference.
+ */
+export function getRedactedCrossProjectHint(
+  hostProjectId: string,
+  now?: string,
+): RedactedCrossProjectHint | null {
+  const host = requireProjectId(hostProjectId);
+  if (!getProject(host)) throw new Error("宿主项目不存在");
+  const nowIso = now ?? new Date().toISOString();
+  for (const grant of listProjectSourceGrants(host)) {
+    if (!isEffectiveProjectSourceGrant(grant, nowIso)) continue;
+    const source = getProject(grant.sourceProjectId);
+    if (!source || source.sensitive) continue;
+    return makeRedactedCrossProjectHint();
+  }
+  return null;
+}
+
+/** Array form for G5 RED surface (0 or 1 element). */
+export function listRedactedCrossProjectHints(
+  hostProjectId: string,
+  now?: string,
+): RedactedCrossProjectHint[] {
+  const hint = getRedactedCrossProjectHint(hostProjectId, now);
+  return hint ? [hint] : [];
 }
 
 export { WorkItemValidationError, RelationValidationError };
