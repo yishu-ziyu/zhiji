@@ -2,13 +2,24 @@
   "name": "fc-opc-ibot",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test:unit": "vitest run",
-    "test:e2e": "playwright test"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --exclude '**/*live*.test.ts' --exclude '**/*.live.test.ts'",
+    "test:unit": "vitest run --exclude '**/*live*.test.ts' --exclude '**/*.live.test.ts'",
+    "test:security": "vitest run tests/security shared/project-memory/grant-fs shared/project-memory/safe-git --exclude '**/*live*'",
+    "test:live": "vitest run '**/*live*.test.ts' '**/*.live.test.ts'",
+    "test:integration": "vitest run tests/integration --exclude '**/*live*'",
+    "test:e2e": "playwright test",
+    "desktop:dev": "node scripts/desktop-dev.mjs",
+    "desktop:prepare": "npm run build && node scripts/prepare-desktop-bundle.mjs",
+    "desktop:package": "npm run desktop:prepare && node scripts/package-desktop.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
@@ -31,12 +42,14 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@electron/packager": "^20.0.3",
     "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/dagre": "^0.7.54",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "^43.1.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",

@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Desktop competition shell: minimal Node server for Electron utilityProcess.
+  output: "standalone",
+
   async redirects() {
     return [
       {

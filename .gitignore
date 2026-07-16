@@ -3,6 +3,7 @@ node_modules/
 .next/
 out/
 dist/
+.desktop-stage/
 tsconfig.tsbuildinfo
 *.tsbuildinfo
 
