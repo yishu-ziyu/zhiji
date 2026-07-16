@@ -15,9 +15,11 @@ import { POST as addEventPost } from "@/app/api/knowledge/work-items/[id]/events
 import { POST as linkEvidencePost } from "@/app/api/knowledge/work-items/[id]/evidence/route";
 import { PATCH as patchWorkItem } from "@/app/api/knowledge/work-items/[id]/route";
 import {
+  getLatestProjectCheckpoint,
   getWorkItemDetail,
   listActions,
   listCards,
+  listRelations,
   resetKnowledgeStoreForTests,
 } from "@/shared/knowledge/repository";
 
@@ -161,6 +163,48 @@ it("writes Agent result without self-confirming work status", async () => {
     }),
   );
   expect(detail.events.some((event) => event.actor === "agent:forged")).toBe(false);
+});
+
+it("writes one candidate card for the Agent result without promoting project state", async () => {
+  const relationsBefore = listRelations();
+  const response = await agentRunPost(
+    new NextRequest(
+      "http://test/api/knowledge/work-items/ka-seed-1/agent-run",
+      { method: "POST", body: JSON.stringify({ actor: "agent:forged" }) },
+    ),
+    { params: Promise.resolve({ id: "ka-seed-1" }) },
+  );
+  expect(response.status).toBe(200);
+
+  const detail = getWorkItemDetail("ka-seed-1")!;
+  const resultEvent = detail.events.find(
+    (event) =>
+      event.type === "result" && event.actor === "agent:project-reviewer",
+  )!;
+  const candidates = listCards({ projectId: "project-fc-opc-ibot" }).filter(
+    (card) => card.identity === "candidate",
+  );
+
+  expect(candidates).toHaveLength(1);
+  expect(candidates[0]).toEqual(
+    expect.objectContaining({
+      identity: "candidate",
+      projectId: "project-fc-opc-ibot",
+      resultEventLocator: `event:${resultEvent.id}`,
+      links: detail.item.evidenceIds,
+    }),
+  );
+  expect(detail.item.status).toBe("doing");
+  expect(getLatestProjectCheckpoint("project-fc-opc-ibot")).toBeNull();
+  expect(listRelations()).toEqual(relationsBefore);
+  expect(
+    detail.events.some(
+      (event) =>
+        event.type === "status_change" &&
+        event.actor === "agent:project-reviewer" &&
+        ["confirmed", "done"].includes(String(event.meta?.toStatus)),
+    ),
+  ).toBe(false);
 });
 
 it("accepts external Agent results without trusting its claimed identity", async () => {

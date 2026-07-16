@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   addWorkEvent,
+  ensureResultCandidateCard,
   getWorkItemDetail,
   patchWorkItem,
 } from "@/shared/knowledge/repository";
@@ -52,13 +53,18 @@ export async function POST(_req: NextRequest, ctx: Ctx) {
     }
     // Write result only. Do not self-transition work status to confirmed
     // (ActionStatus.confirmed = 「待确认」 is a human work gate, not Agent knowledge confirm).
-    addWorkEvent(id, {
+    const resultEvent = addWorkEvent(id, {
       type: "result",
       actor: "agent:project-reviewer",
       body: `当前判断：${review.judgment}\n建议下一步：${review.nextStep}`,
       meta: { review },
     });
-    return NextResponse.json({ detail: getWorkItemDetail(id), review });
+    const candidate = ensureResultCandidateCard({
+      projectId: running.item.projectId,
+      resultEvent,
+      evidence: running.evidence,
+    });
+    return NextResponse.json({ detail: getWorkItemDetail(id), review, candidate });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Agent 执行失败";
     addWorkEvent(id, {
