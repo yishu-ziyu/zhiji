@@ -62,6 +62,12 @@ const runtime = require("../../desktop/runtime.cjs") as {
     blockedUrlSafe: string;
   };
   formatConfigPresence: (allowedEnv: Record<string, string>) => string;
+  loadDesktopSecrets: (input: {
+    isPackaged: boolean;
+    processEnv?: Record<string, string | undefined>;
+    fileContents?: string;
+  }) => Record<string, string>;
+  desktopEnvTemplateBody: () => string;
 };
 
 const tmpDirs: string[] = [];
@@ -248,6 +254,20 @@ describe("redactForLog", () => {
     expect(out).not.toContain("sk-secret-abc");
     expect(out.toLowerCase()).toMatch(/redact|configured|\*\*\*/i);
   });
+
+  it("keeps presence markers while redacting configured values", () => {
+    const presence = runtime.redactForLog(
+      "LLM_API_KEY=configured ANYSEARCH_API_KEY=missing",
+    );
+    expect(presence).toContain("LLM_API_KEY=configured");
+    expect(presence).toContain("ANYSEARCH_API_KEY=missing");
+
+    const secret = runtime.redactForLog(
+      "LLM_API_KEY=actual-secret ANYSEARCH_API_KEY=search-secret",
+    );
+    expect(secret).not.toContain("actual-secret");
+    expect(secret).not.toContain("search-secret");
+  });
 });
 
 describe("buildUtilityProcessEnv (no parent credential leak)", () => {
@@ -327,5 +347,54 @@ describe("decideWindowOpen (deny all new windows)", () => {
 
     const external = runtime.decideWindowOpen("https://evil.example/x");
     expect(external.action).toBe("deny");
+  });
+});
+
+describe("loadDesktopSecrets (BYOK)", () => {
+  it("packaged mode ignores process env secrets; only userData file", () => {
+    const file = [
+      "LLM_BASE_URL=https://user-filled.example/v1",
+      "LLM_API_KEY=user-own-key",
+      "LLM_MODEL=user-model",
+      "",
+    ].join("\n");
+    const processEnv = {
+      LLM_API_KEY: "parent-process-must-not-win-when-packaged",
+      ANTHROPIC_AUTH_TOKEN: "sentinel-must-not-appear",
+      OPENAI_API_KEY: "sentinel-must-not-appear",
+    };
+    const secrets = runtime.loadDesktopSecrets({
+      isPackaged: true,
+      processEnv,
+      fileContents: file,
+    });
+    expect(secrets.LLM_API_KEY).toBe("user-own-key");
+    expect(secrets.LLM_BASE_URL).toBe("https://user-filled.example/v1");
+    expect(secrets).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(Object.values(secrets).join(" ")).not.toContain(
+      "parent-process-must-not-win",
+    );
+    expect(Object.values(secrets).join(" ")).not.toContain("sentinel-must-not-appear");
+  });
+
+  it("packaged with empty file yields no keys (user has not filled BYOK yet)", () => {
+    const secrets = runtime.loadDesktopSecrets({
+      isPackaged: true,
+      processEnv: {
+        LLM_API_KEY: "should-not-leak-from-parent",
+      },
+      fileContents: runtime.desktopEnvTemplateBody(),
+    });
+    // template has empty values → parse drops them
+    expect(secrets.LLM_API_KEY).toBeUndefined();
+    expect(secrets.LLM_BASE_URL).toBeUndefined();
+  });
+
+  it("desktopEnvTemplateBody has no secret material", () => {
+    const t = runtime.desktopEnvTemplateBody();
+    expect(t).toMatch(/Bring Your Own Key|BYOK/i);
+    expect(t).toContain("LLM_API_KEY=");
+    expect(t).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
+    expect(t).not.toContain("sentinel");
   });
 });

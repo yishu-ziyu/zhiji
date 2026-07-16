@@ -107,9 +107,24 @@ describe("main.cjs credential + window policy (static audit)", () => {
     );
     expect(mainSrc).not.toMatch(/\.\.\.\s*process\.env/);
     expect(mainSrc).toContain("buildUtilityProcessEnv");
+    expect(mainSrc).toContain("loadDesktopSecrets");
     expect(mainSrc).toContain("decideWindowOpen");
     expect(mainSrc).toMatch(/action:\s*["']deny["']/);
     expect(mainSrc).not.toMatch(/action:\s*["']allow["']/);
+  });
+
+  it("install-desktop-env is BYOK template only (no process.env prefill)", () => {
+    const installSrc = fs.readFileSync(
+      path.resolve(__dirname, "../../scripts/install-desktop-env.mjs"),
+      "utf8",
+    );
+    expect(installSrc).toContain("desktopEnvTemplateBody");
+    expect(installSrc).toMatch(/BYOK|Bring Your Own Key/i);
+    // Must write template only — never assign from process.env secrets
+    expect(installSrc).not.toMatch(/process\.env\s*\[/);
+    expect(installSrc).not.toMatch(/process\.env\.(LLM_|ANYSEARCH_)/);
+    expect(installSrc).not.toMatch(/LLM_API_KEY\s*=\s*process\.env/);
+    expect(installSrc).toMatch(/writeFileSync\s*\(\s*dest,\s*body/);
   });
 });
 

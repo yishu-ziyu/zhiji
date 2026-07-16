@@ -218,11 +218,20 @@ async function boot() {
     appPath: packagedAppPath,
   });
 
-  // Dev without staging: allow FC_OPC_DESKTOP_DEV_URL path without serverEntry
+  // BYOK: packaged app only reads userData .env.local (user-filled).
+  // Unpacked dev may also use allowlisted process env. Never full process.env.
   const fileEnv = runtime.readEnvFileIfExists(paths.envFile);
-  const allowedEnv = runtime.resolveAllowedEnvironment(process.env, fileEnv);
+  const allowedEnv = runtime.loadDesktopSecrets({
+    isPackaged: app.isPackaged,
+    processEnv: process.env,
+    fileContents: fileEnv,
+  });
   const logFile = paths.logFile;
   appendLog(logFile, `boot packaged=${app.isPackaged} appPath=${packagedAppPath}`);
+  appendLog(
+    logFile,
+    `byok secrets ${runtime.formatConfigPresence(allowedEnv)} source=${app.isPackaged ? "userData-file-only" : "file+allowlisted-process"}`,
+  );
 
   try {
     let port;

@@ -123,13 +123,16 @@ function parseDesktopEnv(raw) {
     ) {
       value = value.slice(1, -1);
     }
+    // Empty KEY= lines (BYOK template) mean "not filled yet"
+    if (value.length === 0) continue;
     out[key] = value;
   }
   return out;
 }
 
 /**
- * Merge file env with process.env — process wins for allowlisted keys only.
+ * Merge allowlisted keys. File values first; optional processEnv overrides.
+ * BYOK: packaged app should pass empty processEnv so only userData file applies.
  * @param {Record<string, string | undefined>} processEnv
  * @param {string} [fileContents]
  */
@@ -137,13 +140,52 @@ function resolveAllowedEnvironment(processEnv, fileContents) {
   const fromFile = parseDesktopEnv(fileContents || "");
   /** @type {Record<string, string>} */
   const out = { ...fromFile };
+  const env = processEnv || {};
   for (const key of ALLOWED_ENV_KEYS) {
-    const v = processEnv[key];
+    const v = env[key];
     if (typeof v === "string" && v.length > 0) {
       out[key] = v;
     }
   }
   return out;
+}
+
+/**
+ * BYOK secret load policy for desktop Main.
+ * - packaged: only userData .env.local (user-filled). Never inherit parent process secrets.
+ * - unpackaged (dev): file first, then allowlisted process env for local convenience.
+ * @param {{ isPackaged: boolean, processEnv?: Record<string, string | undefined>, fileContents?: string }} input
+ */
+function loadDesktopSecrets(input) {
+  const fileContents = input.fileContents || "";
+  if (input.isPackaged) {
+    return resolveAllowedEnvironment({}, fileContents);
+  }
+  return resolveAllowedEnvironment(input.processEnv || {}, fileContents);
+}
+
+/**
+ * Empty BYOK template body for userData .env.local (user fills values).
+ * No secrets embedded.
+ */
+function desktopEnvTemplateBody() {
+  return [
+    "# FC-OPC iBot · Bring Your Own Key (BYOK)",
+    "# Fill YOUR keys below. This file lives only under Electron userData.",
+    "# Never commit. Never copy into the .app package.",
+    "# Permissions should be 0600 (owner read/write only).",
+    "",
+    "# Required for live model understanding:",
+    "LLM_BASE_URL=",
+    "LLM_API_KEY=",
+    "LLM_MODEL=",
+    "",
+    "# Optional:",
+    "# AGENT_RUN_MODE=deterministic",
+    "# AGENT_ALLOW_DETERMINISTIC_FALLBACK=0",
+    "# ANYSEARCH_API_KEY=",
+    "",
+  ].join("\n");
 }
 
 /**
@@ -317,8 +359,9 @@ function waitForHttpOk(url, options = {}) {
 function redactForLog(line) {
   if (!line) return "";
   let out = String(line);
+  // Keep presence markers (configured/missing) for audit lines.
   out = out.replace(
-    /(LLM_API_KEY|API_KEY|api[_-]?key|Bearer)\s*[=:]\s*\S+/gi,
+    /(LLM_API_KEY|ANYSEARCH_API_KEY|API_KEY|api[_-]?key|Bearer)\s*[=:]\s*(?!configured\b|missing\b)\S+/gi,
     "$1=***REDACTED***",
   );
   out = out.replace(/sk-[A-Za-z0-9_-]{8,}/g, "***REDACTED***");
@@ -364,10 +407,12 @@ module.exports = {
   chooseLoopbackPort,
   createWindowOptions,
   decideWindowOpen,
+  desktopEnvTemplateBody,
   formatConfigPresence,
   healthCheckUrl,
   isAllowedAppUrl,
   knowledgeEntryUrl,
+  loadDesktopSecrets,
   parseDesktopEnv,
   readEnvFileIfExists,
   redactForLog,
