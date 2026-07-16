@@ -248,10 +248,17 @@ it("derives the actor on every public work mutation", async () => {
   expect(patchResponse.status).toBe(200);
 
   const linkResponse = await linkEvidencePost(
-    new NextRequest("http://test/api/knowledge/work-items/ka-seed-1/evidence", {
-      method: "POST",
-      body: JSON.stringify({ cardId: "kc-seed-4", actor: "agent:forged" }),
-    }),
+    new NextRequest(
+      "http://test/api/knowledge/work-items/ka-seed-1/evidence?projectId=project-fc-opc-ibot",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          cardId: "kc-seed-4",
+          actor: "agent:forged",
+          projectId: "project-fc-opc-ibot",
+        }),
+      },
+    ),
     { params: Promise.resolve({ id: "ka-seed-1" }) },
   );
   expect(linkResponse.status).toBe(200);
