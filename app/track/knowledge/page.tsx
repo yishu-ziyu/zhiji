@@ -38,6 +38,13 @@ import { ProjectCanvas } from "./components/ProjectCanvas";
 import { ProjectInspector } from "./components/ProjectInspector";
 import { ProjectNavigator } from "./components/ProjectNavigator";
 import { ProjectTimeline } from "./components/ProjectTimeline";
+import {
+  classifyTopLevelDrop,
+  classifyWebkitRelativeFiles,
+  type FolderProjectImport,
+} from "@/shared/knowledge/folder-import";
+import { dropOverlayHint } from "./lib/folder-drop";
+import { readDataTransferItems } from "./read-drop-entries";
 import styles from "./project-canvas.module.css";
 
 type ApiError = { error?: string };
@@ -117,6 +124,7 @@ export default function KnowledgePage() {
   const [error, setError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const workspaceUploadRef = useRef<HTMLInputElement>(null);
+  const workspaceFolderUploadRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
   const snapshotRequestRef = useRef(0);
   const cardsRequestRef = useRef(0);
@@ -344,6 +352,78 @@ export default function KnowledgePage() {
     return { ...data, content };
   }
 
+  /**
+   * A5 UI: each top-level folder → create project + post materials (relative path).
+   * Classify/walk owned by G3A (folder-import + read-drop-entries).
+   */
+  async function handleFolderProjectImports(imports: FolderProjectImport[]) {
+    if (imports.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const created: Project[] = [];
+      const fileCounts: number[] = [];
+      for (const folder of imports) {
+        const name = folder.projectName.trim();
+        if (!name) continue;
+        const data = await apiJson<{ project: Project }>(
+          "/api/knowledge/projects",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name,
+              summary: `由文件夹「${name}」接入`,
+            }),
+          },
+        );
+        created.push(data.project);
+        let n = 0;
+        for (const entry of folder.files) {
+          await apiJson(`/api/knowledge/projects/${data.project.id}/materials`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: entry.relativePath,
+              content: entry.content,
+            }),
+          });
+          n += 1;
+        }
+        fileCounts.push(n);
+      }
+      if (created.length === 0) {
+        setBusy(false);
+        setError("未能从文件夹创建项目");
+        return;
+      }
+      setProjects((prev) => {
+        const next = [...created];
+        for (const p of prev) {
+          if (!next.some((c) => c.id === p.id)) next.push(p);
+        }
+        return next;
+      });
+      // Open first new project; remaining projects switchable in left nav.
+      await handleSelectProject(created[0].id);
+      const materialList = await apiJson<{
+        materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
+      }>(`/api/knowledge/projects/${created[0].id}/materials`);
+      setMaterials(materialList.materials);
+      setMaterialsOpen(true);
+      setBusy(false);
+      const names = created.map((p) => p.name).join("、");
+      setNotice(
+        created.length === 1
+          ? `已从文件夹创建项目「${names}」${fileCounts[0] ? `，并收下 ${fileCounts[0]} 个文件` : ""}`
+          : `已接入 ${created.length} 个项目：${names}。可在左侧切换查看材料。`,
+      );
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "文件夹接入失败");
+      setBusy(false);
+    }
+  }
+
   /** A1/A2 shared path: with current project → ingest; without → A3 create-first. */
   async function handleIncomingFiles(files: FileList | File[] | null | undefined) {
     const list = Array.from(files ?? []).filter((file) => file && file.name);
@@ -495,11 +575,78 @@ export default function KnowledgePage() {
     event.preventDefault();
     dragDepthRef.current = 0;
     setDragOver(false);
-    void handleIncomingFiles(event.dataTransfer.files);
+    void (async () => {
+      try {
+        const fromEntries = await readDataTransferItems(event.dataTransfer.items);
+        if (fromEntries) {
+          const classified = classifyTopLevelDrop({
+            directories: fromEntries.directories,
+            looseFiles: fromEntries.looseFiles.map((f) => ({
+              name: f.name,
+              content: f.content,
+            })),
+          });
+          // A5: folders first → one project each (never flatten into one unknown project).
+          if (classified.folderProjects.length > 0) {
+            await handleFolderProjectImports(classified.folderProjects);
+          }
+          if (classified.looseFiles.length > 0) {
+            // Prefer original File when present so upload reuses same path as A1.
+            const files = fromEntries.looseFiles
+              .filter((f) =>
+                classified.looseFiles.some((c) => c.name === f.name),
+              )
+              .map((f) => f.file)
+              .filter((f): f is File => Boolean(f));
+            if (files.length > 0) {
+              await handleIncomingFiles(files);
+            } else {
+              // Content-only fallback: synthesize File for A3/A1 path.
+              const synthetic = classified.looseFiles.map(
+                (f) => new File([f.content], f.name, { type: "text/plain" }),
+              );
+              await handleIncomingFiles(synthetic);
+            }
+          }
+          return;
+        }
+        // Entry API unavailable: flat FileList (no reliable folder split).
+        await handleIncomingFiles(event.dataTransfer.files);
+      } catch (nextError) {
+        setError(nextError instanceof Error ? nextError.message : "拖入失败");
+      }
+    })();
   }
 
   async function handleUploadMaterialFile(file: File) {
     await handleIncomingFiles([file]);
+  }
+
+  /** A5 via webkitdirectory file picker (same project rules as drag folders). */
+  async function handleWebkitDirectoryFiles(
+    files: FileList | File[] | null | undefined,
+  ) {
+    const list = Array.from(files ?? []).filter((file) => file && file.name);
+    if (list.length === 0) return;
+    const payloads = await Promise.all(
+      list.map(async (file) => ({
+        name: file.name,
+        content: await file.text(),
+        webkitRelativePath:
+          (file as File & { webkitRelativePath?: string }).webkitRelativePath ??
+          file.name,
+      })),
+    );
+    const classified = classifyWebkitRelativeFiles(payloads);
+    if (classified.folderProjects.length > 0) {
+      await handleFolderProjectImports(classified.folderProjects);
+    }
+    if (classified.looseFiles.length > 0) {
+      const loose = classified.looseFiles.map(
+        (item) => new File([item.content], item.name, { type: "text/plain" }),
+      );
+      await handleIncomingFiles(loose);
+    }
   }
 
   function updateUrl(nextProjectId: string, focus: CanvasNodeRef, replace = false) {
@@ -952,9 +1099,24 @@ export default function KnowledgePage() {
           void handleIncomingFiles(files);
         }}
       />
+      <input
+        ref={workspaceFolderUploadRef}
+        type="file"
+        // @ts-expect-error non-standard but required for A5 folder pick
+        webkitdirectory=""
+        directory=""
+        multiple
+        data-testid="workspace-upload-folder"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const files = event.target.files;
+          event.target.value = "";
+          void handleWebkitDirectoryFiles(files);
+        }}
+      />
       {dragOver ? (
         <div className={styles.dropOverlay} data-testid="workspace-drop-overlay" aria-hidden="true">
-          <span>{projectId ? "松开以加入当前项目" : "松开后先新建并命名项目，再收下文件"}</span>
+          <span>{dropOverlayHint({ hasProject: Boolean(projectId) })}</span>
         </div>
       ) : null}
       <ProjectNavigator
@@ -1036,6 +1198,17 @@ export default function KnowledgePage() {
           </button>
           <button
             type="button"
+            className={styles.iconButton}
+            data-testid="workspace-upload-folder-button"
+            aria-label="上传本地文件夹"
+            title="每个顶层文件夹变成一个项目"
+            disabled={busy}
+            onClick={() => workspaceFolderUploadRef.current?.click()}
+          >
+            <FilePlus2 size={18} />
+          </button>
+          <button
+            type="button"
             className={styles.copilotButton}
             onClick={() => {
               const first = snapshot?.attention[0];
@@ -1109,7 +1282,7 @@ export default function KnowledgePage() {
             </div>
           </header>
           <p style={{ margin: "0 0 12px", color: "#5c5f66", fontSize: 14, lineHeight: 1.55 }}>
-            当前环境是空的：没有预置项目，也没有示例任务。可拖入文件或点上传——会先请你命名项目，确认后再收下。
+            当前环境是空的：没有预置项目，也没有示例任务。可拖入文件夹（每个顶层夹=一个项目），或拖/传单文件——单文件会先请你命名项目，确认后再收下。
           </p>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button

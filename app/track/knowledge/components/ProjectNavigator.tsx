@@ -118,18 +118,36 @@ export function ProjectNavigator({
       </button>
 
       <div className={styles.sidebarSectionTitle}>
-        <span>项目</span>
+        <span>项目{projects.length > 0 ? ` · ${projects.length}` : ""}</span>
         <button type="button" aria-label="新增工作项" onClick={onCreateWork}><Plus size={16} /></button>
       </div>
-      <div className={styles.projectList}>
+      <div
+        className={styles.projectList}
+        data-testid="project-switcher-list"
+        role="listbox"
+        aria-label="项目列表，可切换"
+      >
+        {projects.length === 0 ? (
+          <p
+            data-testid="project-switcher-empty"
+            style={{ margin: "4px 8px 8px", color: "#81848a", fontSize: 12, lineHeight: 1.4 }}
+          >
+            尚无项目。拖入文件夹可一次建多个。
+          </p>
+        ) : null}
         {projects.map((project) => {
           const active = project.id === projectId;
           return (
             <button
               key={project.id}
               type="button"
+              role="option"
+              aria-selected={active}
+              data-testid={`project-nav-${project.id}`}
+              data-project-name={project.name}
               className={`${styles.projectButton} ${active ? styles.projectButtonActive : ""}`}
               onClick={() => onSelectProject(project.id)}
+              title={active ? `当前项目：${project.name}` : `切换到：${project.name}`}
             >
               <span className={styles.projectIcon}>
                 {active ? (

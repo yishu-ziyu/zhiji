@@ -31,53 +31,18 @@ export function kindFromName(name: string): MaterialKind {
   return "other";
 }
 
-export function listProjectMaterials(projectId: string): MaterialFile[] {
-  const dir = projectMaterialsDir(projectId);
-  if (!fs.existsSync(dir)) return [];
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  const files: MaterialFile[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    if (entry.name.startsWith(".")) continue;
-    const full = path.join(dir, entry.name);
-    const stat = fs.statSync(full);
-    files.push({
-      id: entry.name,
-      projectId,
-      name: entry.name,
-      relativePath: entry.name,
-      kind: kindFromName(entry.name),
-      updatedAt: stat.mtime.toISOString(),
-    });
+/** Allow nested paths under the project dir (A5); reject traversal. */
+export function sanitizeMaterialRelativePath(name: string): string {
+  const parts = name
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => part.replace(/[\u0000-\u001f<>:"|?*]/g, "_").trim())
+    .filter((part) => part && part !== "." && part !== "..");
+  if (parts.length === 0) {
+    throw new Error("文件名无效");
   }
-  return files.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-export function readProjectMaterial(
-  projectId: string,
-  fileId: string,
-): { meta: MaterialFile; content: string } | null {
-  if (!fileId || fileId.includes("..") || fileId.includes("/") || fileId.includes("\\")) {
-    return null;
-  }
-  const dir = projectMaterialsDir(projectId);
-  const full = path.join(dir, fileId);
-  if (!full.startsWith(dir) || !fs.existsSync(full) || !fs.statSync(full).isFile()) {
-    return null;
-  }
-  const stat = fs.statSync(full);
-  const content = fs.readFileSync(full, "utf8");
-  return {
-    meta: {
-      id: fileId,
-      projectId,
-      name: fileId,
-      relativePath: fileId,
-      kind: kindFromName(fileId),
-      updatedAt: stat.mtime.toISOString(),
-    },
-    content,
-  };
+  return parts.join("/");
 }
 
 /** Strip path segments and control characters; keep a single basename. */
@@ -92,9 +57,86 @@ export function sanitizeMaterialFileName(name: string): string {
   return base;
 }
 
+function walkMaterials(
+  projectId: string,
+  root: string,
+  current: string,
+  out: MaterialFile[],
+): void {
+  if (!fs.existsSync(current)) return;
+  for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
+    const full = path.join(current, entry.name);
+    if (entry.isDirectory()) {
+      walkMaterials(projectId, root, full, out);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const relativePath = path.relative(root, full).split(path.sep).join("/");
+    const stat = fs.statSync(full);
+    out.push({
+      id: relativePath,
+      projectId,
+      name: path.basename(entry.name),
+      relativePath,
+      kind: kindFromName(entry.name),
+      updatedAt: stat.mtime.toISOString(),
+    });
+  }
+}
+
+export function listProjectMaterials(projectId: string): MaterialFile[] {
+  const dir = projectMaterialsDir(projectId);
+  if (!fs.existsSync(dir)) return [];
+  const files: MaterialFile[] = [];
+  walkMaterials(projectId, dir, dir, files);
+  return files.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export function readProjectMaterial(
+  projectId: string,
+  fileId: string,
+): { meta: MaterialFile; content: string } | null {
+  if (!fileId || fileId.includes("..")) {
+    return null;
+  }
+  let relativePath: string;
+  try {
+    relativePath = sanitizeMaterialRelativePath(fileId);
+  } catch {
+    return null;
+  }
+  const dir = projectMaterialsDir(projectId);
+  const full = path.join(dir, ...relativePath.split("/"));
+  const resolvedDir = path.resolve(dir);
+  const resolvedFull = path.resolve(full);
+  if (
+    resolvedFull !== resolvedDir &&
+    !resolvedFull.startsWith(resolvedDir + path.sep)
+  ) {
+    return null;
+  }
+  if (!fs.existsSync(resolvedFull) || !fs.statSync(resolvedFull).isFile()) {
+    return null;
+  }
+  const stat = fs.statSync(resolvedFull);
+  const content = fs.readFileSync(resolvedFull, "utf8");
+  return {
+    meta: {
+      id: relativePath,
+      projectId,
+      name: path.basename(relativePath),
+      relativePath,
+      kind: kindFromName(relativePath),
+      updatedAt: stat.mtime.toISOString(),
+    },
+    content,
+  };
+}
+
 /**
  * Write one local file into the project materials store under files/{projectId}/.
- * Ownership is the projectId directory - not a global dump.
+ * name may be a nested relative path (A5 folder import).
  */
 export function writeProjectMaterial(
   projectId: string,
@@ -103,21 +145,26 @@ export function writeProjectMaterial(
 ): MaterialFile {
   if (!projectId.trim()) throw new Error("项目不存在");
   if (typeof content !== "string") throw new Error("文件内容无效");
-  const safeName = sanitizeMaterialFileName(name);
+  const relativePath = sanitizeMaterialRelativePath(name);
   const dir = projectMaterialsDir(projectId);
-  fs.mkdirSync(dir, { recursive: true });
-  const full = path.join(dir, safeName);
-  if (!full.startsWith(dir + path.sep) && full !== dir) {
+  const full = path.join(dir, ...relativePath.split("/"));
+  const resolvedDir = path.resolve(dir);
+  const resolvedFull = path.resolve(full);
+  if (
+    resolvedFull !== resolvedDir &&
+    !resolvedFull.startsWith(resolvedDir + path.sep)
+  ) {
     throw new Error("文件名无效");
   }
-  fs.writeFileSync(full, content, "utf8");
-  const stat = fs.statSync(full);
+  fs.mkdirSync(path.dirname(resolvedFull), { recursive: true });
+  fs.writeFileSync(resolvedFull, content, "utf8");
+  const stat = fs.statSync(resolvedFull);
   return {
-    id: safeName,
+    id: relativePath,
     projectId,
-    name: safeName,
-    relativePath: safeName,
-    kind: kindFromName(safeName),
+    name: path.basename(relativePath),
+    relativePath,
+    kind: kindFromName(relativePath),
     updatedAt: stat.mtime.toISOString(),
   };
 }
