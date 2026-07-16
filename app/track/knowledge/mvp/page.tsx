@@ -28,6 +28,7 @@ import {
   type UnderstandingBody,
   type WatchSetUpdate,
 } from "./lib/api";
+import { eventIdsForMatterAnalysis } from "./lib/event-revision-open";
 import styles from "./mvp-workbench.module.css";
 
 type AdapterMode = "contract-fixture" | "http";
@@ -140,7 +141,7 @@ export default function MvpKnowledgeWorkbenchPage() {
     setBusy(true);
     setError(null);
     try {
-      const eventIds = memory.filteredEvents.map((event) => event.id);
+      const eventIds = eventIdsForMatterAnalysis(memory);
       await api.runAnalysis(projectId, matterId, eventIds);
       await loadMemory();
       setNotice("已按匹配变化运行一次状态重建；结果仍是 candidate。");

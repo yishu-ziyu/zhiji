@@ -9,6 +9,7 @@ import {
   Workflow,
 } from "lucide-react";
 import type { ChangeEventView, MemoryResponse } from "../lib/api";
+import { revisionIdToOpenForEvent } from "../lib/event-revision-open";
 import styles from "../mvp-workbench.module.css";
 
 type FocusKind = "matter" | "change" | "evidence" | "action";
@@ -60,7 +61,7 @@ function buildNodes(memory: MemoryResponse): FocusNode[] {
     kind: "change" as const,
     label: event.relativePath,
     detail: `${eventLabel(event)} · ${event.matchReason || "匹配当前事项"}`,
-    revisionId: event.afterRevisionId || event.beforeRevisionId,
+    revisionId: revisionIdToOpenForEvent(event),
   }));
   const evidenceNodes = (memory.candidate?.body.now.evidence || []).map((anchor) => ({
     id: anchor.revisionId,
@@ -127,7 +128,8 @@ export function MatterFocusCanvas({ memory, focusId, onFocus, onOpenRevision }: 
         <div className={styles.stripWarning}><TriangleAlert size={14} /><span>非匹配变化不进入中心</span></div>
         <button type="button" className={styles.textButton} onClick={() => {
           const event = memory.events[0];
-          if (event?.afterRevisionId) onOpenRevision(event.afterRevisionId);
+          const revisionId = event ? revisionIdToOpenForEvent(event) : undefined;
+          if (revisionId) onOpenRevision(revisionId);
         }}>查看最新依据 <ArrowRight size={13} /></button>
       </div>
     </section>
