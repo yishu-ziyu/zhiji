@@ -4,6 +4,19 @@ export type ChangeKind = "added" | "modified" | "renamed" | "deleted" | "reconci
 export type ClaimStatus = "supported" | "unknown" | "conflicted";
 export type ResolutionDecision = "accept" | "edit_accept" | "reject";
 
+export type PreflightReport = {
+  policyVersion: string;
+  totalEntries: number;
+  eligibleFiles: number;
+  blockedFiles: number;
+  skippedFiles: number;
+  metadataOnlyFiles: number;
+  eligibleBytes: number;
+  blocked: Array<{ relativePath: string; reason: string }>;
+  skippedSample: Array<{ relativePath: string; reason: string }>;
+  warnings: string[];
+};
+
 export type SourceGrant = {
   id: string;
   projectId: string;
@@ -196,7 +209,7 @@ export type FolderPickerResponse =
     };
 
 export type ConnectConnectionBody =
-  | { mode: "connect"; selectionId: string }
+  | { mode: "connect"; selectionId: string; confirmToken: string }
   | { mode: "continue"; projectId: string; grantId: string };
 
 export type ReconcileResult = {
@@ -245,6 +258,17 @@ export type ContractApi = {
   getRecentConnection(): Promise<RecentConnectionResponse["connection"]>;
   /** Native folder picker. Cancel returns cancelled; no grant is created. */
   openFolderPicker(): Promise<FolderPickerResponse>;
+  /** Metadata-only report. This first action never authorizes connect. */
+  preflightSelection(selectionId: string): Promise<{
+    preflight: PreflightReport;
+    policyVersion: string;
+    folderName?: string;
+  }>;
+  /** Explicit second Owner action; returns one-use token required for connect. */
+  confirmPreflightSelection(selectionId: string): Promise<{
+    confirmToken: string;
+    policyVersion: string;
+  }>;
   /**
    * Bootstrap grant/matter/watch from either a picker selectionId
    * or a persisted projectId+grantId. UI must never invent rootPath.
@@ -616,10 +640,43 @@ function createFixtureApi(): ContractApi {
         permissionBoundary: fixtureGrant.rootPath,
       };
     },
+    async preflightSelection(selectionId) {
+      if (selectionId !== fixtureSelectionId) {
+        throw new Error("未知的 fixture selectionId");
+      }
+      return {
+        preflight: {
+          policyVersion: "v1.0.0",
+          totalEntries: 4,
+          eligibleFiles: 3,
+          blockedFiles: 0,
+          skippedFiles: 1,
+          metadataOnlyFiles: 0,
+          eligibleBytes: 4096,
+          blocked: [],
+          skippedSample: [],
+          warnings: [],
+        },
+        policyVersion: "v1.0.0",
+        folderName: "product-exploration",
+      };
+    },
+    async confirmPreflightSelection(selectionId) {
+      if (selectionId !== fixtureSelectionId) {
+        throw new Error("未知的 fixture selectionId");
+      }
+      return {
+        confirmToken: "pfc_fixture_confirm",
+        policyVersion: "v1.0.0",
+      };
+    },
     async connectConnection(body) {
       if (body.mode === "connect") {
         if (body.selectionId !== fixtureSelectionId) {
           throw new Error("未知的 fixture selectionId");
+        }
+        if (!body.confirmToken?.trim()) {
+          throw new Error("缺少 preflight confirmToken");
         }
         fixtureUnderstandingReady = false;
         return fixtureBootstrap("connect");
@@ -786,7 +843,27 @@ function createFixtureApi(): ContractApi {
 }
 
 async function httpJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const method = (init?.method ?? "GET").toUpperCase();
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type") && init?.body) {
+    headers.set("Content-Type", "application/json");
+  }
+  // PR-08: mutating local APIs require CSRF from LocalSessionBootstrap.
+  if (method !== "GET" && method !== "HEAD") {
+    const csrf =
+      typeof window !== "undefined"
+        ? (window as unknown as { __FC_OPC_CSRF?: string }).__FC_OPC_CSRF
+        : undefined;
+    if (csrf && !headers.has("x-csrf-token")) {
+      headers.set("x-csrf-token", csrf);
+    }
+  }
+  const response = await fetch(url, {
+    ...init,
+    method,
+    headers,
+    credentials: "same-origin",
+  });
   const data = (await response.json()) as T & { error?: string };
   if (!response.ok) throw new Error(data.error || "请求失败");
   return data;
@@ -926,6 +1003,49 @@ function createHttpApi(): ContractApi {
         folderName: data.folderName || rootPath.split("/").filter(Boolean).pop() || rootPath,
         rootPath,
         permissionBoundary: data.permissionBoundary || rootPath,
+      };
+    },
+    async preflightSelection(selectionId) {
+      const data = await httpJson<{
+        preflight?: PreflightReport;
+        policyVersion?: string;
+        policy?: { version?: string };
+        folderName?: string;
+        error?: string;
+      }>("/api/knowledge/project-memory/preflight", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ selectionId, action: "inspect" }),
+      });
+      if (!data.preflight) {
+        throw new Error(data.error || "预检未返回读取范围");
+      }
+      return {
+        preflight: data.preflight,
+        policyVersion:
+          data.policyVersion || data.policy?.version || "v1.0.0",
+        folderName: data.folderName,
+      };
+    },
+    async confirmPreflightSelection(selectionId) {
+      const data = await httpJson<{
+        confirmToken?: string;
+        policyVersion?: string;
+        policy?: { version?: string };
+        error?: string;
+      }>("/api/knowledge/project-memory/preflight", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ selectionId, action: "confirm" }),
+      });
+      const confirmToken = data.confirmToken?.trim();
+      if (!confirmToken) {
+        throw new Error(data.error || "确认读取范围失败");
+      }
+      return {
+        confirmToken,
+        policyVersion:
+          data.policyVersion || data.policy?.version || "v1.0.0",
       };
     },
     async connectConnection(body) {

@@ -4,8 +4,6 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type {
   EvidenceAnchor,
   ProjectAgentToolCall,
@@ -14,8 +12,13 @@ import type {
 } from "./types";
 import type { ProjectMemoryReader } from "./types";
 import { executeSetCanvasView } from "@/shared/knowledge/set-canvas-view";
-
-const execFileAsync = promisify(execFile);
+import { createGrantFileSystem, GrantFsError } from "./grant-fs/grant-filesystem";
+import {
+  createSafeGitReader,
+  SafeGitError,
+} from "./safe-git/safe-git-reader";
+import { assertToolExecutable } from "./tool-registry";
+import { mayReadFileBody } from "./grant-policy";
 
 export type ToolExecContext = {
   projectId: string;
@@ -98,27 +101,27 @@ async function toolProjectMap(
   ctx: ToolExecContext,
 ): Promise<ToolExecResult> {
   const maxDepth = Math.min(call.input.maxDepth ?? 3, 6);
-  const root = path.resolve(ctx.grant.rootPath);
-  if (!fs.existsSync(root)) {
+  try {
+    const gfs = createGrantFileSystem(ctx.grant.rootPath);
+    const files = await gfs.listRelative({ maxDepth, limit: 200 });
+    const summary = `项目地图 depth≤${maxDepth}：${files.length} 项（目录带 /）`;
+    return {
+      outcome: "ok",
+      summary,
+      pins: [],
+      relativePaths: files.filter((f) => !f.endsWith("/")).slice(0, 80),
+      detail: truncate(files.join("\n"), ctx.maxResultChars ?? 12_000),
+    };
+  } catch (e) {
     return {
       outcome: "error",
-      summary: "授权根路径不存在",
+      summary: "授权根路径不可用",
       pins: [],
       relativePaths: [],
-      detail: root,
+      detail: e instanceof Error ? e.message : String(e),
       errorClass: "missing_root",
     };
   }
-  const files: string[] = [];
-  walkDir(root, "", maxDepth, 0, files, 200);
-  const summary = `项目地图 depth≤${maxDepth}：${files.length} 项（目录带 /）`;
-  return {
-    outcome: "ok",
-    summary,
-    pins: [],
-    relativePaths: files.filter((f) => !f.endsWith("/")).slice(0, 80),
-    detail: truncate(files.join("\n"), ctx.maxResultChars ?? 12_000),
-  };
 }
 
 function sliceLines(
@@ -203,31 +206,32 @@ async function toolReadPath(
       errorClass: "invalid_input",
     };
   }
-  const full = resolveUnderRoot(ctx.grant.rootPath, rel);
-  if (!full) {
-    return {
-      outcome: "error",
-      summary: `路径越权或无效: ${rel}`,
-      pins: [],
-      relativePaths: [],
-      detail: "",
-      errorClass: "outside_grant",
-    };
-  }
-  if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
-    return {
-      outcome: "error",
-      summary: `文件不存在: ${rel}`,
-      pins: [],
-      relativePaths: [rel],
-      detail: "",
-      errorClass: "missing_file",
-    };
-  }
-  let buf: Buffer;
+  const gfs = createGrantFileSystem(ctx.grant.rootPath);
+  let text: string;
+  let resolvedRel = rel;
   try {
-    buf = fs.readFileSync(full);
+    const read = await gfs.readText(rel);
+    text = read.text;
+    resolvedRel = read.relativePath;
   } catch (e) {
+    if (e instanceof GrantFsError) {
+      const map: Record<GrantFsError["code"], string> = {
+        outside_root: "outside_grant",
+        symlink_escape: "outside_grant",
+        policy_denied: "policy_denied",
+        not_found: "missing_file",
+        not_file: "missing_file",
+        too_large: "too_large",
+      };
+      return {
+        outcome: "error",
+        summary: `读失败: ${rel} (${e.code})`,
+        pins: [],
+        relativePaths: [rel],
+        detail: e.message,
+        errorClass: map[e.code] ?? "io_error",
+      };
+    }
     return {
       outcome: "error",
       summary: `读失败: ${rel}`,
@@ -237,27 +241,16 @@ async function toolReadPath(
       errorClass: "io_error",
     };
   }
-  if (buf.byteLength > 512_000) {
+  if (text.includes("\0")) {
     return {
       outcome: "error",
-      summary: `文件过大: ${rel}`,
+      summary: `二进制文件跳过: ${resolvedRel}`,
       pins: [],
-      relativePaths: [rel],
-      detail: `${buf.byteLength} bytes`,
-      errorClass: "too_large",
-    };
-  }
-  if (buf.includes(0)) {
-    return {
-      outcome: "error",
-      summary: `二进制文件跳过: ${rel}`,
-      pins: [],
-      relativePaths: [rel],
+      relativePaths: [resolvedRel],
       detail: "",
       errorClass: "binary",
     };
   }
-  const text = buf.toString("utf8");
   const { slice, start, end } = sliceLines(
     text,
     call.input.startLine,
@@ -266,10 +259,10 @@ async function toolReadPath(
   const lineCount = text.split(/\r?\n/).length;
   const quote = slice.trim().slice(0, 400);
   // Prefer real revision id when reconcile already indexed this path.
-  let revisionId = `path:${rel}`;
+  let revisionId = `path:${resolvedRel}`;
   if (ctx.pathByRevisionId) {
     for (const [revId, p] of ctx.pathByRevisionId) {
-      if (p.replace(/\\/g, "/") === rel) {
+      if (p.replace(/\\/g, "/") === resolvedRel) {
         revisionId = revId;
         break;
       }
@@ -279,7 +272,7 @@ async function toolReadPath(
     ? [
         {
           revisionId,
-          relativePath: rel,
+          relativePath: resolvedRel,
           quote: quote.slice(0, 240),
           lastVerifiedAt: new Date().toISOString(),
         },
@@ -287,9 +280,9 @@ async function toolReadPath(
     : [];
   return {
     outcome: "ok",
-    summary: `已读 ${rel} L${start}-${end}（共 ${lineCount} 行）`,
+    summary: `已读 ${resolvedRel} L${start}-${end}（共 ${lineCount} 行）`,
     pins,
-    relativePaths: [rel],
+    relativePaths: [resolvedRel],
     detail: truncate(slice, ctx.maxResultChars ?? 16_000),
   };
 }
@@ -310,67 +303,50 @@ async function toolSearchText(
     };
   }
   const limit = Math.min(call.input.limit ?? 20, 50);
-  const root = path.resolve(ctx.grant.rootPath);
   const prefix = call.input.pathPrefix
     ? normalizeRel(call.input.pathPrefix)
     : "";
   const hits: string[] = [];
   const relPaths = new Set<string>();
+  const gfs = createGrantFileSystem(ctx.grant.rootPath);
 
-  const walk = (rel: string, depth: number) => {
-    if (hits.length >= limit || depth > 8) return;
-    const abs = rel ? path.join(root, rel) : root;
-    let entries: fs.Dirent[];
+  let listed: string[];
+  try {
+    listed = await gfs.listRelative({ maxDepth: 8, limit: 400 });
+  } catch (e) {
+    return {
+      outcome: "error",
+      summary: "search_text 无法列出授权夹",
+      pins: [],
+      relativePaths: [],
+      detail: e instanceof Error ? e.message : String(e),
+      errorClass: "missing_root",
+    };
+  }
+
+  for (const childRel of listed) {
+    if (hits.length >= limit) break;
+    if (childRel.endsWith("/")) continue;
+    if (prefix && !childRel.startsWith(prefix)) continue;
+    let content: string;
     try {
-      entries = fs.readdirSync(abs, { withFileTypes: true });
+      const read = await gfs.readText(childRel);
+      content = read.text;
     } catch {
-      return;
+      // policy_denied / symlink_escape / too_large → skip, never raw fs
+      continue;
     }
-    for (const ent of entries) {
-      if (hits.length >= limit) break;
-      if (
-        ent.name === "node_modules" ||
-        ent.name === ".git" ||
-        ent.name === ".next"
-      ) {
-        continue;
-      }
-      const childRel = rel ? `${rel}/${ent.name}` : ent.name;
-      if (prefix && !childRel.startsWith(prefix) && !prefix.startsWith(childRel)) {
-        if (!childRel.startsWith(prefix.split("/")[0] ?? "")) {
-          /* still may need to descend if prefix deeper */
-        }
-      }
-      if (ent.isDirectory()) {
-        walk(childRel, depth + 1);
-      } else if (ent.isFile()) {
-        if (prefix && !childRel.startsWith(prefix)) continue;
-        if (!/\.(md|txt|ts|tsx|js|jsx|json|py|rs|go|css|html|yml|yaml)$/i.test(ent.name)) {
-          continue;
-        }
-        const full = resolveUnderRoot(root, childRel);
-        if (!full) continue;
-        let content: string;
-        try {
-          const buf = fs.readFileSync(full);
-          if (buf.byteLength > 512_000) continue;
-          content = buf.toString("utf8");
-        } catch {
-          continue;
-        }
-        const idx = content.toLowerCase().indexOf(q.toLowerCase());
-        if (idx < 0) continue;
-        const line = content.slice(0, idx).split(/\r?\n/).length;
-        const snip = content
-          .slice(Math.max(0, idx - 40), idx + q.length + 80)
-          .replace(/\s+/g, " ")
-          .trim();
-        hits.push(`${childRel}:${line}: ${snip}`);
-        relPaths.add(childRel);
-      }
-    }
-  };
-  walk("", 0);
+    if (content.includes("\0")) continue;
+    const idx = content.toLowerCase().indexOf(q.toLowerCase());
+    if (idx < 0) continue;
+    const line = content.slice(0, idx).split(/\r?\n/).length;
+    const snip = content
+      .slice(Math.max(0, idx - 40), idx + q.length + 80)
+      .replace(/\s+/g, " ")
+      .trim();
+    hits.push(`${childRel}:${line}: ${snip}`);
+    relPaths.add(childRel);
+  }
 
   return {
     outcome: "ok",
@@ -420,19 +396,14 @@ async function toolQueryMemory(
   };
 }
 
-async function toolGit(
+async function toolGitSafe(
   name: ProjectAgentToolCall["name"],
-  args: string[],
+  run: (git: ReturnType<typeof createSafeGitReader>) => Promise<string>,
   ctx: ToolExecContext,
 ): Promise<ToolExecResult> {
   try {
-    const { stdout, stderr } = await execFileAsync("git", args, {
-      cwd: ctx.grant.rootPath,
-      timeout: 15_000,
-      maxBuffer: 512 * 1024,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-    });
-    const text = (stdout || stderr || "").trim();
+    const git = createSafeGitReader(ctx.grant.rootPath);
+    const text = await run(git);
     return {
       outcome: "ok",
       summary: `git ${name} ok (${text.split("\n").length} lines)`,
@@ -442,13 +413,19 @@ async function toolGit(
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const errorClass =
+      e instanceof SafeGitError && e.code === "invalid_ref"
+        ? "invalid_git_ref"
+        : e instanceof SafeGitError && e.code === "invalid_path"
+          ? "invalid_input"
+          : "git_error";
     return {
       outcome: "error",
       summary: `git ${name} 失败`,
       pins: [],
       relativePaths: [],
       detail: truncate(msg, 2000),
-      errorClass: "git_error",
+      errorClass,
     };
   }
 }
@@ -462,6 +439,17 @@ export async function executeProjectAgentTool(
   ctx: ToolExecContext,
   options?: { matterId?: string },
 ): Promise<ToolExecResult> {
+  const reg = assertToolExecutable(call.name);
+  if (!reg.ok) {
+    return {
+      outcome: "error",
+      summary: reg.error,
+      pins: [],
+      relativePaths: [],
+      detail: "",
+      errorClass: "unknown_tool",
+    };
+  }
   switch (call.name) {
     case "project_map":
       return toolProjectMap(call, ctx);
@@ -496,57 +484,36 @@ export async function executeProjectAgentTool(
       }
       return toolQueryMemory(call, ctx, options.matterId);
     case "git_status":
-      return toolGit("git_status", ["status", "--short", "--branch"], ctx);
+      return toolGitSafe("git_status", (git) => git.statusShort(), ctx);
     case "git_log":
-      return toolGit(
+      return toolGitSafe(
         "git_log",
-        [
-          "log",
-          `--max-count=${Math.min(call.input.limit ?? 10, 30)}`,
-          "--oneline",
-          ...(call.input.relativePath
-            ? ["--", call.input.relativePath]
-            : []),
-        ],
+        (git) =>
+          git.logOneline(call.input.limit ?? 10, call.input.relativePath),
         ctx,
       );
     case "git_diff":
-      return toolGit(
+      return toolGitSafe(
         "git_diff",
-        [
-          "diff",
-          call.input.base,
-          ...(call.input.head ? [call.input.head] : []),
-          ...(call.input.relativePath
-            ? ["--", call.input.relativePath]
-            : []),
-        ],
+        (git) =>
+          git.diff(call.input.base, call.input.head, call.input.relativePath),
         ctx,
       );
     case "git_show":
-      return toolGit(
+      return toolGitSafe(
         "git_show",
-        [
-          "show",
-          "--stat",
-          call.input.commit,
-          ...(call.input.relativePath
-            ? ["--", call.input.relativePath]
-            : []),
-        ],
+        (git) => git.showStat(call.input.commit, call.input.relativePath),
         ctx,
       );
     case "git_blame":
-      return toolGit(
+      return toolGitSafe(
         "git_blame",
-        [
-          "blame",
-          "-L",
-          `${call.input.startLine ?? 1},${call.input.endLine ?? 40}`,
-          ...(call.input.commit ? [call.input.commit] : []),
-          "--",
-          call.input.relativePath,
-        ],
+        (git) =>
+          git.blame(call.input.relativePath, {
+            startLine: call.input.startLine,
+            endLine: call.input.endLine,
+            commit: call.input.commit,
+          }),
         ctx,
       );
     case "search_symbols":

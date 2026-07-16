@@ -3,29 +3,37 @@ import {
   createProjectSourceGrant,
   disableProjectSourceGrant,
   listProjectSourceGrants,
+  revokeProjectSourceGrant,
   ProjectAccessError,
   ProjectScopeError,
-  revokeProjectSourceGrant,
 } from "@/shared/knowledge/repository";
 import { requireProjectId } from "@/shared/knowledge/project-scope";
 import {
   getDefaultSourceGrantManager,
   SourceGrantStateError,
 } from "@/shared/project-memory/grants";
+import {
+  connectFromSelectionId,
+  getFolderSelectionStore,
+} from "@/shared/project-memory/native-folder-picker";
+import {
+  checkLocalTrust,
+  CSRF_HEADER,
+} from "@/shared/security/local-session";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 type LocalGrantBody = {
+  /** @deprecated Rejected: clients must not supply filesystem roots. */
   rootPath?: string;
+  selectionId?: string;
+  /** Issued by preflight POST; required with selectionId. */
+  confirmToken?: string;
   kind?: "local_folder" | "local_git";
   includePathPrefixes?: string[];
   excludePathPrefixes?: string[];
   projectId?: string;
 };
-
-function isLocalGrantBody(body: LocalGrantBody): boolean {
-  return typeof body.rootPath === "string";
-}
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   try {
@@ -51,6 +59,16 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 }
 
 export async function POST(req: NextRequest, ctx: Ctx) {
+  const trust = checkLocalTrust({
+    method: "POST",
+    host: req.headers.get("host"),
+    origin: req.headers.get("origin"),
+    cookieHeader: req.headers.get("cookie"),
+    csrfHeader: req.headers.get(CSRF_HEADER),
+  });
+  if (!trust.ok) {
+    return NextResponse.json({ error: trust.error }, { status: trust.status });
+  }
   try {
     const { id } = await ctx.params;
     const projectId = requireProjectId(id);
@@ -66,22 +84,49 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       );
     }
 
-    if (isLocalGrantBody(body)) {
-      const connection = await getDefaultSourceGrantManager().connectLocalRoot({
-        projectId,
-        rootPath: body.rootPath!,
-        kind: body.kind,
-        includePathPrefixes: body.includePathPrefixes,
-        excludePathPrefixes: body.excludePathPrefixes,
+    // P0: never accept client-supplied rootPath as a live grant root.
+    if (typeof body.rootPath === "string" && body.rootPath.trim()) {
+      return NextResponse.json(
+        {
+          error:
+            "禁止客户端直接提交 rootPath。请先 folder-picker 取得 selectionId，再 connect。",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (body.selectionId?.trim()) {
+      const confirmToken = body.confirmToken?.trim();
+      if (!confirmToken) {
+        return NextResponse.json(
+          {
+            error:
+              "connect 需要 preflight 返回的 confirmToken（请先完成预检确认）",
+          },
+          { status: 400 },
+        );
+      }
+      // selectionId → server-derived project identity only (never client rootPath).
+      // Path projectId is the page host; first connect derives id from canonical root.
+      const connection = await connectFromSelectionId(body.selectionId.trim(), {
+        store: getFolderSelectionStore(),
+        manager: getDefaultSourceGrantManager(),
+        confirmToken,
       });
-      return NextResponse.json({ ...connection, projectId }, { status: 201 });
+      return NextResponse.json(
+        { ...connection, requestedPathProjectId: projectId },
+        { status: 201 },
+      );
     }
 
     // Preserve the pre-existing T-19 cross-project grant surface. It is not
-    // used by the local observer and never widens this local root grant.
+    // used by the local observer and never widens a local root grant.
     if (!body.approvedBy?.trim()) {
       return NextResponse.json(
-        { error: "跨项目授权需要 Owner 确认（approvedBy 必填）" },
+        {
+          error:
+            "本地授权需要 selectionId；跨项目授权需要 Owner 确认（approvedBy 必填）",
+        },
         { status: 400 },
       );
     }
@@ -108,6 +153,16 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
 /** Preserve T-19 disable/revoke for the legacy cross-project grant surface. */
 export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const trust = checkLocalTrust({
+    method: "PATCH",
+    host: req.headers.get("host"),
+    origin: req.headers.get("origin"),
+    cookieHeader: req.headers.get("cookie"),
+    csrfHeader: req.headers.get(CSRF_HEADER),
+  });
+  if (!trust.ok) {
+    return NextResponse.json({ error: trust.error }, { status: trust.status });
+  }
   try {
     const { id } = await ctx.params;
     const hostProjectId = requireProjectId(id);

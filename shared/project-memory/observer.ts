@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { subscribe as parcelSubscribe } from "@parcel/watcher";
 import { sha256Hex } from "./cas";
+import { mayReadFileBody } from "./grant-policy";
 import type {
   ObservationAdapter,
   ObservationSignal,
@@ -208,8 +209,20 @@ async function collectFiles(
       }
       if (!resolved.exists) continue;
       const targetStat = await fs.promises.stat(resolved.realPath);
-      if (targetStat.isDirectory()) continue;
+      if (targetStat.isDirectory()) {
+        // Do not follow directory symlinks into potentially huge trees without policy.
+        // Still only walk if policy would allow descendants — skip known blocked dirs.
+        const relDir = resolved.relativePath;
+        if (!mayReadFileBody(`${relDir}/README.md`) && !mayReadFileBody(`${relDir}/index.ts`)) {
+          // Heuristic: if directory name itself is policy-skipped (node_modules/.git), stop.
+        }
+        continue;
+      }
       if (!targetStat.isFile()) continue;
+      // Policy BEFORE body read (P0-1)
+      if (!mayReadFileBody(resolved.relativePath, undefined, { sizeBytes: targetStat.size })) {
+        continue;
+      }
       const content = await readStableFile(rootPath, candidate, maxReadAttempts);
       if (content) {
         output.push({ relativePath: resolved.relativePath, content });
@@ -218,6 +231,26 @@ async function collectFiles(
     }
 
     if (stat.isDirectory()) {
+      // Skip heavy/secret dirs before descending (P0-1)
+      let relDir: string;
+      try {
+        relDir = relativePathWithinGrantRoot(rootPath, candidate);
+      } catch {
+        continue;
+      }
+      const base = path.basename(candidate);
+      if (
+        base === "node_modules" ||
+        base === ".git" ||
+        base === ".next" ||
+        base === "dist" ||
+        base === "build" ||
+        base === "coverage" ||
+        base === ".turbo" ||
+        base === ".cache"
+      ) {
+        continue;
+      }
       await collectFiles(
         rootPath,
         candidate,
@@ -229,10 +262,20 @@ async function collectFiles(
     }
     if (!stat.isFile()) continue;
 
+    let relFile: string;
+    try {
+      relFile = relativePathWithinGrantRoot(rootPath, candidate);
+    } catch {
+      continue;
+    }
+    // Policy BEFORE body read / hash / CAS (P0-1)
+    if (!mayReadFileBody(relFile, undefined, { sizeBytes: stat.size })) {
+      continue;
+    }
     const content = await readStableFile(rootPath, candidate, maxReadAttempts);
     if (content) {
       output.push({
-        relativePath: relativePathWithinGrantRoot(rootPath, candidate),
+        relativePath: relFile,
         content,
       });
     }

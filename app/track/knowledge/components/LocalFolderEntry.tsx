@@ -7,6 +7,7 @@ import { EntryPreview } from "./EntryPreview";
 import {
   createMvpApi,
   type AgentToolReceiptSummary,
+  type PreflightReport,
   type RecentConnectionResponse,
 } from "../lib/folder-connection-api";
 import {
@@ -73,6 +74,7 @@ export function LocalFolderEntry({ onAuthorized, onError }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [onboardingPhase, setOnboardingPhase] = useState<OnboardingPhase>("entry");
   const [pendingSelection, setPendingSelection] = useState<FolderSelection | null>(null);
+  const [preflightReport, setPreflightReport] = useState<PreflightReport | null>(null);
   const [recentConnection, setRecentConnection] = useState<RecentConnection | null>(null);
   const [pipelinePhase, setPipelinePhase] = useState<AgentPipelinePhase | null>(null);
   const [progressFolderName, setProgressFolderName] = useState("");
@@ -207,6 +209,7 @@ export function LocalFolderEntry({ onAuthorized, onError }: Props) {
     setPipelinePhase(null);
     setLiveRun(null);
     setPendingSelection(null);
+    setPreflightReport(null);
     setOnboardingPhase("entry");
   }
 
@@ -217,6 +220,7 @@ export function LocalFolderEntry({ onAuthorized, onError }: Props) {
       const result = await api.openFolderPicker();
       if ("cancelled" in result && result.cancelled) {
         setPendingSelection(null);
+        setPreflightReport(null);
         setOnboardingPhase(phaseAfterPickerCancel());
         return;
       }
@@ -229,6 +233,7 @@ export function LocalFolderEntry({ onAuthorized, onError }: Props) {
         rootPath: result.rootPath,
         permissionBoundary: result.permissionBoundary || result.rootPath,
       });
+      setPreflightReport(null);
       setOnboardingPhase(phaseAfterPickerSelected());
     } catch (nextError) {
       reportError(
@@ -239,14 +244,36 @@ export function LocalFolderEntry({ onAuthorized, onError }: Props) {
     }
   }
 
-  async function connectWithSelection() {
+  async function inspectSelection() {
     if (!pendingSelection) return;
     setBusy(true);
     setError(null);
     try {
+      const inspected = await api.preflightSelection(
+        pendingSelection.selectionId,
+      );
+      setPreflightReport(inspected.preflight);
+    } catch (nextError) {
+      reportError(nextError instanceof Error ? nextError.message : "检查读取范围失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmAndConnect() {
+    if (!pendingSelection || !preflightReport) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const confirmed = await api.confirmPreflightSelection(
+        pendingSelection.selectionId,
+      );
       await runPipeline({
         kind: "fresh",
-        body: connectPayloadForNewSelection(pendingSelection.selectionId),
+        body: connectPayloadForNewSelection(
+          pendingSelection.selectionId,
+          confirmed.confirmToken,
+        ),
         folderHint: pendingSelection.folderName,
       });
     } catch (nextError) {
@@ -279,6 +306,7 @@ export function LocalFolderEntry({ onAuthorized, onError }: Props) {
 
   function cancelSelectionReview() {
     setPendingSelection(null);
+    setPreflightReport(null);
     setOnboardingPhase(phaseAfterPickerCancel());
     setError(null);
   }
@@ -346,6 +374,37 @@ export function LocalFolderEntry({ onAuthorized, onError }: Props) {
                     <span>候选理解仍需你确认</span>
                   </li>
                 </ul>
+                {preflightReport ? (
+                  <div className={styles.preflightReport} data-testid="preflight-report">
+                    <strong>实际读取范围</strong>
+                    <div className={styles.preflightStats}>
+                      <span>读正文 {preflightReport.eligibleFiles} 份</span>
+                      <span>敏感拦截 {preflightReport.blockedFiles} 份</span>
+                      <span>
+                        跳过 {preflightReport.skippedFiles + preflightReport.metadataOnlyFiles} 份
+                      </span>
+                    </div>
+                    {preflightReport.warnings.length > 0 ? (
+                      <ul className={styles.preflightWarnings}>
+                        {preflightReport.warnings.map((warning) => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>敏感文件与依赖、构建产物不会读取正文。</p>
+                    )}
+                    {preflightReport.blocked.length > 0 ? (
+                      <details>
+                        <summary>查看被拦截文件</summary>
+                        <ul>
+                          {preflightReport.blocked.slice(0, 8).map((entry) => (
+                            <li key={entry.relativePath}>{entry.relativePath}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               <div className={styles.entryCardFooter}>
                 <button
@@ -368,10 +427,18 @@ export function LocalFolderEntry({ onAuthorized, onError }: Props) {
                   <button
                     type="button"
                     className={styles.entryPrimaryButton}
-                    onClick={() => void connectWithSelection()}
+                    onClick={() =>
+                      void (preflightReport ? confirmAndConnect() : inspectSelection())
+                    }
                     disabled={busy}
                   >
-                    {busy ? "连接中…" : "用这个文件夹"}
+                    {busy
+                      ? preflightReport
+                        ? "连接中…"
+                        : "检查中…"
+                      : preflightReport
+                        ? "确认并连接"
+                        : "检查读取范围"}
                   </button>
                 </div>
               </div>

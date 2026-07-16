@@ -44,12 +44,18 @@ describe("D-50 onboarding folder choice contract", () => {
     expect(pageSource).toContain("连接");
   });
 
-  it("builds connect payload from selectionId only for new folders", () => {
-    expect(connectPayloadForNewSelection("sel-abc")).toEqual({
+  it("builds connect payload from selectionId + preflight confirmToken", () => {
+    expect(connectPayloadForNewSelection("sel-abc", "pfc_token")).toEqual({
       mode: "connect",
       selectionId: "sel-abc",
+      confirmToken: "pfc_token",
     });
-    expect(() => connectPayloadForNewSelection("  ")).toThrow(/文件夹选择/);
+    expect(() => connectPayloadForNewSelection("  ", "pfc_token")).toThrow(
+      /文件夹选择/,
+    );
+    expect(() => connectPayloadForNewSelection("sel-abc", "  ")).toThrow(
+      /预检/,
+    );
   });
 
   it("builds continue payload from persisted projectId+grantId only", () => {
@@ -96,8 +102,11 @@ describe("D-50 onboarding folder choice contract", () => {
     expect(picked.selectionId).toBeTruthy();
     expect(picked.folderName).toBe("product-exploration");
 
+    const preflight = await api.preflightSelection(picked.selectionId);
+    expect(preflight.preflight.eligibleFiles).toBeGreaterThan(0);
+    const confirmed = await api.confirmPreflightSelection(picked.selectionId);
     const bootstrap = await api.connectConnection(
-      connectPayloadForNewSelection(picked.selectionId),
+      connectPayloadForNewSelection(picked.selectionId, confirmed.confirmToken),
     );
     expect(bootstrap.projectId).toBeTruthy();
     expect(bootstrap.grant.rootPath).toContain("product-exploration");
@@ -213,8 +222,18 @@ describe("D-50 first-use progress and understanding", () => {
 
   it("fixture first-use: bootstrap matched ids → analysis only when empty → candidate + Owner resolve", async () => {
     const api = createMvpApi("contract-fixture");
+    const preflight = await api.preflightSelection(
+      "selection-fixture-product-exploration",
+    );
+    expect(preflight.preflight.eligibleFiles).toBeGreaterThan(0);
+    const confirmed = await api.confirmPreflightSelection(
+      "selection-fixture-product-exploration",
+    );
     const bootstrap = await api.connectConnection(
-      connectPayloadForNewSelection("selection-fixture-product-exploration"),
+      connectPayloadForNewSelection(
+        "selection-fixture-product-exploration",
+        confirmed.confirmToken,
+      ),
     );
     const matchedIds = matchedEventIdsFromBootstrap(bootstrap);
     expect(matchedIds.length).toBeGreaterThan(0);
@@ -238,6 +257,8 @@ describe("D-50 first-use progress and understanding", () => {
       matchedIds,
     );
     const candidate = analysis.candidate;
+    expect(candidate).toBeTruthy();
+    if (!candidate) throw new Error("expected candidate");
     expect(candidate.kind).toBe("candidate");
     expect(candidate.body.now.evidence.length).toBeGreaterThan(0);
     expect(

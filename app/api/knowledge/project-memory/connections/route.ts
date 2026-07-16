@@ -6,6 +6,9 @@ import {
   toConnectionsPostPayload,
 } from "@/shared/project-memory/native-folder-picker";
 import { SourceGrantStateError } from "@/shared/project-memory/grants";
+import {
+  checkLocalTrustFromRequest,
+} from "@/shared/security/local-session";
 
 /**
  * GET /api/knowledge/project-memory/connections
@@ -30,6 +33,8 @@ type ConnectBody = {
   mode?: string;
   action?: string;
   selectionId?: string;
+  /** Required for connect: from preflight POST. */
+  confirmToken?: string;
   projectId?: string;
   grantId?: string;
   /** Rejected: must never be accepted for new connect. */
@@ -48,6 +53,10 @@ type ConnectBody = {
  * - Fresh UI calls existing analysis-runs with these ids; no Agent pipeline here.
  */
 export async function POST(req: NextRequest) {
+  const trust = checkLocalTrustFromRequest(req);
+  if (!trust.ok) {
+    return NextResponse.json({ error: trust.error }, { status: trust.status });
+  }
   try {
     const body = (await req.json()) as ConnectBody;
     const mode = (body.mode ?? body.action ?? "").trim().toLowerCase();
@@ -68,6 +77,16 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
+      const confirmToken = body.confirmToken?.trim();
+      if (!confirmToken) {
+        return NextResponse.json(
+          {
+            error:
+              "connect 需要 preflight 返回的 confirmToken（请先完成预检确认）",
+          },
+          { status: 400 },
+        );
+      }
       if (typeof body.projectId === "string" && body.projectId.trim()) {
         return NextResponse.json(
           {
@@ -77,7 +96,9 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
-      const connection = await connectFromSelectionId(selectionId);
+      const connection = await connectFromSelectionId(selectionId, {
+        confirmToken,
+      });
       return NextResponse.json(toConnectionsPostPayload("connect", connection), {
         status: 201,
       });

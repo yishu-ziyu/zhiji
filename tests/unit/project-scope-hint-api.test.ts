@@ -31,6 +31,32 @@ import {
   listProjects,
   resetKnowledgeStoreForTests,
 } from "@/shared/knowledge/repository";
+import {
+  ensureLocalSession,
+  sessionCookieHeader,
+} from "@/shared/security/local-session";
+
+function authedJsonRequest(
+  url: string,
+  method: string,
+  body: unknown,
+): NextRequest {
+  const session = ensureLocalSession();
+  const cookies = sessionCookieHeader(session)
+    .map((c) => c.split(";")[0])
+    .join("; ");
+  return new NextRequest(url, {
+    method,
+    headers: {
+      host: "127.0.0.1:3000",
+      origin: "http://127.0.0.1:3000",
+      cookie: cookies,
+      "x-csrf-token": session.csrfToken,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
 
 let tmpDir = "";
 
@@ -213,16 +239,10 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
 
     const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
     const created = await grantRoute!.POST(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            sourceProjectId: source.id,
-            approvedBy: "自己",
-            expiresAt,
-          }),
-        },
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "POST",
+        { sourceProjectId: source.id, approvedBy: "自己", expiresAt },
       ),
       { params: Promise.resolve({ id: host.id }) },
     );
@@ -334,15 +354,13 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
     expect(hintRoute).toBeTruthy();
 
     const expired = await grantRoute!.POST(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "POST",
         {
-          method: "POST",
-          body: JSON.stringify({
-            sourceProjectId: source.id,
-            approvedBy: "自己",
-            expiresAt: new Date(Date.now() - 60_000).toISOString(),
-          }),
+          sourceProjectId: source.id,
+          approvedBy: "自己",
+          expiresAt: new Date(Date.now() - 60_000).toISOString(),
         },
       ),
       { params: Promise.resolve({ id: host.id }) },
@@ -365,15 +383,13 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
 
     // Active grant then disable + revoke
     const active = await grantRoute!.POST(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "POST",
         {
-          method: "POST",
-          body: JSON.stringify({
-            sourceProjectId: source.id,
-            approvedBy: "自己",
-            expiresAt: new Date(Date.now() + 86400000).toISOString(),
-          }),
+          sourceProjectId: source.id,
+          approvedBy: "自己",
+          expiresAt: new Date(Date.now() + 86400000).toISOString(),
         },
       ),
       { params: Promise.resolve({ id: host.id }) },
@@ -389,14 +405,12 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
     ).toBeTruthy();
 
     const disabled = await grantRoute!.PATCH!(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "PATCH",
         {
-          method: "PATCH",
-          body: JSON.stringify({
-            grantId: grant.id,
-            action: "disable",
-          }),
+          grantId: grant.id,
+          action: "disable",
         },
       ),
       { params: Promise.resolve({ id: host.id }) },
@@ -417,15 +431,13 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
 
     // Re-enable path not required; create fresh then revoke
     const active2 = await grantRoute!.POST(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "POST",
         {
-          method: "POST",
-          body: JSON.stringify({
-            sourceProjectId: source.id,
-            approvedBy: "自己",
-            expiresAt: new Date(Date.now() + 86400000).toISOString(),
-          }),
+          sourceProjectId: source.id,
+          approvedBy: "自己",
+          expiresAt: new Date(Date.now() + 86400000).toISOString(),
         },
       ),
       { params: Promise.resolve({ id: host.id }) },
@@ -434,15 +446,13 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
     const grant2 = ((await active2.json()) as { grant: { id: string } }).grant;
 
     const revoked = await grantRoute!.PATCH!(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "PATCH",
         {
-          method: "PATCH",
-          body: JSON.stringify({
-            grantId: grant2.id,
-            action: "revoke",
-            reason: "test-revoke",
-          }),
+          grantId: grant2.id,
+          action: "revoke",
+          reason: "test-revoke",
         },
       ),
       { params: Promise.resolve({ id: host.id }) },
@@ -476,15 +486,13 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
     expect(grantRoute).toBeTruthy();
 
     const created = await grantRoute!.POST(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${hostA.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${hostA.id}/source-grants`,
+        "POST",
         {
-          method: "POST",
-          body: JSON.stringify({
-            sourceProjectId: source.id,
-            approvedBy: "自己",
-            expiresAt: new Date(Date.now() + 86400000).toISOString(),
-          }),
+          sourceProjectId: source.id,
+          approvedBy: "自己",
+          expiresAt: new Date(Date.now() + 86400000).toISOString(),
         },
       ),
       { params: Promise.resolve({ id: hostA.id }) },
@@ -519,15 +527,13 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
     // Explicit: B tries PATCH on A's grant via B's project path
     expect(grantRoute!.PATCH).toBeTruthy();
     const foreignPatch = await grantRoute!.PATCH!(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${hostB.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${hostB.id}/source-grants`,
+        "PATCH",
         {
-          method: "PATCH",
-          body: JSON.stringify({
-            grantId: grant.id,
-            action: "revoke",
-            reason: "foreign-attempt",
-          }),
+          grantId: grant.id,
+          action: "revoke",
+          reason: "foreign-attempt",
         },
       ),
       { params: Promise.resolve({ id: hostB.id }) },
@@ -561,15 +567,13 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
     expect(hintRoute).toBeTruthy();
 
     await grantRoute!.POST(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "POST",
         {
-          method: "POST",
-          body: JSON.stringify({
-            sourceProjectId: source.id,
-            approvedBy: "自己",
-            expiresAt: new Date(Date.now() + 86400000).toISOString(),
-          }),
+          sourceProjectId: source.id,
+          approvedBy: "自己",
+          expiresAt: new Date(Date.now() + 86400000).toISOString(),
         },
       ),
       { params: Promise.resolve({ id: host.id }) },
@@ -637,15 +641,13 @@ describe("T-19 S2 redacted hint privacy RED gates", () => {
     ).toBeTruthy();
 
     await grantRoute!.POST(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "POST",
         {
-          method: "POST",
-          body: JSON.stringify({
-            sourceProjectId: source.id,
-            approvedBy: "自己",
-            expiresAt: new Date(Date.now() + 86400000).toISOString(),
-          }),
+          sourceProjectId: source.id,
+          approvedBy: "自己",
+          expiresAt: new Date(Date.now() + 86400000).toISOString(),
         },
       ),
       { params: Promise.resolve({ id: host.id }) },

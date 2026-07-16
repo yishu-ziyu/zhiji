@@ -60,6 +60,8 @@ export type AuthorizeLocalGrantInput = {
   rootPath: string;
   kind?: SourceGrant["kind"];
   grantId?: string;
+  /** PR-03 policy version at connect time. */
+  policyVersion?: string;
 };
 
 export type ReconcileResult = {
@@ -301,6 +303,7 @@ export class SourceGrantManager {
       status: "active",
       createdAt: now,
       updatedAt: now,
+      policyVersion: input.policyVersion,
     };
     this.grants.set(key(grant.projectId, grant.id), grant);
     await this.persistGrant(grant);
@@ -324,6 +327,7 @@ export class SourceGrantManager {
     kind?: SourceGrant["kind"];
     includePathPrefixes?: string[];
     excludePathPrefixes?: string[];
+    policyVersion?: string;
   }): Promise<LocalRootConnection> {
     const rootPath = await fs.promises.realpath(input.rootPath);
     const kind = input.kind ?? "local_folder";
@@ -337,15 +341,27 @@ export class SourceGrantManager {
       if (persisted.status !== "active") {
         throw new SourceGrantStateError(`grant is ${persisted.status}`);
       }
-      this.register(persisted);
-      await this.start(persisted);
-      grant = persisted;
+      // Refresh policy version on reconnect when provided.
+      if (input.policyVersion && persisted.policyVersion !== input.policyVersion) {
+        grant = {
+          ...persisted,
+          policyVersion: input.policyVersion,
+          updatedAt: this.clock(),
+        };
+        this.register(grant);
+        await this.persistGrant(grant);
+      } else {
+        grant = persisted;
+        this.register(persisted);
+      }
+      await this.start(grant);
     } else {
       grant = await this.authorizeLocalRoot({
         projectId: input.projectId,
         rootPath,
         kind,
         grantId,
+        policyVersion: input.policyVersion,
       });
     }
 

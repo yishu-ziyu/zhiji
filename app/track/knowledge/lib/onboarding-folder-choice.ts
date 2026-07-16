@@ -23,7 +23,7 @@ export type RecentConnection = {
 };
 
 export type ConnectConnectionBody =
-  | { mode: "connect"; selectionId: string }
+  | { mode: "connect"; selectionId: string; confirmToken: string }
   | { mode: "continue"; projectId: string; grantId: string };
 
 /** Labels that must never appear as required onboarding inputs. */
@@ -56,10 +56,13 @@ export function folderNameFromPath(rootPath: string): string {
 
 export function connectPayloadForNewSelection(
   selectionId: string,
+  confirmToken: string,
 ): ConnectConnectionBody {
   const id = selectionId.trim();
+  const token = confirmToken.trim();
   if (!id) throw new Error("缺少文件夹选择标识");
-  return { mode: "connect", selectionId: id };
+  if (!token) throw new Error("缺少预检确认令牌；请先完成预检");
+  return { mode: "connect", selectionId: id, confirmToken: token };
 }
 
 export function connectPayloadForContinue(

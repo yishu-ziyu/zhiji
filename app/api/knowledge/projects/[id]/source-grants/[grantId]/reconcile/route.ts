@@ -5,10 +5,15 @@ import {
   SourceGrantNotFoundError,
   SourceGrantStateError,
 } from "@/shared/project-memory/grants";
+import { checkLocalTrustFromRequest } from "@/shared/security/local-session";
 
 type Ctx = { params: Promise<{ id: string; grantId: string }> };
 
 export async function POST(_req: Request, ctx: Ctx) {
+  const trust = checkLocalTrustFromRequest(_req);
+  if (!trust.ok) {
+    return NextResponse.json({ error: trust.error }, { status: trust.status });
+  }
   try {
     const { id, grantId } = await ctx.params;
     const projectId = requireProjectId(id);

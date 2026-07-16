@@ -171,6 +171,11 @@ type PendingSelection = {
   folderName: string;
   expiresAtMs: number;
   consumed: boolean;
+  /** Set only after metadata-only report was returned for Owner review. */
+  preflightReviewed?: boolean;
+  preflightFingerprint?: string;
+  confirmToken?: string;
+  policyVersion?: string;
 };
 
 export type NativeFolderPickerRunner = () => Promise<FolderPickerResult>;
@@ -309,10 +314,10 @@ export class FolderSelectionStore {
   }
 
   /**
-   * Consume a one-use token. Expired/reused/missing → throws SourceGrantStateError.
-   * Cancelled pickers never call this (no residue).
+   * Peek without consuming — for preflight metadata only.
+   * Does not mark token used.
    */
-  consume(selectionId: string): { canonicalRoot: string; folderName: string } {
+  peek(selectionId: string): { canonicalRoot: string; folderName: string } {
     this.gc();
     const entry = this.entries.get(selectionId);
     if (!entry) {
@@ -325,11 +330,115 @@ export class FolderSelectionStore {
       this.entries.delete(selectionId);
       throw new SourceGrantStateError("selection token missing or expired");
     }
+    return {
+      canonicalRoot: entry.canonicalRoot,
+      folderName: entry.folderName,
+    };
+  }
+
+  /** Record that a concrete metadata-only report was shown; does not authorize connect. */
+  markPreflight(
+    selectionId: string,
+    report: { policyVersion: string; fingerprint: string },
+  ): void {
+    this.gc();
+    const entry = this.entries.get(selectionId);
+    if (!entry || entry.consumed || entry.expiresAtMs <= this.now()) {
+      if (entry?.expiresAtMs && entry.expiresAtMs <= this.now()) {
+        this.entries.delete(selectionId);
+      }
+      throw new SourceGrantStateError("selection token missing or expired");
+    }
+    entry.preflightReviewed = true;
+    entry.preflightFingerprint = report.fingerprint;
+    entry.policyVersion = report.policyVersion;
+    entry.confirmToken = undefined;
+  }
+
+  /**
+   * Issue a one-use confirmToken only after an explicit second Owner action.
+   * The recomputed report must still match the report that was shown.
+   */
+  confirmPreflight(
+    selectionId: string,
+    policyVersion: string,
+    fingerprint: string,
+  ): { confirmToken: string; policyVersion: string; selectionId: string } {
+    this.gc();
+    const entry = this.entries.get(selectionId);
+    if (!entry) {
+      throw new SourceGrantStateError("selection token missing or expired");
+    }
+    if (entry.consumed) {
+      throw new SourceGrantStateError("selection token already used");
+    }
+    if (entry.expiresAtMs <= this.now()) {
+      this.entries.delete(selectionId);
+      throw new SourceGrantStateError("selection token missing or expired");
+    }
+    if (!entry.preflightReviewed || !entry.preflightFingerprint) {
+      throw new SourceGrantStateError(
+        "preflight report review required before confirmation",
+      );
+    }
+    if (
+      entry.policyVersion !== policyVersion ||
+      entry.preflightFingerprint !== fingerprint
+    ) {
+      throw new SourceGrantStateError(
+        "preflight report changed; review the latest report before confirmation",
+      );
+    }
+    const confirmToken = `pfc_${randomBytes(18).toString("hex")}`;
+    entry.confirmToken = confirmToken;
+    return {
+      confirmToken,
+      policyVersion,
+      selectionId,
+    };
+  }
+
+  /**
+   * Consume a one-use token. Requires prior confirmPreflight + matching confirmToken.
+   * Expired/reused/missing → throws SourceGrantStateError.
+   */
+  consume(
+    selectionId: string,
+    options?: { confirmToken?: string },
+  ): {
+    canonicalRoot: string;
+    folderName: string;
+    policyVersion?: string;
+  } {
+    this.gc();
+    const entry = this.entries.get(selectionId);
+    if (!entry) {
+      throw new SourceGrantStateError("selection token missing or expired");
+    }
+    if (entry.consumed) {
+      throw new SourceGrantStateError("selection token already used");
+    }
+    if (entry.expiresAtMs <= this.now()) {
+      this.entries.delete(selectionId);
+      throw new SourceGrantStateError("selection token missing or expired");
+    }
+    if (!entry.preflightReviewed || !entry.confirmToken) {
+      throw new SourceGrantStateError(
+        "preflight confirmation required before connect",
+      );
+    }
+    const token = options?.confirmToken?.trim() ?? "";
+    if (!token || token !== entry.confirmToken) {
+      throw new SourceGrantStateError(
+        "invalid or missing preflight confirmToken",
+      );
+    }
     entry.consumed = true;
     this.entries.delete(selectionId);
     return {
       canonicalRoot: entry.canonicalRoot,
       folderName: entry.folderName,
+      policyVersion: entry.policyVersion,
     };
   }
 
@@ -541,11 +650,16 @@ export async function connectFromSelectionId(
   options?: {
     store?: FolderSelectionStore;
     manager?: SourceGrantManager;
+    /** Required: issued by preflight POST after Owner review. */
+    confirmToken?: string;
   },
 ): Promise<FolderConnectResult> {
   const store = options?.store ?? getFolderSelectionStore();
   const manager = options?.manager ?? getDefaultSourceGrantManager();
-  const { canonicalRoot, folderName } = store.consume(selectionId);
+  const { canonicalRoot, folderName, policyVersion } = store.consume(
+    selectionId,
+    { confirmToken: options?.confirmToken },
+  );
   // Re-resolve to reject vanished / symlink-escape after pick.
   const resolved = await resolveCanonicalFolderRoot(canonicalRoot);
   if (resolved.canonicalRoot !== canonicalRoot) {
@@ -560,6 +674,7 @@ export async function connectFromSelectionId(
     kind: "local_folder",
     includePathPrefixes: [ROOT_SENTINEL_INCLUDE],
     excludePathPrefixes: [...SAFE_DEFAULT_EXCLUDE_PREFIXES],
+    policyVersion,
   });
   return finalizeConnectionForAnalysis(
     connection,

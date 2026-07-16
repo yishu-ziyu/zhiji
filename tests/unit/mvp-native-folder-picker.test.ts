@@ -31,10 +31,35 @@ import {
   toConnectionsPostPayload,
 } from "@/shared/project-memory/native-folder-picker";
 import {
+  DEFAULT_GRANT_POLICY,
+} from "@/shared/project-memory/grant-policy";
+import {
   getSharedProjectMemoryStore,
   resetSharedProjectMemoryStoreForTests,
 } from "@/shared/project-memory/runtime";
 import type { ChangeEvent, MatterWatchSet } from "@/shared/project-memory/types";
+import type { SourceGrantManager } from "@/shared/project-memory/grants";
+
+/** PR-03: preflight confirm then connect. */
+async function connectAfterPreflight(
+  selectionId: string,
+  opts: { store: FolderSelectionStore; manager: SourceGrantManager },
+) {
+  opts.store.markPreflight(selectionId, {
+    policyVersion: DEFAULT_GRANT_POLICY.version,
+    fingerprint: "test-report",
+  });
+  const { confirmToken } = opts.store.confirmPreflight(
+    selectionId,
+    DEFAULT_GRANT_POLICY.version,
+    "test-report",
+  );
+  return connectFromSelectionId(selectionId, {
+    store: opts.store,
+    manager: opts.manager,
+    confirmToken,
+  });
+}
 
 class FakeWatcher implements ParcelWatcher {
   private callback?: (
@@ -118,9 +143,24 @@ describe("D-50 native folder picker + connection seam", () => {
     expect(store.size()).toBe(1);
     expect(getSharedProjectMemoryStore().listActiveLocalFolderGrants()).toEqual([]);
 
-    const first = store.consume(selected.selectionId);
+    // Without preflight confirm, consume fails.
+    expect(() => store.consume(selected.selectionId)).toThrow(
+      /preflight|confirm/i,
+    );
+    store.markPreflight(selected.selectionId, {
+      policyVersion: DEFAULT_GRANT_POLICY.version,
+      fingerprint: "test-report",
+    });
+    const { confirmToken } = store.confirmPreflight(
+      selected.selectionId,
+      DEFAULT_GRANT_POLICY.version,
+      "test-report",
+    );
+    const first = store.consume(selected.selectionId, { confirmToken });
     expect(first.folderName).toBe("my-project");
-    expect(() => store.consume(selected.selectionId)).toThrow(SourceGrantStateError);
+    expect(() =>
+      store.consume(selected.selectionId, { confirmToken }),
+    ).toThrow(SourceGrantStateError);
 
     const selected2 = await openFolderPickerForReview({
       runner: async () => ({
@@ -145,10 +185,21 @@ describe("D-50 native folder picker + connection seam", () => {
       canonicalRoot: selected2.displayPath,
       folderName: "my-project",
     });
-    now += 200;
-    expect(() => expiredStore.consume(review.selectionId)).toThrow(
-      /missing or expired/i,
+    expiredStore.markPreflight(review.selectionId, {
+      policyVersion: DEFAULT_GRANT_POLICY.version,
+      fingerprint: "test-report",
+    });
+    expiredStore.confirmPreflight(
+      review.selectionId,
+      DEFAULT_GRANT_POLICY.version,
+      "test-report",
     );
+    now += 200;
+    expect(() =>
+      expiredStore.consume(review.selectionId, {
+        confirmToken: "stale",
+      }),
+    ).toThrow(/missing or expired/i);
   });
 
   it("same canonical folder reuses project id and grant; root sentinel + safe excludes", async () => {
@@ -168,11 +219,15 @@ describe("D-50 native folder picker + connection seam", () => {
     expect(pick1.status).toBe("selected");
     if (pick1.status !== "selected") return;
 
-    const first = await connectFromSelectionId(pick1.selectionId, { store, manager });
+    const first = await connectAfterPreflight(pick1.selectionId, {
+      store,
+      manager,
+    });
     const expectedProjectId = projectIdFromCanonicalFolder(pick1.displayPath);
     expect(first.projectId).toBe(expectedProjectId);
     expect(first.grant.projectId).toBe(expectedProjectId);
     expect(first.grant.rootPath).toBe(pick1.displayPath);
+    expect(first.grant.policyVersion).toBe(DEFAULT_GRANT_POLICY.version);
     expect(first.watchSet.includePathPrefixes).toEqual([ROOT_SENTINEL_INCLUDE]);
     expect(first.watchSet.excludePathPrefixes).toEqual([
       ...SAFE_DEFAULT_EXCLUDE_PREFIXES,
@@ -188,7 +243,10 @@ describe("D-50 native folder picker + connection seam", () => {
     expect(pick2.status).toBe("selected");
     if (pick2.status !== "selected") return;
 
-    const second = await connectFromSelectionId(pick2.selectionId, { store, manager });
+    const second = await connectAfterPreflight(pick2.selectionId, {
+      store,
+      manager,
+    });
     expect(second.projectId).toBe(first.projectId);
     expect(second.grant.id).toBe(first.grant.id);
     expect(second.matter.id).toBe(first.matter.id);
@@ -213,18 +271,16 @@ describe("D-50 native folder picker + connection seam", () => {
     expect(pick.status).toBe("selected");
     if (pick.status !== "selected") return;
 
-    const connected = await connectFromSelectionId(pick.selectionId, {
+    const connected = await connectAfterPreflight(pick.selectionId, {
       store,
       manager,
     });
     expect(connected.reconcile.ran).toBe(true);
     expect(connected.reconcile.observed).toBeGreaterThan(0);
-    // Observed reconcile may include excluded noise; analysis ids must not.
-    expect(connected.reconcile.observed).toBeGreaterThan(
-      connected.eventIds.length,
-    );
+    // P0-1 / PR-03: policy filters BEFORE body read. node_modules never enters
+    // reconcile observed, so observed counts only eligible sources (not noise).
+    expect(connected.reconcile.observed).toBe(connected.eventIds.length);
     expect(connected.reconcile.matchedEventCount).toBe(connected.eventIds.length);
-    expect(connected.reconcile.unmatchedTraceCount).toBeGreaterThan(0);
     expect(connected.eventIds.length).toBeGreaterThan(0);
     expect(connected.matchedEventIds).toEqual(connected.eventIds);
     expect(connected.memory.events.every((e) => e.id)).toBe(true);
@@ -318,9 +374,13 @@ describe("D-50 native folder picker + connection seam", () => {
     expect(pick.status).toBe("selected");
     if (pick.status !== "selected") return;
 
-    const first = await connectFromSelectionId(pick.selectionId, { store, manager });
+    const first = await connectAfterPreflight(pick.selectionId, {
+      store,
+      manager,
+    });
     expect(first.eventIds.length).toBeGreaterThan(0);
-    expect(first.reconcile.observed).toBeGreaterThan(first.eventIds.length);
+    // node_modules excluded pre-read; observed equals eligible matched events
+    expect(first.reconcile.observed).toBe(first.eventIds.length);
     await manager.stopAll();
 
     // Disk changed while stopped — continue must reconcile into matched eventIds.

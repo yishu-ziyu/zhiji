@@ -11,6 +11,32 @@ import { ProjectAccessError, ProjectScopeError } from "./project-scope";
 import {
   REDACTED_CROSS_PROJECT_HINT_MESSAGE,
 } from "@/shared/types/knowledge";
+import {
+  ensureLocalSession,
+  sessionCookieHeader,
+} from "@/shared/security/local-session";
+
+function authedJsonRequest(
+  url: string,
+  method: string,
+  body: unknown,
+): NextRequest {
+  const session = ensureLocalSession();
+  const cookies = sessionCookieHeader(session)
+    .map((c) => c.split(";")[0])
+    .join("; ");
+  return new NextRequest(url, {
+    method,
+    headers: {
+      host: "127.0.0.1:3000",
+      origin: "http://127.0.0.1:3000",
+      cookie: cookies,
+      "x-csrf-token": session.csrfToken,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
 
 describe("T-19 S2 project source grant + redacted hint", () => {
   let tmpDir: string;
@@ -222,15 +248,10 @@ describe("T-19 S2 project source grant + redacted hint", () => {
     expect(emptyBody.hint).toBeNull();
 
     const created = await grantsRoute.POST(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            sourceProjectId: source.id,
-            approvedBy: "自己",
-          }),
-        },
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "POST",
+        { sourceProjectId: source.id, approvedBy: "自己" },
       ),
       { params: Promise.resolve({ id: host.id }) },
     );
@@ -267,14 +288,12 @@ describe("T-19 S2 project source grant + redacted hint", () => {
     expect((await foreignList.json()).grants).toEqual([]);
 
     const denied = await grantsRoute.PATCH(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${foreign.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${foreign.id}/source-grants`,
+        "PATCH",
         {
-          method: "PATCH",
-          body: JSON.stringify({
-            grantId: grant.id,
-            action: "disable",
-          }),
+          grantId: grant.id,
+          action: "disable",
         },
       ),
       { params: Promise.resolve({ id: foreign.id }) },
@@ -282,14 +301,12 @@ describe("T-19 S2 project source grant + redacted hint", () => {
     expect([403, 404]).toContain(denied.status);
 
     const disabled = await grantsRoute.PATCH(
-      new NextRequest(
-        `http://test/api/knowledge/projects/${host.id}/source-grants`,
+      authedJsonRequest(
+        `http://127.0.0.1:3000/api/knowledge/projects/${host.id}/source-grants`,
+        "PATCH",
         {
-          method: "PATCH",
-          body: JSON.stringify({
-            grantId: grant.id,
-            action: "disable",
-          }),
+          grantId: grant.id,
+          action: "disable",
         },
       ),
       { params: Promise.resolve({ id: host.id }) },
