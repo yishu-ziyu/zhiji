@@ -7,7 +7,6 @@ import {
   BackgroundVariant,
   Controls,
   Handle,
-  MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -50,6 +49,7 @@ import {
   applyDagreLayout,
   type LayoutDirection,
 } from "../lib/canvas-auto-layout";
+import { HoverMiniMap } from "./HoverMiniMap";
 import styles from "../project-canvas.module.css";
 
 /** Live folder-Agent bridge (tool receipts → node phase + canvas pulse). */
@@ -832,12 +832,7 @@ function CanvasFlow({
           size={1.1}
           color="rgba(180, 184, 190, 0.45)"
         />
-        <MiniMap
-          className={styles.rfMiniMap}
-          position="bottom-left"
-          pannable
-          zoomable
-          nodeStrokeWidth={2}
+        <HoverMiniMap
           nodeColor={(node) => {
             const data = node.data as GraphNodeData | undefined;
             if (!data) return "#d0d3d8";
@@ -848,7 +843,6 @@ function CanvasFlow({
             if (data.ref.kind === "agent") return "#3d6fd8";
             return "#9aa3ad";
           }}
-          maskColor="rgba(246, 246, 243, 0.72)"
         />
         <Controls
           showInteractive={false}
