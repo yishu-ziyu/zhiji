@@ -6,11 +6,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 describe("knowledge repository persistence", () => {
   let tmpDir: string;
   let previousDataDir: string | undefined;
+  let previousSeedDemo: string | undefined;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fc-opc-knowledge-"));
     previousDataDir = process.env.KNOWLEDGE_DATA_DIR;
+    previousSeedDemo = process.env.SEED_DEMO;
     process.env.KNOWLEDGE_DATA_DIR = tmpDir;
+    // Existing suite exercises the demo-seed path; empty-path cases unset this.
+    process.env.SEED_DEMO = "1";
     // Fresh module state is not required; files are authoritative.
   });
 
@@ -20,6 +24,11 @@ describe("knowledge repository persistence", () => {
     } else {
       process.env.KNOWLEDGE_DATA_DIR = previousDataDir;
     }
+    if (previousSeedDemo === undefined) {
+      delete process.env.SEED_DEMO;
+    } else {
+      process.env.SEED_DEMO = previousSeedDemo;
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -28,7 +37,20 @@ describe("knowledge repository persistence", () => {
     return import("./repository");
   }
 
-  it("seeds when store is empty", async () => {
+  it("does not seed by default on empty store (contract 015)", async () => {
+    delete process.env.SEED_DEMO;
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    expect(repo.isDemoSeedEnabled()).toBe(false);
+    expect(repo.listProjects()).toEqual([]);
+    expect(repo.listCards()).toEqual([]);
+    expect(repo.listActions()).toEqual([]);
+    expect(fs.existsSync(path.join(tmpDir, "cards.json"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "projects.json"))).toBe(false);
+  });
+
+  it("seeds only when SEED_DEMO=1", async () => {
+    process.env.SEED_DEMO = "1";
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
     const cards = repo.listCards();
@@ -36,6 +58,64 @@ describe("knowledge repository persistence", () => {
     expect(fs.existsSync(path.join(tmpDir, "cards.json"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "actions.json"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "projects.json"))).toBe(true);
+    const demo = repo.listProjects().find((p) => p.id === repo.DEFAULT_PROJECT_ID);
+    expect(demo?.name).toContain("示例");
+  });
+
+  it("first-user empty path: create project, add file, persist across reload", async () => {
+    delete process.env.SEED_DEMO;
+    const repo = await loadRepo();
+    const {
+      writeProjectMaterial,
+      listProjectMaterials,
+      readProjectMaterial,
+    } = await import("./materials");
+    repo.resetKnowledgeStoreForTests();
+
+    expect(repo.listProjects()).toEqual([]);
+    expect(() =>
+      repo.addProject({ name: "   " }),
+    ).toThrow(/项目名称不能为空/);
+
+    const project = repo.addProject({
+      name: "我的首个项目",
+      summary: "空环境真实接入",
+    });
+    expect(project.id).not.toBe(repo.DEFAULT_PROJECT_ID);
+    expect(repo.listProjects().map((p) => p.id)).toEqual([project.id]);
+
+    const material = writeProjectMaterial(
+      project.id,
+      "kickoff-notes.md",
+      "# 开工\n\n这是用户真实文件内容 token-alpha-915",
+    );
+    expect(material.projectId).toBe(project.id);
+    const card = repo.addCard({
+      projectId: project.id,
+      title: material.name,
+      content: "# 开工\n\n这是用户真实文件内容 token-alpha-915",
+      source: "doc",
+      sourceFileId: material.id,
+    });
+    expect(card.projectId).toBe(project.id);
+    expect(card.sourceFileId).toBe(material.id);
+
+    // Simulate process restart: same data dir, fresh in-memory read from disk.
+    expect(repo.listProjects().some((p) => p.id === project.id)).toBe(true);
+    expect(listProjectMaterials(project.id).map((f) => f.id)).toContain(
+      "kickoff-notes.md",
+    );
+    const reopened = readProjectMaterial(project.id, "kickoff-notes.md");
+    expect(reopened?.content).toContain("token-alpha-915");
+    expect(
+      repo
+        .listCards({ projectId: project.id })
+        .some((c) => c.sourceFileId === "kickoff-notes.md"),
+    ).toBe(true);
+    const hits = repo.searchProjectRecords(project.id, "token-alpha-915", 8);
+    expect(hits.some((h) => h.ref.kind === "card" && h.ref.id === card.id)).toBe(
+      true,
+    );
   });
 
   it("fails closed when persisted JSON is corrupt instead of reseeding over it", async () => {
