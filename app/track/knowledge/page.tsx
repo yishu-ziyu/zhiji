@@ -137,6 +137,7 @@ export default function KnowledgePage() {
   const snapshotRequestRef = useRef(0);
   const cardsRequestRef = useRef(0);
   const workRequestRef = useRef(0);
+  const materialsRequestRef = useRef(0);
   const footprintRequestRef = useRef(0);
   const searchRequestRef = useRef(0);
   const navigationRequestRef = useRef(0);
@@ -174,6 +175,21 @@ export default function KnowledgePage() {
       `/api/knowledge/add?projectId=${encodeURIComponent(nextProjectId)}`,
     );
     if (requestId === cardsRequestRef.current) setProjectCards(data.cards);
+  }, []);
+
+  /** E1/P1: know whether project has materials so empty guide can de-escalate. */
+  const loadProjectMaterials = useCallback(async (nextProjectId: string) => {
+    const requestId = ++materialsRequestRef.current;
+    try {
+      const data = await apiJson<{
+        materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
+      }>(`/api/knowledge/projects/${nextProjectId}/materials`);
+      if (requestId === materialsRequestRef.current) {
+        setMaterials(data.materials);
+      }
+    } catch {
+      if (requestId === materialsRequestRef.current) setMaterials([]);
+    }
   }, []);
 
   const loadMyOpenWork = useCallback(async (nextProjectId: string) => {
@@ -240,6 +256,7 @@ export default function KnowledgePage() {
           await Promise.all([
             loadSnapshot(selected.id, focus),
             loadProjectCards(selected.id),
+            loadProjectMaterials(selected.id),
             loadMyOpenWork(selected.id),
             loadFootprint(),
           ]);
@@ -248,6 +265,7 @@ export default function KnowledgePage() {
           activeProjectIdRef.current = "";
           setProjectId("");
           setSnapshot(null);
+          setMaterials([]);
           setLoading(false);
           setCreateProjectOpen(true);
         }
@@ -259,7 +277,7 @@ export default function KnowledgePage() {
     return () => {
       active = false;
     };
-  }, [loadFootprint, loadMyOpenWork, loadProjectCards, loadSnapshot]);
+  }, [loadFootprint, loadMyOpenWork, loadProjectCards, loadProjectMaterials, loadSnapshot]);
 
   useEffect(() => {
     function handlePopState() {
@@ -279,6 +297,7 @@ export default function KnowledgePage() {
       setSearchResults([]);
       setSearching(false);
       setProjectCards([]);
+      setMaterials([]);
       setMyOpenWork([]);
       setFootprint([]);
       navigationRequestRef.current += 1;
@@ -287,13 +306,14 @@ export default function KnowledgePage() {
       void Promise.all([
         loadSnapshot(selected.id, focus),
         loadProjectCards(selected.id),
+        loadProjectMaterials(selected.id),
         loadMyOpenWork(selected.id),
         loadFootprint(),
       ]);
     }
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [loadFootprint, loadMyOpenWork, loadProjectCards, loadSnapshot, projects]);
+  }, [loadFootprint, loadMyOpenWork, loadProjectCards, loadProjectMaterials, loadSnapshot, projects]);
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
@@ -880,6 +900,7 @@ export default function KnowledgePage() {
     setProjectId(id);
     setSnapshot(null);
     setProjectCards([]);
+    setMaterials([]);
     setMyOpenWork([]);
     setFootprint([]);
     setQuery("");
@@ -893,6 +914,7 @@ export default function KnowledgePage() {
     await Promise.all([
       loadSnapshot(id, focus),
       loadProjectCards(id),
+      loadProjectMaterials(id),
       loadMyOpenWork(id),
       loadFootprint(),
     ]);
@@ -1253,6 +1275,9 @@ export default function KnowledgePage() {
   }
 
   const isEmptyWorkspace = !loading && projects.length === 0;
+  /** P1/E1: empty project materials → show place-materials guide (de-escalate when any file). */
+  const isEmptyProjectMaterials =
+    Boolean(projectId) && !loading && !isEmptyWorkspace && materials.length === 0;
 
   return (
     <main
@@ -1442,46 +1467,111 @@ export default function KnowledgePage() {
 
       {isEmptyWorkspace ? (
         <section
-          className={styles.createModal}
+          className={styles.ingestGuide}
           data-testid="empty-workspace"
-          style={{
-            margin: "48px auto",
-            maxWidth: 480,
-            alignSelf: "center",
-            gridColumn: "1 / -1",
-          }}
+          aria-label="空工作台：投放区"
         >
-          <header>
-            <div>
-              <span>首用户接入</span>
-              <h2>还没有项目</h2>
-            </div>
+          <header className={styles.ingestGuideHeader}>
+            <span>首用户接入</span>
+            <h2>还没有项目</h2>
           </header>
-          <p style={{ margin: "0 0 12px", color: "#5c5f66", fontSize: 14, lineHeight: 1.55 }}>
-            当前环境是空的：没有预置项目，也没有示例任务。可拖入文件夹（每个顶层夹=一个项目），或拖/传单文件——单文件会先请你命名项目，确认后再收下。
+          <p className={styles.ingestGuideLead}>
+            这里是知识工作台，不是任务看板。把本地文件或文件夹放进来，才能开始跟进。
           </p>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              className={styles.newButton}
-              data-testid="empty-create-project"
-              onClick={() => setCreateProjectOpen(true)}
-            >
-              <Plus size={18} />新建项目
-            </button>
-            <button
-              type="button"
-              className={styles.newButton}
-              data-testid="empty-upload-file"
-              onClick={() => workspaceUploadRef.current?.click()}
-            >
-              <Upload size={18} />上传文件
-            </button>
+          <div
+            className={styles.ingestDropZone}
+            data-testid="empty-drop-zone"
+            data-affordance="drop-upload"
+          >
+            <Upload size={28} aria-hidden="true" />
+            <strong>拖入文件或文件夹到此处</strong>
+            <small>
+              单文件会先请你命名项目；每个顶层文件夹 = 一个项目。也可点下方按钮。
+            </small>
+            <div className={styles.ingestGuideActions}>
+              <button
+                type="button"
+                className={styles.newButton}
+                data-testid="empty-create-project"
+                onClick={() => setCreateProjectOpen(true)}
+              >
+                <Plus size={18} />新建项目
+              </button>
+              <button
+                type="button"
+                className={styles.newButton}
+                data-testid="empty-upload-file"
+                onClick={() => workspaceUploadRef.current?.click()}
+              >
+                <Upload size={18} />上传文件
+              </button>
+              <button
+                type="button"
+                className={styles.newButton}
+                data-testid="empty-upload-folder"
+                onClick={() => workspaceFolderUploadRef.current?.click()}
+              >
+                <FilePlus2 size={18} />上传文件夹
+              </button>
+            </div>
           </div>
         </section>
       ) : (
         <>
-          <ProjectCanvas snapshot={snapshot} loading={loading} onFocus={handleFocus} />
+          {isEmptyProjectMaterials ? (
+            <section
+              className={styles.ingestGuide}
+              data-testid="project-next-guide"
+              aria-label="下一步：放进资料"
+            >
+              <header className={styles.ingestGuideHeader}>
+                <span>知识工作台</span>
+                <h2>下一步：放进资料</h2>
+              </header>
+              <p className={styles.ingestGuideLead}>
+                项目已建好，但还没有材料。先拖入或上传文件/文件夹，再谈跟进与检索——不是先去建任务看板。
+              </p>
+              <div
+                className={styles.ingestDropZone}
+                data-testid="project-drop-zone"
+                data-affordance="drop-upload"
+              >
+                <Upload size={28} aria-hidden="true" />
+                <strong>拖入文件或文件夹到此处</strong>
+                <small>
+                  文件进入当前项目；顶层文件夹会各建为新项目。也可点上传。
+                </small>
+                <div className={styles.ingestGuideActions}>
+                  <button
+                    type="button"
+                    className={styles.newButton}
+                    data-testid="guide-upload-file"
+                    onClick={() => workspaceUploadRef.current?.click()}
+                  >
+                    <Upload size={18} />上传文件
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.newButton}
+                    data-testid="guide-upload-folder"
+                    onClick={() => workspaceFolderUploadRef.current?.click()}
+                  >
+                    <FilePlus2 size={18} />上传文件夹
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.newButton}
+                    data-testid="guide-open-materials"
+                    onClick={() => void openMaterialsPanel()}
+                  >
+                    <FilePlus2 size={18} />打开材料区
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : (
+            <ProjectCanvas snapshot={snapshot} loading={loading} onFocus={handleFocus} />
+          )}
           <ProjectInspector
             key={`${snapshot?.focus.kind ?? "none"}:${snapshot?.focus.id ?? "none"}:${snapshot?.inspector.workItem?.updatedAt ?? "static"}:${checkpointOpen ? "checkpoint" : "view"}`}
             snapshot={snapshot}

@@ -51,6 +51,98 @@
   letter-spacing: 0.01em;
 }
 
+/* E1/P1: visible ingest affordance (empty workspace or empty project). */
+.ingestGuide {
+  grid-column: 1 / -1;
+  grid-row: 2 / 4;
+  align-self: stretch;
+  justify-self: stretch;
+  margin: 12px 18px 18px;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px 24px 24px;
+  border: 1px solid #e3e3de;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 28px rgba(36, 39, 44, 0.04);
+}
+
+.ingestGuideHeader {
+  display: grid;
+  gap: 4px;
+}
+
+.ingestGuideHeader span {
+  color: #6f7278;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ingestGuideHeader h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: #17181a;
+}
+
+.ingestGuideLead {
+  margin: 0;
+  max-width: 52ch;
+  color: #5c5f66;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.ingestDropZone {
+  flex: 1;
+  min-height: 200px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 28px 20px;
+  border: 2px dashed rgba(47, 111, 235, 0.45);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(245, 248, 253, 0.95), rgba(250, 250, 248, 0.6));
+  color: #1f3f7a;
+  text-align: center;
+}
+
+.ingestDropZone strong {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.ingestDropZone small {
+  max-width: 42ch;
+  color: #5c5f66;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ingestGuideActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+/* When guide sits in project layout (with nav + inspector still visible). */
+.workspace > .ingestGuide:not([data-testid="empty-workspace"]) {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0 10px 0 14px;
+}
+
 .navigator {
   position: relative;
   grid-column: 1;
