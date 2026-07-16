@@ -7,6 +7,7 @@ import {
   resolveUnderstanding,
 } from "@/shared/project-memory/reconstruct";
 import type { UnderstandingBody } from "@/shared/project-memory/types";
+import { checkLocalTrustFromRequest } from "@/shared/security/local-session";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -15,6 +16,10 @@ type Ctx = { params: Promise<{ id: string }> };
  * Requires projectId + matterId (+ path candidateId); edit_accept needs editedBody.
  */
 export async function POST(req: NextRequest, ctx: Ctx) {
+  const trust = checkLocalTrustFromRequest(req);
+  if (!trust.ok) {
+    return NextResponse.json({ error: trust.error }, { status: trust.status });
+  }
   const { id: candidateRevisionId } = await ctx.params;
   try {
     const body = (await req.json()) as {
