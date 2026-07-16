@@ -1,6 +1,13 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type DragEvent,
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   Bell,
   Bot,
@@ -10,6 +17,7 @@ import {
   Plus,
   Search,
   Sparkles,
+  Upload,
   X,
 } from "lucide-react";
 import type {
@@ -102,9 +110,14 @@ export default function KnowledgePage() {
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectSummary, setNewProjectSummary] = useState("");
+  /** A3: files received before a project exists; ingested after create confirms. */
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [dragOver, setDragOver] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const workspaceUploadRef = useRef<HTMLInputElement>(null);
+  const dragDepthRef = useRef(0);
   const snapshotRequestRef = useRef(0);
   const cardsRequestRef = useRef(0);
   const workRequestRef = useRef(0);
@@ -318,6 +331,78 @@ export default function KnowledgePage() {
     }
   }
 
+  async function uploadFileToProject(targetProjectId: string, file: File) {
+    const content = await file.text();
+    const data = await apiJson<{
+      material: { id: string; name: string; projectId: string };
+      card: KnowledgeCard;
+    }>(`/api/knowledge/projects/${targetProjectId}/materials`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: file.name, content }),
+    });
+    return { ...data, content };
+  }
+
+  /** A1/A2 shared path: with current project → ingest; without → A3 create-first. */
+  async function handleIncomingFiles(files: FileList | File[] | null | undefined) {
+    const list = Array.from(files ?? []).filter((file) => file && file.name);
+    if (list.length === 0) return;
+
+    const targetId = projectId || activeProjectIdRef.current;
+    if (!targetId) {
+      // A3=甲: hold files, name project, then ingest on confirm.
+      setPendingFiles(list);
+      setCreateProjectOpen(true);
+      setError(null);
+      setNotice(
+        list.length === 1
+          ? `请先新建并命名项目，确认后将收下「${list[0].name}」`
+          : `请先新建并命名项目，确认后将收下 ${list.length} 个文件`,
+      );
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      let lastName = "";
+      let lastCardId = "";
+      for (const file of list) {
+        const data = await uploadFileToProject(targetId, file);
+        lastName = data.material.name;
+        lastCardId = data.card.id;
+        if (targetId === activeProjectIdRef.current) {
+          setMaterialView({
+            name: data.material.name,
+            content: data.content,
+            preview: false,
+          });
+        }
+      }
+      if (targetId === activeProjectIdRef.current) {
+        const materialList = await apiJson<{
+          materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
+        }>(`/api/knowledge/projects/${targetId}/materials`);
+        setMaterials(materialList.materials);
+        await loadProjectCards(targetId);
+        if (lastCardId) {
+          await loadSnapshot(targetId, { kind: "card", id: lastCardId });
+        }
+      }
+      setMaterialsOpen(true);
+      setBusy(false);
+      setNotice(
+        list.length === 1
+          ? `已加入当前项目：${lastName}`
+          : `已加入当前项目 ${list.length} 个文件`,
+      );
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "加入文件失败");
+      setBusy(false);
+    }
+  }
+
   async function handleCreateProject(event: FormEvent) {
     event.preventDefault();
     const name = newProjectName.trim();
@@ -327,6 +412,7 @@ export default function KnowledgePage() {
     }
     setBusy(true);
     setError(null);
+    const filesToIngest = pendingFiles;
     try {
       const data = await apiJson<{ project: Project }>(
         "/api/knowledge/projects",
@@ -342,49 +428,78 @@ export default function KnowledgePage() {
       setProjects((prev) => [data.project, ...prev.filter((p) => p.id !== data.project.id)]);
       setNewProjectName("");
       setNewProjectSummary("");
+      setPendingFiles([]);
       setCreateProjectOpen(false);
+      await handleSelectProject(data.project.id);
+
+      if (filesToIngest.length > 0) {
+        let lastName = "";
+        let lastCardId = "";
+        for (const file of filesToIngest) {
+          const uploaded = await uploadFileToProject(data.project.id, file);
+          lastName = uploaded.material.name;
+          lastCardId = uploaded.card.id;
+          setMaterialView({
+            name: uploaded.material.name,
+            content: uploaded.content,
+            preview: false,
+          });
+        }
+        const materialList = await apiJson<{
+          materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
+        }>(`/api/knowledge/projects/${data.project.id}/materials`);
+        setMaterials(materialList.materials);
+        setMaterialsOpen(true);
+        await loadProjectCards(data.project.id);
+        if (lastCardId) {
+          await loadSnapshot(data.project.id, { kind: "card", id: lastCardId });
+        }
+        setBusy(false);
+        setNotice(
+          filesToIngest.length === 1
+            ? `项目已创建，并收下「${lastName}」`
+            : `项目已创建，并收下 ${filesToIngest.length} 个文件`,
+        );
+        return;
+      }
+
       setBusy(false);
       setNotice("已创建项目");
-      await handleSelectProject(data.project.id);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "创建项目失败");
       setBusy(false);
     }
   }
 
+  function handleWorkspaceDragEnter(event: DragEvent) {
+    if (![...event.dataTransfer.types].includes("Files")) return;
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setDragOver(true);
+  }
+
+  function handleWorkspaceDragOver(event: DragEvent) {
+    if (![...event.dataTransfer.types].includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleWorkspaceDragLeave(event: DragEvent) {
+    if (![...event.dataTransfer.types].includes("Files")) return;
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragOver(false);
+  }
+
+  function handleWorkspaceDrop(event: DragEvent) {
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setDragOver(false);
+    void handleIncomingFiles(event.dataTransfer.files);
+  }
+
   async function handleUploadMaterialFile(file: File) {
-    if (!projectId) return;
-    const mutation = beginMutation();
-    try {
-      const content = await file.text();
-      const data = await apiJson<{
-        material: { id: string; name: string };
-        card: KnowledgeCard;
-      }>(`/api/knowledge/projects/${mutation.projectId}/materials`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: file.name, content }),
-      });
-      if (!mutationIsCurrent(mutation)) return;
-      const list = await apiJson<{
-        materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
-      }>(`/api/knowledge/projects/${mutation.projectId}/materials`);
-      if (!mutationIsCurrent(mutation)) return;
-      setMaterials(list.materials);
-      await loadProjectCards(mutation.projectId);
-      if (!mutationIsCurrent(mutation)) return;
-      setMaterialView({
-        name: data.material.name,
-        content,
-        preview: false,
-      });
-      setBusy(false);
-      setNotice(`已加入项目：${data.material.name}`);
-    } catch (nextError) {
-      if (!mutationIsCurrent(mutation)) return;
-      setError(nextError instanceof Error ? nextError.message : "上传文件失败");
-      setBusy(false);
-    }
+    await handleIncomingFiles([file]);
   }
 
   function updateUrl(nextProjectId: string, focus: CanvasNodeRef, replace = false) {
@@ -817,7 +932,31 @@ export default function KnowledgePage() {
   const isEmptyWorkspace = !loading && projects.length === 0;
 
   return (
-    <main className={styles.workspace} data-testid="project-canvas-shell">
+    <main
+      className={styles.workspace}
+      data-testid="project-canvas-shell"
+      data-drag-over={dragOver ? "true" : "false"}
+      onDragEnter={handleWorkspaceDragEnter}
+      onDragOver={handleWorkspaceDragOver}
+      onDragLeave={handleWorkspaceDragLeave}
+      onDrop={handleWorkspaceDrop}
+    >
+      <input
+        ref={workspaceUploadRef}
+        type="file"
+        data-testid="workspace-upload-file"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const files = event.target.files;
+          event.target.value = "";
+          void handleIncomingFiles(files);
+        }}
+      />
+      {dragOver ? (
+        <div className={styles.dropOverlay} data-testid="workspace-drop-overlay" aria-hidden="true">
+          <span>{projectId ? "松开以加入当前项目" : "松开后先新建并命名项目，再收下文件"}</span>
+        </div>
+      ) : null}
       <ProjectNavigator
         key={`${projectId}:${footprintMode}:${footprintRevision}`}
         projects={projects}
@@ -886,6 +1025,17 @@ export default function KnowledgePage() {
         <div className={styles.topbarActions}>
           <button
             type="button"
+            className={styles.iconButton}
+            data-testid="workspace-upload-button"
+            aria-label="上传本地文件"
+            title={projectId ? "上传到当前项目" : "上传：将先新建项目再收下"}
+            disabled={busy}
+            onClick={() => workspaceUploadRef.current?.click()}
+          >
+            <Upload size={18} />
+          </button>
+          <button
+            type="button"
             className={styles.copilotButton}
             onClick={() => {
               const first = snapshot?.attention[0];
@@ -916,6 +1066,15 @@ export default function KnowledgePage() {
                   }}
                 >
                   <Plus size={16} /><span><strong>新建项目</strong><small>名称必填，真实接入</small></span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    workspaceUploadRef.current?.click();
+                  }}
+                >
+                  <Upload size={16} /><span><strong>上传本地文件</strong><small>进当前项目；无项目则先命名</small></span>
                 </button>
                 <button type="button" onClick={() => void requestCheckpoint()} disabled={!projectId}>
                   <Bot size={16} /><span><strong>记录当前状态</strong><small>保存目标和下一步</small></span>
@@ -950,16 +1109,26 @@ export default function KnowledgePage() {
             </div>
           </header>
           <p style={{ margin: "0 0 12px", color: "#5c5f66", fontSize: 14, lineHeight: 1.55 }}>
-            当前环境是空的：没有预置项目，也没有示例任务。创建你的第一个项目后，再加入本地文件。
+            当前环境是空的：没有预置项目，也没有示例任务。可拖入文件或点上传——会先请你命名项目，确认后再收下。
           </p>
-          <button
-            type="button"
-            className={styles.newButton}
-            data-testid="empty-create-project"
-            onClick={() => setCreateProjectOpen(true)}
-          >
-            <Plus size={18} />新建项目
-          </button>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className={styles.newButton}
+              data-testid="empty-create-project"
+              onClick={() => setCreateProjectOpen(true)}
+            >
+              <Plus size={18} />新建项目
+            </button>
+            <button
+              type="button"
+              className={styles.newButton}
+              data-testid="empty-upload-file"
+              onClick={() => workspaceUploadRef.current?.click()}
+            >
+              <Upload size={18} />上传文件
+            </button>
+          </div>
         </section>
       ) : (
         <>
@@ -1001,17 +1170,29 @@ export default function KnowledgePage() {
             <header>
               <div>
                 <span>真实项目</span>
-                <h2>新建项目</h2>
+                <h2>{pendingFiles.length > 0 ? "先命名项目再收文件" : "新建项目"}</h2>
               </div>
               <button
                 type="button"
                 aria-label="关闭新建项目"
-                onClick={() => setCreateProjectOpen(false)}
-                disabled={projects.length === 0}
+                onClick={() => {
+                  setCreateProjectOpen(false);
+                  if (projects.length === 0) setPendingFiles([]);
+                }}
+                disabled={projects.length === 0 && pendingFiles.length === 0}
               >
                 <X size={16} />
               </button>
             </header>
+            {pendingFiles.length > 0 ? (
+              <p
+                data-testid="pending-files-hint"
+                style={{ margin: "0 0 8px", color: "#5c5f66", fontSize: 13, lineHeight: 1.5 }}
+              >
+                确认创建后，将收下：
+                {pendingFiles.map((file) => file.name).join("、")}
+              </p>
+            ) : null}
             <label>
               <span>项目名称（必填）</span>
               <input
@@ -1033,13 +1214,16 @@ export default function KnowledgePage() {
             <footer>
               <button
                 type="button"
-                onClick={() => setCreateProjectOpen(false)}
-                disabled={projects.length === 0}
+                onClick={() => {
+                  setCreateProjectOpen(false);
+                  if (projects.length === 0) setPendingFiles([]);
+                }}
+                disabled={projects.length === 0 && pendingFiles.length === 0}
               >
                 取消
               </button>
               <button type="submit" disabled={busy || !newProjectName.trim()}>
-                创建项目
+                {pendingFiles.length > 0 ? "创建并收下文件" : "创建项目"}
               </button>
             </footer>
           </form>

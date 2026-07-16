@@ -55,7 +55,7 @@ it("rejects empty project name", async () => {
   expect(listProjects()).toEqual([]);
 });
 
-it("creates a real project, attaches a file under that project id, and survives reload", async () => {
+it("A3=甲 then A1/A2/A4: create named project, attach file to that id, reload still owns it", async () => {
   const created = await createProjectPost(
     new NextRequest("http://test/api/knowledge/projects", {
       method: "POST",
@@ -127,4 +127,47 @@ it("creates a real project, attaches a file under that project id, and survives 
       (card) => card.sourceFileId === "brief.md",
     ),
   ).toBe(true);
+
+  // B1: empty env still has no default seed project masquerading as user work.
+  expect(listProjects().every((p) => p.id !== "project-fc-opc-ibot" || p.name.includes("示例"))).toBe(
+    true,
+  );
+  expect(listProjects()).toHaveLength(1);
+});
+
+it("A1 with current project: second file stays under same projectId", async () => {
+  const created = await createProjectPost(
+    new NextRequest("http://test/api/knowledge/projects", {
+      method: "POST",
+      body: JSON.stringify({ name: "进行中项目" }),
+    }),
+  );
+  const { project } = (await created.json()) as { project: { id: string } };
+
+  await materialsPost(
+    new NextRequest(`http://test/api/knowledge/projects/${project.id}/materials`, {
+      method: "POST",
+      body: JSON.stringify({ name: "a.md", content: "alpha-file" }),
+    }),
+    { params: Promise.resolve({ id: project.id }) },
+  );
+  await materialsPost(
+    new NextRequest(`http://test/api/knowledge/projects/${project.id}/materials`, {
+      method: "POST",
+      body: JSON.stringify({ name: "b.md", content: "beta-file" }),
+    }),
+    { params: Promise.resolve({ id: project.id }) },
+  );
+
+  const listed = await materialsGet(
+    new NextRequest(`http://test/api/knowledge/projects/${project.id}/materials`),
+    { params: Promise.resolve({ id: project.id }) },
+  );
+  const body = (await listed.json()) as {
+    materials: Array<{ id: string; projectId: string }>;
+  };
+  expect(body.materials).toHaveLength(2);
+  expect(body.materials.every((m) => m.projectId === project.id)).toBe(true);
+  expect(fs.existsSync(path.join(tmpDir, "files", project.id, "a.md"))).toBe(true);
+  expect(fs.existsSync(path.join(tmpDir, "files", project.id, "b.md"))).toBe(true);
 });
