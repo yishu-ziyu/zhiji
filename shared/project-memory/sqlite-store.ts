@@ -39,7 +39,12 @@ import type {
   UnderstandingBody,
   UnderstandingRevision,
 } from "./types";
-import { makeOccurrenceRevisionId, sha256FromRevisionId } from "./types";
+import {
+  gitBlobObjectId,
+  isFullGitObjectId,
+  makeOccurrenceRevisionId,
+  sha256FromRevisionId,
+} from "./types";
 
 export type SqliteProjectMemoryOptions = {
   dataDir: string;
@@ -231,6 +236,8 @@ export class SqliteProjectMemoryStore
       PRAGMA foreign_keys = ON;
     `);
     this.migrate();
+    // Restart honesty: a prior process left `running` → explicit failed/error.
+    this.healStaleRunningRuns();
   }
 
   close(): void {
@@ -1646,29 +1653,77 @@ private getRevision(id: string): OriginalRevision | null {
 
   // --- AgentRunRepository (D-51 durable trace) ---
 
-  private upsertAnalysisRunRow(run: AnalysisRun): void {
+  /** On open: never leave a prior process's `running` as apparent progress. */
+  private healStaleRunningRuns(): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `UPDATE analysis_runs
+         SET status = 'failed',
+             stop_reason = 'error',
+             error = COALESCE(NULLIF(error, ''), 'stale running after process restart'),
+             updated_at = ?
+         WHERE status = 'running'`,
+      )
+      .run(now);
+  }
+
+  private analysisRunBindParams(run: AnalysisRun): Array<string | number | null> {
+    return [
+      run.id,
+      run.projectId,
+      run.matterId,
+      run.trigger,
+      JSON.stringify(run.eventIds),
+      run.status,
+      run.attempt,
+      run.createdAt,
+      run.updatedAt,
+      run.error ?? null,
+      run.grantId ?? null,
+      run.stopReason ?? null,
+      run.modelReceipt ? JSON.stringify(run.modelReceipt) : null,
+      run.interruptRequested ? 1 : 0,
+      run.candidateRevisionId ?? null,
+      run.progressSummary ?? null,
+    ];
+  }
+
+  /** Insert-once for createRun (no silent identity replace). */
+  private insertAnalysisRunRow(run: AnalysisRun): void {
     this.db
       .prepare(
         `INSERT INTO analysis_runs
          (id, project_id, matter_id, trigger, event_ids_json, status, attempt,
           created_at, updated_at, error, grant_id, stop_reason, model_receipt_json,
           interrupt_requested, candidate_revision_id, progress_summary)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           status=excluded.status,
-           attempt=excluded.attempt,
-           updated_at=excluded.updated_at,
-           error=excluded.error,
-           grant_id=excluded.grant_id,
-           stop_reason=excluded.stop_reason,
-           model_receipt_json=excluded.model_receipt_json,
-           interrupt_requested=excluded.interrupt_requested,
-           candidate_revision_id=excluded.candidate_revision_id,
-           progress_summary=excluded.progress_summary,
-           event_ids_json=excluded.event_ids_json`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(...this.analysisRunBindParams(run));
+  }
+
+  private updateAnalysisRunRow(run: AnalysisRun): void {
+    this.db
+      .prepare(
+        `UPDATE analysis_runs SET
+           project_id = ?,
+           matter_id = ?,
+           trigger = ?,
+           event_ids_json = ?,
+           status = ?,
+           attempt = ?,
+           created_at = ?,
+           updated_at = ?,
+           error = ?,
+           grant_id = ?,
+           stop_reason = ?,
+           model_receipt_json = ?,
+           interrupt_requested = ?,
+           candidate_revision_id = ?,
+           progress_summary = ?
+         WHERE id = ?`,
       )
       .run(
-        run.id,
         run.projectId,
         run.matterId,
         run.trigger,
@@ -1684,12 +1739,98 @@ private getRevision(id: string): OriginalRevision | null {
         run.interruptRequested ? 1 : 0,
         run.candidateRevisionId ?? null,
         run.progressSummary ?? null,
+        run.id,
       );
   }
 
+  private sameCreateRunIdentity(a: AnalysisRun, b: AnalysisRun): boolean {
+    return (
+      a.id === b.id &&
+      a.projectId === b.projectId &&
+      a.matterId === b.matterId &&
+      a.trigger === b.trigger &&
+      JSON.stringify(a.eventIds) === JSON.stringify(b.eventIds)
+    );
+  }
+
+  private toolReceiptContentEqual(a: ToolReceipt, b: ToolReceipt): boolean {
+    return (
+      a.runId === b.runId &&
+      a.sequence === b.sequence &&
+      a.tool === b.tool &&
+      a.projectId === b.projectId &&
+      a.grantId === b.grantId &&
+      JSON.stringify(a.scope) === JSON.stringify(b.scope) &&
+      a.outcome === b.outcome &&
+      a.summary === b.summary &&
+      JSON.stringify(a.pins) === JSON.stringify(b.pins) &&
+      a.startedAt === b.startedAt &&
+      a.finishedAt === b.finishedAt &&
+      (a.errorClass ?? "") === (b.errorClass ?? "")
+    );
+  }
+
+  /**
+   * Interrupt is terminal against late completion: owner_interrupt / interrupted
+   * cannot be overwritten by completed / evidence_sufficient.
+   */
+  private preserveInterruptAgainstLateCompletion(
+    existing: AnalysisRun,
+    incoming: AnalysisRun,
+  ): AnalysisRun {
+    const interrupted =
+      Boolean(existing.interruptRequested) ||
+      existing.status === "interrupted" ||
+      existing.stopReason === "owner_interrupt";
+    if (!interrupted) {
+      return {
+        ...incoming,
+        interruptRequested:
+          Boolean(existing.interruptRequested) ||
+          Boolean(incoming.interruptRequested),
+      };
+    }
+    const lateSuccess =
+      incoming.status === "completed" ||
+      incoming.status === "awaiting_owner" ||
+      incoming.status === "confirmation_required" ||
+      incoming.stopReason === "evidence_sufficient";
+    if (lateSuccess) {
+      return {
+        ...incoming,
+        interruptRequested: true,
+        status: "interrupted",
+        stopReason: "owner_interrupt",
+      };
+    }
+    return {
+      ...incoming,
+      interruptRequested: true,
+      status:
+        existing.status === "interrupted" ? "interrupted" : incoming.status,
+      stopReason:
+        existing.stopReason === "owner_interrupt"
+          ? "owner_interrupt"
+          : (incoming.stopReason ?? existing.stopReason),
+    };
+  }
+
   async createRun(run: AnalysisRun): Promise<AnalysisRun> {
+    const byId = this.db
+      .prepare(`SELECT * FROM analysis_runs WHERE id = ?`)
+      .get(run.id) as AnalysisRunRow | undefined;
+    if (byId) {
+      const stored = this.mapAnalysisRun(byId);
+      if (this.sameCreateRunIdentity(stored, run)) {
+        // Exact retry: return current row without mutation.
+        return stored;
+      }
+      throw new Error(
+        `createRun identity conflict for run ${run.id}: immutable fields differ`,
+      );
+    }
     this.requireMatter(run.projectId, run.matterId);
-    this.upsertAnalysisRunRow(run);
+    this.insertAnalysisRunRow(run);
     const stored = await this.getRun(run.projectId, run.id);
     if (!stored) throw new Error("createRun failed to persist");
     return stored;
@@ -1698,12 +1839,8 @@ private getRevision(id: string): OriginalRevision | null {
   async updateRun(run: AnalysisRun): Promise<AnalysisRun> {
     const existing = await this.getRun(run.projectId, run.id);
     if (!existing) throw new Error("analysis run not found");
-    this.upsertAnalysisRunRow({
-      ...run,
-      // once interrupt is requested, sticky until explicit clear (not provided)
-      interruptRequested:
-        Boolean(existing.interruptRequested) || Boolean(run.interruptRequested),
-    });
+    const next = this.preserveInterruptAgainstLateCompletion(existing, run);
+    this.updateAnalysisRunRow(next);
     const stored = await this.getRun(run.projectId, run.id);
     if (!stored) throw new Error("updateRun failed to load");
     return stored;
@@ -1738,42 +1875,68 @@ private getRevision(id: string): OriginalRevision | null {
   }
 
   async appendToolReceipt(receipt: ToolReceipt): Promise<void> {
-    const run = this.db
-      .prepare(`SELECT id FROM analysis_runs WHERE id = ?`)
-      .get(receipt.runId) as { id: string } | undefined;
-    if (!run) throw new Error("analysis run not found for tool receipt");
-    try {
-      this.db
-        .prepare(
-          `INSERT INTO agent_tool_receipts
-           (id, run_id, sequence, tool, project_id, grant_id, scope_json, outcome,
-            summary, pins_json, started_at, finished_at, error_class)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          receipt.id,
-          receipt.runId,
-          receipt.sequence,
-          receipt.tool,
-          receipt.projectId,
-          receipt.grantId,
-          JSON.stringify(receipt.scope),
-          receipt.outcome,
-          receipt.summary,
-          JSON.stringify(receipt.pins),
-          receipt.startedAt,
-          receipt.finishedAt,
-          receipt.errorClass ?? null,
-        );
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (/UNIQUE/i.test(msg)) {
-        throw new Error(
-          `tool receipt sequence ${receipt.sequence} already exists for run ${receipt.runId}`,
-        );
-      }
-      throw error;
+    const runRow = this.db
+      .prepare(`SELECT * FROM analysis_runs WHERE id = ?`)
+      .get(receipt.runId) as AnalysisRunRow | undefined;
+    if (!runRow) throw new Error("analysis run not found for tool receipt");
+    const run = this.mapAnalysisRun(runRow);
+
+    if (receipt.projectId !== run.projectId) {
+      throw new Error(
+        `tool receipt projectId foreign to run: receipt=${receipt.projectId} run=${run.projectId}`,
+      );
     }
+    if (run.grantId && receipt.grantId !== run.grantId) {
+      throw new Error(
+        `tool receipt grantId foreign to run: receipt=${receipt.grantId} run=${run.grantId}`,
+      );
+    }
+
+    // Derive durable project/grant from the stored run (not caller-only trust).
+    const derived: ToolReceipt = {
+      ...receipt,
+      projectId: run.projectId,
+      grantId: run.grantId ?? receipt.grantId,
+    };
+
+    const existing = this.db
+      .prepare(
+        `SELECT * FROM agent_tool_receipts WHERE run_id = ? AND sequence = ?`,
+      )
+      .get(receipt.runId, receipt.sequence) as ToolReceiptRow | undefined;
+    if (existing) {
+      const mapped = this.mapToolReceipt(existing);
+      if (this.toolReceiptContentEqual(mapped, derived)) {
+        // Exact response-loss retry: idempotent.
+        return;
+      }
+      throw new Error(
+        `tool receipt sequence ${receipt.sequence} conflicts for run ${receipt.runId}`,
+      );
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO agent_tool_receipts
+         (id, run_id, sequence, tool, project_id, grant_id, scope_json, outcome,
+          summary, pins_json, started_at, finished_at, error_class)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        derived.id,
+        derived.runId,
+        derived.sequence,
+        derived.tool,
+        derived.projectId,
+        derived.grantId,
+        JSON.stringify(derived.scope),
+        derived.outcome,
+        derived.summary,
+        JSON.stringify(derived.pins),
+        derived.startedAt,
+        derived.finishedAt,
+        derived.errorClass ?? null,
+      );
   }
 
   async listToolReceipts(runId: string): Promise<ToolReceipt[]> {
@@ -1805,7 +1968,7 @@ private getRevision(id: string): OriginalRevision | null {
           : existing.stopReason,
       updatedAt: now,
     };
-    this.upsertAnalysisRunRow(next);
+    this.updateAnalysisRunRow(next);
     const stored = await this.getRun(projectId, runId);
     if (!stored) throw new Error("requestInterrupt failed");
     return stored;
@@ -1860,9 +2023,19 @@ private getRevision(id: string): OriginalRevision | null {
     }
     const commit = input.commit.trim().toLowerCase();
     const blobOid = input.blobOid.trim().toLowerCase();
-    if (!/^[0-9a-f]{7,64}$/.test(commit) || !/^[0-9a-f]{7,64}$/.test(blobOid)) {
-      throw new Error("commit and blobOid must be hex object ids");
+    if (!isFullGitObjectId(commit) || !isFullGitObjectId(blobOid)) {
+      throw new Error(
+        "commit and blobOid must be full 40- or 64-hex object ids",
+      );
     }
+
+    // Prove content matches the claimed Git blob object id (sha1 or sha256).
+    const sha1Oid = gitBlobObjectId(input.content, "sha1");
+    const sha256Oid = gitBlobObjectId(input.content, "sha256");
+    if (blobOid !== sha1Oid && blobOid !== sha256Oid) {
+      throw new Error("blobOid does not match git object hash of content bytes");
+    }
+
     const sourceVersion = `git:${commit}:${blobOid}`;
     const existing = this.db
       .prepare(
@@ -1880,14 +2053,16 @@ private getRevision(id: string): OriginalRevision | null {
     }
 
     const casResult = this.cas.put(input.content);
-    const prevKey = `git:${commit}:${blobOid}`;
+    // Deterministic occurrence id includes sourceVersion; previousRevisionId
+    // only when it names a real stored revision (git capture leaves it unset).
     const revId = makeOccurrenceRevisionId({
       projectId: input.projectId,
       grantId: input.grantId,
       relativePath,
       contentSha256: casResult.sha256,
-      previousRevisionId: prevKey,
+      previousRevisionId: null,
       tombstone: false,
+      identityExtra: sourceVersion,
     });
     const already = this.getRevision(revId);
     if (already) return already;
@@ -1901,7 +2076,7 @@ private getRevision(id: string): OriginalRevision | null {
       sha256: casResult.sha256,
       sizeBytes: casResult.sizeBytes,
       observedAt,
-      previousRevisionId: prevKey,
+      // leave unset unless a real revision id
       tombstone: false,
       sourceVersion,
     };
@@ -1926,7 +2101,7 @@ private getRevision(id: string): OriginalRevision | null {
         revision.sha256,
         revision.sizeBytes,
         revision.observedAt,
-        revision.previousRevisionId ?? null,
+        null,
         revision.sourceVersion ?? null,
       );
 

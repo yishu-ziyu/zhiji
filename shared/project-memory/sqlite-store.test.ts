@@ -5,7 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ContentAddressedStore, sha256Hex } from "./cas";
 import { assertAgentServiceShape } from "./reducer";
 import { SqliteProjectMemoryStore } from "./sqlite-store";
-import type { AnalysisRun, UnderstandingBody } from "./types";
+import {
+  DEFAULT_AGENT_RUN_BUDGET,
+  gitBlobObjectId,
+  type AnalysisRun,
+  type ProjectAgentModelLoop,
+  type UnderstandingBody,
+} from "./types";
 
 function bodyFor(
   revisionId: string,
@@ -792,20 +798,21 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
       progressSummary: "turn 1",
     });
 
-    await store.appendToolReceipt({
+    const receipt1 = {
       id: "tr-1",
       runId: "run-trace-1",
       sequence: 1,
-      tool: "project_map",
+      tool: "project_map" as const,
       projectId: "p1",
       grantId: "g1",
-      scope: { mode: "initial_root", relativePaths: ["."] },
-      outcome: "ok",
+      scope: { mode: "initial_root" as const, relativePaths: ["."] },
+      outcome: "ok" as const,
       summary: "mapped 3 paths",
-      pins: [],
+      pins: [] as [],
       startedAt: "2026-07-16T18:00:01.000Z",
       finishedAt: "2026-07-16T18:00:02.000Z",
-    });
+    };
+    await store.appendToolReceipt(receipt1);
     await store.appendToolReceipt({
       id: "tr-2",
       runId: "run-trace-1",
@@ -828,6 +835,9 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
       finishedAt: "2026-07-16T18:00:03.000Z",
     });
 
+    // Exact response-loss retry: same content is idempotent
+    await store.appendToolReceipt(receipt1);
+
     await expect(
       store.appendToolReceipt({
         id: "tr-dup",
@@ -843,7 +853,7 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
         startedAt: "2026-07-16T18:00:04.000Z",
         finishedAt: "2026-07-16T18:00:04.000Z",
       }),
-    ).rejects.toThrow(/sequence 1 already exists/i);
+    ).rejects.toThrow(/sequence 1 conflicts/i);
 
     const receipts = await store.listToolReceipts("run-trace-1");
     expect(receipts.map((r) => r.sequence)).toEqual([1, 2]);
@@ -854,12 +864,155 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
     expect(interrupted.status).toBe("interrupted");
     expect(interrupted.stopReason).toBe("owner_interrupt");
 
+    // Late completion must not overwrite owner_interrupt
+    const late = await store.updateRun({
+      ...interrupted,
+      status: "completed",
+      stopReason: "evidence_sufficient",
+      updatedAt: "2026-07-16T18:00:10.000Z",
+      progressSummary: "late finish",
+    });
+    expect(late.status).toBe("interrupted");
+    expect(late.stopReason).toBe("owner_interrupt");
+    expect(late.interruptRequested).toBe(true);
+
     const reopened = await store.getRunView("p1", "run-trace-1");
     expect(reopened?.run.interruptRequested).toBe(true);
+    expect(reopened?.run.status).toBe("interrupted");
     expect(reopened?.toolReceipts).toHaveLength(2);
 
     const listed = await store.listRuns("p1", "m1");
     expect(listed.some((r) => r.id === "run-trace-1")).toBe(true);
+  });
+
+  it("createRun insert-once: exact retry returns row; conflicting identity fails without mutation", async () => {
+    const base = {
+      id: "run-idemp-1",
+      projectId: "p1",
+      matterId: "m1",
+      grantId: "g1",
+      trigger: "owner_question" as const,
+      eventIds: ["e1"],
+      status: "queued" as const,
+      attempt: 1,
+      createdAt: "2026-07-16T18:10:00.000Z",
+      updatedAt: "2026-07-16T18:10:00.000Z",
+    };
+    const first = await store.createRun(base);
+    expect(first.status).toBe("queued");
+
+    await store.updateRun({
+      ...first,
+      status: "running",
+      updatedAt: "2026-07-16T18:10:01.000Z",
+    });
+
+    // Exact identity retry: return current stored row (running), no reset to queued
+    const retry = await store.createRun(base);
+    expect(retry.status).toBe("running");
+    expect(retry.updatedAt).toBe("2026-07-16T18:10:01.000Z");
+
+    await expect(
+      store.createRun({
+        ...base,
+        matterId: "m-other",
+      }),
+    ).rejects.toThrow(/identity conflict/i);
+
+    await expect(
+      store.createRun({
+        ...base,
+        eventIds: ["e1", "e2"],
+      }),
+    ).rejects.toThrow(/identity conflict/i);
+
+    // Conflicting create must not mutate stored identity
+    const still = await store.getRun("p1", "run-idemp-1");
+    expect(still?.matterId).toBe("m1");
+    expect(still?.eventIds).toEqual(["e1"]);
+    expect(still?.status).toBe("running");
+  });
+
+  it("appendToolReceipt rejects foreign project/grant relative to stored run", async () => {
+    await store.createRun({
+      id: "run-scope-1",
+      projectId: "p1",
+      matterId: "m1",
+      grantId: "g1",
+      trigger: "retry",
+      eventIds: [],
+      status: "queued",
+      attempt: 1,
+      createdAt: "2026-07-16T18:20:00.000Z",
+      updatedAt: "2026-07-16T18:20:00.000Z",
+    });
+
+    await expect(
+      store.appendToolReceipt({
+        id: "tr-foreign-p",
+        runId: "run-scope-1",
+        sequence: 1,
+        tool: "project_map",
+        projectId: "p-other",
+        grantId: "g1",
+        scope: { mode: "initial_root", relativePaths: ["."] },
+        outcome: "ok",
+        summary: "x",
+        pins: [],
+        startedAt: "2026-07-16T18:20:01.000Z",
+        finishedAt: "2026-07-16T18:20:01.000Z",
+      }),
+    ).rejects.toThrow(/projectId foreign/i);
+
+    await expect(
+      store.appendToolReceipt({
+        id: "tr-foreign-g",
+        runId: "run-scope-1",
+        sequence: 1,
+        tool: "project_map",
+        projectId: "p1",
+        grantId: "g-other",
+        scope: { mode: "initial_root", relativePaths: ["."] },
+        outcome: "ok",
+        summary: "x",
+        pins: [],
+        startedAt: "2026-07-16T18:20:01.000Z",
+        finishedAt: "2026-07-16T18:20:01.000Z",
+      }),
+    ).rejects.toThrow(/grantId foreign/i);
+
+    expect(await store.listToolReceipts("run-scope-1")).toHaveLength(0);
+  });
+
+  it("reopen heals stale running to failed/error", async () => {
+    const created = await store.createRun({
+      id: "run-stale-1",
+      projectId: "p1",
+      matterId: "m1",
+      grantId: "g1",
+      trigger: "retry",
+      eventIds: [],
+      status: "queued",
+      attempt: 1,
+      createdAt: "2026-07-16T18:30:00.000Z",
+      updatedAt: "2026-07-16T18:30:00.000Z",
+    });
+    await store.updateRun({
+      ...created,
+      status: "running",
+      updatedAt: "2026-07-16T18:30:01.000Z",
+      progressSummary: "mid-flight",
+    });
+    expect((await store.getRun("p1", "run-stale-1"))?.status).toBe("running");
+
+    // Simulate process restart: close and reopen same sqlite
+    const dataDir = tmp;
+    store.close();
+    store = new SqliteProjectMemoryStore({ dataDir });
+    const healed = await store.getRun("p1", "run-stale-1");
+    expect(healed?.status).toBe("failed");
+    expect(healed?.stopReason).toBe("error");
+    expect(healed?.error).toMatch(/stale running/i);
   });
 
   it("lists current revisions and git-blob capture does not move tip or emit events", async () => {
@@ -875,29 +1028,54 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
     const eventsBefore = (await store.listEvents("p1")).length;
 
     const blob = new TextEncoder().encode("historical blob at commit");
+    const blobOid = gitBlobObjectId(blob, "sha1");
+    const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const captured = await store.captureGitBlob({
       projectId: "p1",
       grantId: "g1",
       relativePath: "docs/SPEC.md",
-      commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      blobOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      commit,
+      blobOid,
       content: blob,
       observedAt: "2026-07-16T19:05:00.000Z",
     });
-    expect(captured.sourceVersion).toBe(
-      "git:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    );
+    expect(captured.sourceVersion).toBe(`git:${commit}:${blobOid}`);
     expect(captured.sha256).toBe(sha256Hex(blob));
+    expect(captured.previousRevisionId).toBeUndefined();
 
     const again = await store.captureGitBlob({
       projectId: "p1",
       grantId: "g1",
       relativePath: "docs/SPEC.md",
-      commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      blobOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      commit,
+      blobOid,
       content: blob,
     });
     expect(again.id).toBe(captured.id);
+
+    // Abbreviated object ids rejected
+    await expect(
+      store.captureGitBlob({
+        projectId: "p1",
+        grantId: "g1",
+        relativePath: "docs/SPEC.md",
+        commit: "aaaaaaaa",
+        blobOid,
+        content: blob,
+      }),
+    ).rejects.toThrow(/full 40- or 64-hex/i);
+
+    // Mismatched blobOid vs content rejected
+    await expect(
+      store.captureGitBlob({
+        projectId: "p1",
+        grantId: "g1",
+        relativePath: "docs/other.md",
+        commit,
+        blobOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        content: blob,
+      }),
+    ).rejects.toThrow(/blobOid does not match/i);
 
     const eventsAfter = (await store.listEvents("p1")).length;
     expect(eventsAfter).toBe(eventsBefore);
@@ -908,6 +1086,40 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
     expect(specTip?.sourceVersion).toBeUndefined();
 
     const bytes = await store.readRevision(captured.id);
-    expect(bytes && new TextDecoder().decode(bytes)).toBe("historical blob at commit");
+    expect(bytes && new TextDecoder().decode(bytes)).toBe(
+      "historical blob at commit",
+    );
+  });
+
+  it("exports ProjectAgentModelLoop.nextStep contract and readonly budget defaults", () => {
+    // Compile-time shape: D-51 loop is nextStep, not legacy propose
+    const stub: ProjectAgentModelLoop = {
+      async nextStep(_input, _signal) {
+        return {
+          decision: { kind: "tools", calls: [] },
+          receipt: {
+            provider: "stepfun",
+            model: "step-3.7-flash",
+            effort: "high",
+            calls: 0,
+            fallback: { used: false },
+          },
+        };
+      },
+    };
+    expect(typeof stub.nextStep).toBe("function");
+    expect(DEFAULT_AGENT_RUN_BUDGET.maxModelTurns).toBe(12);
+    expect(DEFAULT_AGENT_RUN_BUDGET.maxToolCalls).toBe(24);
+    // satisfies AgentRunBudget + as const keeps exact numeric shape
+    expect(Object.keys(DEFAULT_AGENT_RUN_BUDGET).sort()).toEqual(
+      [
+        "maxContextBytes",
+        "maxFilesRead",
+        "maxModelTurns",
+        "maxToolCalls",
+        "maxToolResultBytes",
+        "maxWallMs",
+      ].sort(),
+    );
   });
 });

@@ -258,8 +258,20 @@ export interface OwnerDecisionWriter {
  */
 export type AgentMemoryService = ProjectMemoryReader & CandidateWriter;
 
+/**
+ * Legacy D-50 single-shot propose surface.
+ * Keep until Wave C migrates its caller; Wave B/D-51 consume ProjectAgentModelLoop only.
+ */
 export interface AgentModelLoop {
   propose(input: MatterStateReconstructionInput): Promise<UnderstandingBody>;
+}
+
+/** D-51/D-52 iterative model step (Wave B+). Distinct from legacy AgentModelLoop.propose. */
+export interface ProjectAgentModelLoop {
+  nextStep(
+    input: AgentLoopContext,
+    signal: AbortSignal,
+  ): Promise<{ decision: AgentLoopDecision; receipt: AgentModelCallReceipt }>;
 }
 
 // --- D-51 / D-52 domain contracts (Wave A): tools, loop decisions, receipts, budgets ---
@@ -364,14 +376,14 @@ export type AgentRunBudget = {
   maxContextBytes: number;
 };
 
-export const DEFAULT_AGENT_RUN_BUDGET: AgentRunBudget = {
+export const DEFAULT_AGENT_RUN_BUDGET = {
   maxModelTurns: 12,
   maxToolCalls: 24,
   maxFilesRead: 32,
   maxWallMs: 180_000,
   maxToolResultBytes: 64 * 1024,
   maxContextBytes: 256 * 1024,
-} as const;
+} as const satisfies AgentRunBudget;
 
 export type AgentRunReceipt = {
   provider: "stepfun";
@@ -505,6 +517,11 @@ export function makeOccurrenceRevisionId(input: {
   contentSha256: string;
   previousRevisionId?: string | null;
   tombstone: boolean;
+  /**
+   * Optional identity material (e.g. git sourceVersion).
+   * Omitted for ordinary observer tips so existing IDs stay stable.
+   */
+  identityExtra?: string | null;
 }): string {
   const material = [
     input.projectId,
@@ -513,7 +530,24 @@ export function makeOccurrenceRevisionId(input: {
     input.contentSha256.replace(/^sha256:/, "").toLowerCase(),
     input.previousRevisionId ?? "",
     input.tombstone ? "1" : "0",
+    ...(input.identityExtra != null && input.identityExtra !== ""
+      ? [input.identityExtra]
+      : []),
   ].join("\0");
   const hex = createHash("sha256").update(material).digest("hex");
   return `orev:${hex}`;
+}
+
+/** Git object id for blob contents: sha1/sha256 of `blob <size>\0` + bytes. */
+export function gitBlobObjectId(
+  content: Uint8Array,
+  algorithm: "sha1" | "sha256" = "sha1",
+): string {
+  const header = `blob ${content.byteLength}\0`;
+  return createHash(algorithm).update(header).update(content).digest("hex");
+}
+
+/** Full Git object ids only (40 hex sha1 or 64 hex sha256). */
+export function isFullGitObjectId(value: string): boolean {
+  return /^[0-9a-f]{40}$/.test(value) || /^[0-9a-f]{64}$/.test(value);
 }
