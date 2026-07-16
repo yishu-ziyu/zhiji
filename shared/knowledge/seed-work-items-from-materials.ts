@@ -5,6 +5,7 @@
  * Deterministic only — model loop can later replace/supplement the same schema.
  */
 import type { ActionItem, KnowledgeCard } from "@/shared/types/knowledge";
+import { renumberOpenWorkTitles } from "@/shared/knowledge/agent-task-cards";
 import {
   addAction,
   getAction,
@@ -287,6 +288,15 @@ export function seedWorkItemsFromMaterials(
       itemIds.push(item.id);
     } catch {
       // Card/project race: skip rather than fail authorize.
+    }
+  }
+
+  // Canvasight-style 01/02 titles on all open work items.
+  if (created > 0 || skippedExisting > 0) {
+    try {
+      renumberOpenWorkTitles(projectId);
+    } catch {
+      /* renumber is best-effort */
     }
   }
 

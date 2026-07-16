@@ -992,36 +992,78 @@
 }
 .agentProcessStepActive .agentProcessStatusLabel { color: var(--blue, #245fcf); }
 .agentProcessStepDone .agentProcessStatusLabel { color: #2f6a3a; }
-.agentToolReceipts {
+.agentToolReceipts,
+.agentLiveFeed {
   margin-top: 12px;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid rgba(210, 210, 215, 0.9);
   background: rgba(248, 249, 251, 0.95);
 }
-.agentToolReceipts .kicker {
+.agentLiveFeed[data-live="true"] {
+  border-color: rgba(0, 122, 255, 0.28);
+  background: linear-gradient(180deg, #f5f9ff 0%, #f8f9fb 48%);
+}
+.agentLiveFeedHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.agentLiveBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #007aff;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+.agentToolReceipts .kicker,
+.agentLiveFeed .kicker {
   display: inline-block;
-  margin-bottom: 6px;
+  margin-bottom: 0;
   font-size: 11px;
   letter-spacing: 0.02em;
   color: var(--muted, #6e6e73);
 }
-.agentToolReceipts ul {
+.agentToolReceipts ul,
+.agentLiveFeed ul {
   margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 220px;
+  overflow: auto;
 }
-.agentToolReceipts li {
+.agentToolReceipts li,
+.agentLiveFeed li {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto 1fr auto;
   gap: 8px;
   align-items: start;
   font-size: 12px;
   line-height: 1.4;
   color: var(--text, #1d1d1f);
+}
+.agentLiveFeed li[data-live="true"] {
+  padding: 6px 8px;
+  margin: 0 -4px;
+  border-radius: 8px;
+  background: rgba(0, 122, 255, 0.06);
+}
+.agentLiveBody {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .agentToolTag {
   display: inline-flex;

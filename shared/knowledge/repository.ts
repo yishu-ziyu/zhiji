@@ -1231,6 +1231,19 @@ export function listEventsForWorkItem(workItemId: string): WorkEvent[] {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/** All work events for a project (via work-item membership). */
+export function listWorkEventsForProject(projectId: string): WorkEvent[] {
+  const id = projectId?.trim();
+  if (!id) return [];
+  const itemIds = new Set(
+    listActions({ projectId: id }).map((item) => item.id),
+  );
+  return [...workingEvents().values()]
+    .filter((e) => itemIds.has(e.workItemId))
+    .map(copyEvent)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 function searchScore(query: string, title: string, body: string): number {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return 0;

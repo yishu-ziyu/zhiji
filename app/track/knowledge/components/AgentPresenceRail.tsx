@@ -14,7 +14,7 @@ import type {
   UnderstandingBody,
   UnderstandingRevision,
 } from "../lib/folder-connection-api";
-import styles from "../workbench-entry.module.css";
+import styles from "../project-canvas.module.css";
 
 export type AgentSession = {
   projectId: string;
@@ -32,6 +32,8 @@ export type AgentSession = {
 };
 
 type Props = {
+  /** Always required so chat can mount without a folder session. */
+  projectId: string;
   session: AgentSession | null;
   resolutionMessage?: string | null;
   onResolve?: (
@@ -42,19 +44,23 @@ type Props = {
   /** Owner free-text → dialogue memory + model loop. */
   onChatSend?: (text: string) => Promise<void>;
   busy?: boolean;
+  /** Bump when topbar AI Copilot should open/focus the chat. */
+  chatFocusKey?: number;
 };
 
 /**
- * Workbench Agent presence: 8-step process + real tool feed + Owner confirm.
- * Shown whenever a folder-backed session exists for the active project.
+ * Workbench Agent presence: always-visible chat + (when granted) process + confirm.
+ * Chat is not gated on agentSession - product gap §2b.
  */
 export function AgentPresenceRail({
+  projectId,
   session,
   resolutionMessage = null,
   onResolve,
   onRerun,
   onChatSend,
   busy = false,
+  chatFocusKey = 0,
 }: Props) {
   const processView = useMemo(() => {
     if (!session) {
@@ -73,44 +79,59 @@ export function AgentPresenceRail({
     });
   }, [session]);
 
-  if (!session) return null;
+  const hasSession = Boolean(session?.matterId);
+  const chatRefreshKey = session
+    ? [
+        session.run?.id ?? "",
+        session.run?.status ?? "",
+        session.memory?.candidate?.id ?? "",
+        session.toolReceipts.length,
+      ].join(":")
+    : "no-session";
 
-  const candidate = session.memory?.candidate as UnderstandingRevision | undefined;
-  const accepted = session.memory?.accepted as UnderstandingRevision | undefined;
-  const chatRefreshKey = [
-    session.run?.id ?? "",
-    session.run?.status ?? "",
-    session.memory?.candidate?.id ?? "",
-    session.toolReceipts.length,
-  ].join(":");
+  const candidate = session?.memory?.candidate as UnderstandingRevision | undefined;
+  const accepted = session?.memory?.accepted as UnderstandingRevision | undefined;
 
   return (
     <aside
       className={styles.agentPresenceRail}
       data-testid="inspector-agent-process"
-      aria-label="Agent 工作状态"
+      data-has-session={hasSession ? "true" : "false"}
+      aria-label="Agent 对话与工作状态"
     >
-      <div data-testid="inspector-agent-feed">
-        <AgentProcessPanel
-          statuses={processView.statuses}
-          active={processView.active}
-          caption={processView.caption}
-          folderName={session.folderName}
-          toolReceipts={session.toolReceipts}
-        />
-      </div>
-
+      {/* Chat first: Owner must always see where to speak (§2b). */}
       {onChatSend ? (
         <AgentChatPanel
-          projectId={session.projectId}
-          matterId={session.matterId}
+          projectId={projectId}
+          matterId={session?.matterId}
           busy={busy}
           onSend={onChatSend}
           refreshKey={chatRefreshKey}
+          canSend={hasSession}
+          blockedHint={
+            hasSession
+              ? null
+              : "当前项目还没有授权文件夹。授权后即可发送，Agent 会在夹里查依据。"
+          }
+          focusKey={chatFocusKey}
         />
       ) : null}
 
-      {onResolve ? (
+      {hasSession && session ? (
+        <div data-testid="inspector-agent-feed">
+          <AgentProcessPanel
+            statuses={processView.statuses}
+            active={processView.active}
+            caption={processView.caption}
+            folderName={session.folderName}
+            toolReceipts={session.toolReceipts}
+            runStatus={session.run?.status}
+            progressSummary={session.run?.progressSummary}
+          />
+        </div>
+      ) : null}
+
+      {hasSession && onResolve ? (
         <UnderstandingReviewCard
           candidate={candidate}
           accepted={accepted}
@@ -119,11 +140,11 @@ export function AgentPresenceRail({
         />
       ) : null}
 
-      {onRerun ? (
+      {hasSession && onRerun ? (
         <div className={styles.agentPresenceActions}>
           <button
             type="button"
-            className={styles.entryPrimaryButton}
+            className={styles.agentPresenceRerun}
             disabled={busy}
             data-testid="agent-rerun"
             onClick={() => void onRerun()}

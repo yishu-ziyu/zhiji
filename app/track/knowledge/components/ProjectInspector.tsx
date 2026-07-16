@@ -83,6 +83,8 @@ type Props = {
   onRerunAgent?: () => Promise<void>;
   /** Right-rail chat → dual memory + model loop. */
   onAgentChatSend?: (text: string) => Promise<void>;
+  /** Bump to focus the always-visible chat (topbar AI Copilot). */
+  agentChatFocusKey?: number;
 };
 
 const tabLabels: Array<{ id: InspectorTab; label: string }> = [
@@ -129,6 +131,7 @@ export function ProjectInspector({
   onResolveUnderstanding,
   onRerunAgent,
   onAgentChatSend,
+  agentChatFocusKey = 0,
 }: Props) {
   const [tab, setTab] = useState<InspectorTab>("overview");
 
@@ -316,14 +319,29 @@ export function ProjectInspector({
       </nav>
 
       <div className={styles.inspectorBody}>
-        {agentSession && agentSession.projectId === snapshot.project.id ? (
+        {/* Always-visible Agent chat for open project (§2b); process only when session. */}
+        {onAgentChatSend ? (
           <AgentPresenceRail
-            session={agentSession}
+            projectId={snapshot.project.id}
+            session={
+              agentSession && agentSession.projectId === snapshot.project.id
+                ? agentSession
+                : null
+            }
             resolutionMessage={agentResolutionMessage}
-            onResolve={onResolveUnderstanding}
-            onRerun={onRerunAgent}
+            onResolve={
+              agentSession && agentSession.projectId === snapshot.project.id
+                ? onResolveUnderstanding
+                : undefined
+            }
+            onRerun={
+              agentSession && agentSession.projectId === snapshot.project.id
+                ? onRerunAgent
+                : undefined
+            }
             onChatSend={onAgentChatSend}
             busy={busy}
+            chatFocusKey={agentChatFocusKey}
           />
         ) : null}
         {tab === "overview" ? (
@@ -663,14 +681,20 @@ export function ProjectInspector({
             <div
               className={styles.agentProcessBlock}
               data-testid="inspector-agent-process-activity"
-              data-has-agent={snapshot.agentActivity?.hasAgentEvents ? "true" : "false"}
+              data-has-agent={
+                snapshot.agentActivity?.hasAgentEvents ||
+                (agentSession?.toolReceipts?.length ?? 0) > 0
+                  ? "true"
+                  : "false"
+              }
             >
               <div className={styles.listHeading}>
                 <h3>Agent 在做什么</h3>
                 <span>{snapshot.agentActivity?.steps.length ?? 8}</span>
               </div>
               <p className={styles.agentProcessCaption} data-testid="inspector-agent-caption">
-                {snapshot.agentActivity?.caption ??
+                {agentSession?.run?.progressSummary ||
+                  snapshot.agentActivity?.caption ||
                   "还没有 Agent 执行记录；授权或跑 Agent 后，步骤会跟着推进。"}
               </p>
               <ol className={styles.agentProcessSteps}>
@@ -702,15 +726,34 @@ export function ProjectInspector({
               data-testid="inspector-agent-feed"
             >
               <div className={styles.listHeading}>
-                <h3>Agent 动态</h3>
-                <span>{snapshot.agentActivity?.feed.length ?? 0}</span>
+                <h3>Live Feed</h3>
+                <span>
+                  {(agentSession?.toolReceipts?.length ?? 0) +
+                    (snapshot.agentActivity?.feed.length ?? 0)}
+                </span>
               </div>
-              {(snapshot.agentActivity?.feed.length ?? 0) === 0 ? (
+              {(agentSession?.toolReceipts?.length ?? 0) > 0 ? (
+                <ul className={styles.liveFeedList} data-testid="inspector-live-tool-feed">
+                  {[...(agentSession?.toolReceipts ?? [])]
+                    .sort((a, b) => a.sequence - b.sequence)
+                    .map((r) => (
+                      <li key={`tool-${r.sequence}-${r.tool}`}>
+                        <Bot size={14} aria-hidden="true" />
+                        <span>
+                          <strong>{r.tool}</strong>
+                          <small>{r.summary}</small>
+                        </span>
+                      </li>
+                    ))}
+                </ul>
+              ) : null}
+              {(snapshot.agentActivity?.feed.length ?? 0) === 0 &&
+              (agentSession?.toolReceipts?.length ?? 0) === 0 ? (
                 <p className={styles.emptyCopy} data-testid="inspector-agent-feed-empty">
-                  还没有 Agent 执行记录。对工作项点「交给 Agent」后会出现在这里。
+                  还没有 Agent 执行记录。授权夹后点 AI Copilot，或对工作项点「交给 Agent」。
                 </p>
               ) : (
-                snapshot.agentActivity!.feed.map((item) => (
+                (snapshot.agentActivity?.feed ?? []).map((item) => (
                   <button
                     type="button"
                     key={item.id}

@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  buildDeterministicUnderstandingBody,
+  buildModelPrompt,
   createAgentModelLoop,
   isFullySupportedAnchor,
   WHY_UNKNOWN,
@@ -80,6 +82,119 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
   function agent() {
     return store.asAgentMemoryService();
   }
+
+  it("对用户的默认理解不泄漏英文工程词", () => {
+    const body = buildDeterministicUnderstandingBody({
+      projectId,
+      matterId,
+      events: [],
+      evidenceSnippets: [],
+    });
+    const visibleCopy = [
+      body.now.text,
+      ...body.now.gaps,
+      body.then.text,
+      ...body.then.gaps,
+      ...body.changed.flatMap((change) => [change.before, change.after]),
+      ...body.why.map((claim) => claim.text),
+      ...body.depends.map((item) => item.reason),
+      body.nextDecision,
+    ].join("\n");
+
+    expect(visibleCopy).not.toMatch(
+      /\b(?:Owner|evidence|prior|candidate|accepted|revision|unknown|matter)\b/i,
+    );
+    expect(body.now.text).toBe("目前还没有可核对的文件变化。");
+    expect(body.nextDecision).toBe(
+      "还没有足够依据。请补充材料，或直接修改这段理解。",
+    );
+  });
+
+  it("变化描述使用中文且不暴露版本编号", () => {
+    const body = buildDeterministicUnderstandingBody({
+      projectId,
+      matterId,
+      events: [
+        {
+          id: "event-1",
+          projectId,
+          grantId,
+          kind: "modified",
+          relativePath: "方案.pdf",
+          beforeRevisionId: "revision-before-secret",
+          afterRevisionId: "revision-after-secret",
+          observedAt: "2026-07-16T10:01:00.000Z",
+          dedupeKey: "event-1",
+        },
+      ],
+      evidenceSnippets: [],
+    });
+
+    expect(body.changed[0]).toMatchObject({
+      before: "修改前",
+      after: "已更新 方案.pdf",
+    });
+    // 用户可见文案不带版本号；evidence 锚点可保留 revisionId 供点进原文。
+    expect(`${body.changed[0]?.before}${body.changed[0]?.after}`).not.toContain(
+      "revision-",
+    );
+  });
+
+  it("模型提示要求解释用中文且保留原文引用", () => {
+    const prompt = buildModelPrompt({
+      projectId,
+      matterId,
+      events: [],
+      evidenceSnippets: [],
+    });
+
+    expect(prompt).toContain("面向用户的内容使用简体中文");
+    expect(prompt).toContain("原文引用保留来源语言");
+  });
+
+  it("0 事件重建输出中文空结果且不沿用英文 prior", async () => {
+    // 先写入一段英文空候选并 accept，模拟历史脏数据。
+    const dirty = await runStateReconstruction(
+      agent(),
+      {
+        async propose() {
+          return {
+            now: {
+              text: "No current state information is available because no events have been recorded for this project matter.",
+              evidence: [],
+              gaps: ["No events have been provided"],
+              conflicts: [],
+            },
+            then: {
+              text: "No prior state",
+              at: "unknown",
+              evidence: [],
+              gaps: [],
+              conflicts: [],
+            },
+            changed: [
+              {
+                before: "",
+                after: "无明显文件变化",
+                eventIds: [],
+                evidence: [],
+              },
+            ],
+            why: [{ text: "原因尚无可核对依据", status: "unknown", evidence: [] }],
+            depends: [],
+            evidenceRevisionIds: [],
+            nextDecision: "Cannot determine next action",
+          };
+        },
+      },
+      { projectId, matterId, eventIds: [] },
+    );
+    // 0 事件路径应跳过 model，直接中文；即使传入假 model 也不应英文。
+    expect(dirty.candidate.body.now.text).toBe("目前还没有可核对的文件变化。");
+    expect(dirty.candidate.body.then.text).toBe("还没有已确认的先前理解");
+    expect(dirty.candidate.body.nextDecision).toMatch(/再读一遍变化/);
+    expect(JSON.stringify(dirty.candidate.body)).not.toMatch(/No current state/i);
+  });
 
   function resolveArgs(
     candidateId: string,
@@ -181,7 +296,8 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       matterId,
     });
     expect(candidate.body.evidenceRevisionIds).toContain(rev!.id);
-    expect(candidate.body.now.text).toMatch(/模型不可用|确定性/);
+    expect(candidate.body.now.text).toContain("暂时无法进一步分析");
+    expect(candidate.body.now.text).not.toMatch(/changed|evidence|Owner/i);
     expect(run.status).toBe("awaiting_owner");
   });
 

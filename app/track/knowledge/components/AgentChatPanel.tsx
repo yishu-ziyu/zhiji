@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import styles from "../workbench-entry.module.css";
+import { useCallback, useEffect, useRef, useState } from "react";
+import styles from "../project-canvas.module.css";
 
 export type AgentChatTurn = {
   id: string;
@@ -18,6 +18,15 @@ type Props = {
   onSend: (text: string) => Promise<void>;
   /** Optional external refresh token (e.g. after analysis). */
   refreshKey?: string | number;
+  /**
+   * When false, composer stays visible but send is blocked
+   * (e.g. no folder grant yet).
+   */
+  canSend?: boolean;
+  /** Shown under header / empty state when canSend is false. */
+  blockedHint?: string | null;
+  /** Bump to scroll this panel into view and focus the input. */
+  focusKey?: number;
 };
 
 async function fetchSessions(projectId: string): Promise<
@@ -63,8 +72,8 @@ async function fetchMessages(
 }
 
 /**
- * Right-rail chat entry: loads Dialogue Memory and sends Owner questions
- * into the model loop (via parent onSend → analysis with ownerUtterance).
+ * Right-rail chat entry: always visible when a project is open.
+ * Loads Dialogue Memory when available; sends via parent onSend.
  */
 export function AgentChatPanel({
   projectId,
@@ -72,11 +81,16 @@ export function AgentChatPanel({
   busy = false,
   onSend,
   refreshKey,
+  canSend = true,
+  blockedHint = null,
+  focusKey,
 }: Props) {
   const [turns, setTurns] = useState<AgentChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
 
   const reload = useCallback(async () => {
     if (!projectId) {
@@ -101,9 +115,23 @@ export function AgentChatPanel({
     void reload();
   }, [reload, refreshKey]);
 
+  useEffect(() => {
+    if (focusKey == null || focusKey === 0) return;
+    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    // Slight delay so layout settles after rail mount.
+    const t = window.setTimeout(() => {
+      inputRef.current?.focus();
+    }, 120);
+    return () => window.clearTimeout(t);
+  }, [focusKey]);
+
   const handleSubmit = async () => {
     const text = draft.trim();
     if (!text || busy || loading) return;
+    if (!canSend) {
+      setError(blockedHint || "先授权项目文件夹，再和 Agent 对话。");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -117,22 +145,34 @@ export function AgentChatPanel({
     }
   };
 
+  const emptyCopy = canSend
+    ? "还没有对话。直接问「昨天考察的项目」或「凭什么这么判断」。"
+    : blockedHint ||
+      "对话入口在这里。先授权项目文件夹，Agent 才能在夹里查依据。";
+
   return (
     <section
+      ref={panelRef}
       className={styles.agentChatPanel}
       data-testid="agent-chat-panel"
+      data-can-send={canSend ? "true" : "false"}
       aria-label="与 Agent 对话"
     >
       <header className={styles.agentChatHeader}>
-        <h3>问 Agent</h3>
-        <span>你说的项目理解会记入真源</span>
+        <div className={styles.agentChatTitleRow}>
+          <h3>问 Agent</h3>
+          {!canSend ? (
+            <span className={styles.agentChatBadge} data-testid="agent-chat-blocked-badge">
+              待授权
+            </span>
+          ) : null}
+        </div>
+        <span>用自然语言驱动画布与理解</span>
       </header>
 
       <div className={styles.agentChatLog} data-testid="agent-chat-log">
         {turns.length === 0 ? (
-          <p className={styles.agentChatEmpty}>
-            还没有对话。直接问「现在重点是什么」或「README 说了什么」。
-          </p>
+          <p className={styles.agentChatEmpty}>{emptyCopy}</p>
         ) : (
           turns.map((t) => (
             <div
@@ -158,9 +198,14 @@ export function AgentChatPanel({
 
       <div className={styles.agentChatComposer}>
         <textarea
+          ref={inputRef}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="问项目里的事…"
+          placeholder={
+            canSend
+              ? "问项目里的事，例如「只看决策」…"
+              : "先授权文件夹后即可发送…"
+          }
           rows={2}
           disabled={busy || loading}
           data-testid="agent-chat-input"
@@ -173,12 +218,12 @@ export function AgentChatPanel({
         />
         <button
           type="button"
-          className={styles.entryPrimaryButton}
+          className={styles.agentChatSend}
           disabled={busy || loading || !draft.trim()}
           data-testid="agent-chat-send"
           onClick={() => void handleSubmit()}
         >
-          {loading || busy ? "思考中…" : "发送"}
+          {loading || busy ? "思考中…" : canSend ? "发送" : "需先授权"}
         </button>
       </div>
     </section>

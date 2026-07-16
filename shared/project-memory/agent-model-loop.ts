@@ -5,6 +5,11 @@
 
 import { complete, extractJson } from "@/shared/llm/adapter";
 import { HONEST_WHY_DEFAULT } from "./reducer";
+import {
+  countPdfPaths,
+  humanizeUserFacingList,
+  humanizeUserFacingText,
+} from "./user-facing-zh";
 import type {
   AgentModelLoop,
   ChangeClaim,
@@ -36,8 +41,6 @@ export function buildDeterministicUnderstandingBody(
   ];
 
   const changed: ChangeClaim[] = input.events.map((e) => {
-    const pin =
-      e.afterRevisionId ?? e.beforeRevisionId ?? "revision:unavailable";
     const path = e.relativePath;
     const evidence = anchors.filter(
       (a) =>
@@ -45,13 +48,20 @@ export function buildDeterministicUnderstandingBody(
         a.revisionId === e.beforeRevisionId,
     );
     return {
-      before: e.previousPath ?? e.beforeRevisionId ?? "",
+      before:
+        e.kind === "modified"
+          ? "修改前"
+          : e.previousPath
+            ? `原路径 ${e.previousPath}`
+            : "",
       after:
         e.kind === "deleted"
-          ? `deleted ${path}`
+          ? `已删除 ${path}`
           : e.kind === "renamed"
             ? `${e.previousPath ?? "?"} → ${path}`
-            : `${e.kind} ${path} @ ${pin}`,
+            : e.kind === "added"
+              ? `新增 ${path}`
+              : `已更新 ${path}`,
       eventIds: [e.id],
       evidence,
     };
@@ -59,9 +69,15 @@ export function buildDeterministicUnderstandingBody(
 
   const why = buildWhyClaims(input, anchors, nowIso);
   const prev = input.accepted?.body;
+  const priorText = prev?.now?.text?.trim() ?? "";
+  const priorIsFiller =
+    !priorText ||
+    /no (current|prior|events)|cannot determine|no events have been/i.test(
+      priorText,
+    );
   const nowText =
-    prev?.now?.text && input.events.length === 0
-      ? prev.now.text
+    !priorIsFiller && priorText && input.events.length === 0
+      ? priorText
       : summarizeNow(input, changed);
 
   const now: StateClaim = {
@@ -72,10 +88,10 @@ export function buildDeterministicUnderstandingBody(
   };
 
   const then: StateClaim & { at: string } = {
-    text: prev?.now?.text ?? "还没有已确认的先前理解",
-    at: input.accepted?.createdAt ?? "unknown",
-    evidence: prev?.now?.evidence ?? [],
-    gaps: prev ? [] : ["尚无已确认理解"],
+    text: priorIsFiller ? "还没有已确认的先前理解" : priorText,
+    at: priorIsFiller ? "unknown" : (input.accepted?.createdAt ?? "unknown"),
+    evidence: priorIsFiller ? [] : (prev?.now?.evidence ?? []),
+    gaps: priorIsFiller ? ["尚无已确认理解"] : [],
     conflicts: [],
   };
 
@@ -97,8 +113,8 @@ export function buildDeterministicUnderstandingBody(
     depends: buildDepends(input),
     evidenceRevisionIds,
     nextDecision: why.every((w) => w.status === "unknown")
-      ? "需 Owner 判断：依据不足时请补材料或直接编辑候选理解"
-      : "请 Owner 确认、编辑后确认，或拒绝本候选理解",
+      ? "还没有足够依据。请补充材料，或直接修改这段理解。"
+      : "请确认这段理解是否准确，也可以改完再确认。",
   };
 }
 
@@ -198,11 +214,19 @@ function buildDepends(
       deps.push({
         kind: "evidence",
         id: rev,
-        reason: `变化 ${e.kind} ${e.relativePath}`,
+        reason: `${eventKindLabel(e.kind)} ${e.relativePath}`,
       });
     }
   }
   return deps;
+}
+
+function eventKindLabel(kind: ChangeEvent["kind"]): string {
+  if (kind === "added") return "新增";
+  if (kind === "modified") return "更新";
+  if (kind === "renamed") return "重命名";
+  if (kind === "deleted") return "删除";
+  return "重新核对";
 }
 
 export function isFullySupportedAnchor(claim: WhyClaim): boolean {
@@ -239,7 +263,9 @@ export function normalizeWhyClaim(claim: WhyClaim): WhyClaim {
   return { ...claim, text };
 }
 
-function buildModelPrompt(input: MatterStateReconstructionInput): string {
+export function buildModelPrompt(
+  input: MatterStateReconstructionInput,
+): string {
   return [
     "Return a single JSON object for UnderstandingBody with keys:",
     "now {text,evidence[],gaps[],conflicts[]}, then {text,at,evidence[],gaps[],conflicts[]},",
@@ -247,6 +273,9 @@ function buildModelPrompt(input: MatterStateReconstructionInput): string {
     "depends[{kind,id,reason}], evidenceRevisionIds[], nextDecision.",
     "why[].status is supported|unknown|conflicted. supported requires revisionId+relativePath+quote+lastVerifiedAt.",
     "Only cite revision ids present in the events below.",
+    "面向用户的内容使用简体中文：now/then 的 text、gaps、conflicts，changed 的 before/after，why.text，depends.reason，nextDecision。",
+    "原文引用保留来源语言：evidence[].quote、文件路径和 ID 不翻译。",
+    "不要在面向用户的内容中出现 Owner、candidate、accepted、revision、matter、evidence 等内部字段名。",
     `projectId=${input.projectId} matterId=${input.matterId}`,
     `events=${JSON.stringify(input.events)}`,
     `accepted=${JSON.stringify(input.accepted?.body ?? null)}`,
@@ -254,7 +283,10 @@ function buildModelPrompt(input: MatterStateReconstructionInput): string {
   ].join("\n");
 }
 
-function coerceModelBody(raw: Record<string, unknown>): UnderstandingBody {
+function coerceModelBody(
+  raw: Record<string, unknown>,
+  input: MatterStateReconstructionInput,
+): UnderstandingBody {
   const asState = (v: unknown, fallback: StateClaim): StateClaim => {
     if (!v || typeof v !== "object") return fallback;
     const o = v as Record<string, unknown>;
@@ -269,12 +301,7 @@ function coerceModelBody(raw: Record<string, unknown>): UnderstandingBody {
         : fallback.conflicts,
     };
   };
-  const det = buildDeterministicUnderstandingBody({
-    projectId: "",
-    matterId: "",
-    events: [],
-    evidenceSnippets: [],
-  });
+  const det = buildDeterministicUnderstandingBody(input);
   const now = asState(raw.now, det.now);
   const thenBase = asState(raw.then, det.then);
   const thenAt =
@@ -309,10 +336,10 @@ export async function completeUnderstandingViaLlm(
 ): Promise<UnderstandingBody> {
   const text = await complete(
     buildModelPrompt(input),
-    "You are a project-memory reconstruction agent. Output JSON only.",
+    "你是项目理解 Agent。只输出 JSON。所有解释使用简体中文，原文引用保留来源语言。",
     { maxRetries: 1, timeout: 15000 },
   );
-  return coerceModelBody(extractJson(text));
+  return coerceModelBody(extractJson(text), input);
 }
 
 export type AgentModelLoopOptions = {
@@ -345,9 +372,9 @@ export function createAgentModelLoop(
           ...fallback,
           now: {
             ...fallback.now,
-            text: `${fallback.now.text}（模型不可用，已保留确定性 changed/evidence）`,
+            text: `${fallback.now.text}（暂时无法进一步分析）`,
           },
-          nextDecision: "需 Owner 判断（模型失败，仅确定性摘要可用）",
+          nextDecision: "请稍后再试，或直接修改这段理解。",
         };
       }
     },
@@ -374,63 +401,122 @@ export function sanitizeModelBody(
     if (snip.revisionId) allowed.add(snip.revisionId);
   }
 
-  const filterAnchors = (anchors: EvidenceAnchor[]): EvidenceAnchor[] =>
-    (anchors ?? [])
+  const asAnchorList = (value: unknown): EvidenceAnchor[] => {
+    if (Array.isArray(value)) return value as EvidenceAnchor[];
+    if (value && typeof value === "object") {
+      // Model sometimes returns a single anchor object.
+      const o = value as EvidenceAnchor;
+      if (typeof o.revisionId === "string") return [o];
+    }
+    return [];
+  };
+
+  const filterAnchors = (anchors: unknown): EvidenceAnchor[] =>
+    asAnchorList(anchors)
+      .filter((a) => a && typeof a === "object")
       .filter((a) =>
         allowed.size === 0 ? Boolean(a.revisionId) : allowed.has(a.revisionId),
       )
       .map((a) => ({
-        revisionId: a.revisionId,
+        revisionId: String(a.revisionId ?? ""),
         relativePath:
-          a.relativePath?.trim().replace(/\\/g, "/") ||
-          pathByRev.get(a.revisionId) ||
+          String(a.relativePath ?? "")
+            .trim()
+            .replace(/\\/g, "/") ||
+          pathByRev.get(String(a.revisionId ?? "")) ||
           "",
-        quote: a.quote ?? "",
-        lastVerifiedAt: a.lastVerifiedAt?.trim() || new Date().toISOString(),
-      }));
+        quote: String(a.quote ?? ""),
+        lastVerifiedAt:
+          String(a.lastVerifiedAt ?? "").trim() || new Date().toISOString(),
+      }))
+      .filter((a) => a.revisionId);
 
   const det = buildDeterministicUnderstandingBody(input);
-  const evidenceRevisionIds = (body.evidenceRevisionIds ?? []).filter((id) =>
-    allowed.size === 0 ? Boolean(id) : allowed.has(id),
-  );
+  const rawEvidenceIds = Array.isArray(body.evidenceRevisionIds)
+    ? body.evidenceRevisionIds
+    : [];
+  const evidenceRevisionIds = rawEvidenceIds
+    .map(String)
+    .filter((id) =>
+      allowed.size === 0 ? Boolean(id) : allowed.has(id),
+    );
   const pins =
     evidenceRevisionIds.length > 0
       ? evidenceRevisionIds
       : det.evidenceRevisionIds;
 
-  const why = (body.why?.length ? body.why : det.why).map((w) =>
+  const pdfCount = countPdfPaths(input.events.map((e) => e.relativePath));
+  const zh = (s: string) => humanizeUserFacingText(s, { pdfCount });
+
+  const rawWhy = Array.isArray(body.why) ? body.why : [];
+  const why = (rawWhy.length ? rawWhy : det.why).map((w) =>
     normalizeWhyClaim({
       ...w,
-      evidence: filterAnchors(w.evidence ?? []),
+      text: zh(String(w?.text ?? "")),
+      evidence: filterAnchors(w?.evidence),
     }),
   );
 
+  const nextDecisionRaw = body.nextDecision as unknown;
+  const nextDecisionText =
+    typeof nextDecisionRaw === "string"
+      ? nextDecisionRaw
+      : nextDecisionRaw &&
+          typeof nextDecisionRaw === "object" &&
+          typeof (nextDecisionRaw as { text?: unknown }).text === "string"
+        ? String((nextDecisionRaw as { text: string }).text)
+        : det.nextDecision;
+
+  const rawChanged = Array.isArray(body.changed) ? body.changed : [];
+  const rawDepends = Array.isArray(body.depends) ? body.depends : [];
+
   return {
     now: {
-      text: body.now?.text?.trim() || det.now.text,
+      text: zh(body.now?.text?.trim() || det.now.text),
       evidence: filterAnchors(body.now?.evidence ?? det.now.evidence),
-      gaps: body.now?.gaps ?? det.now.gaps,
-      conflicts: body.now?.conflicts ?? det.now.conflicts,
+      gaps: humanizeUserFacingList(
+        Array.isArray(body.now?.gaps) ? body.now.gaps : det.now.gaps,
+        { pdfCount },
+      ),
+      conflicts: humanizeUserFacingList(
+        Array.isArray(body.now?.conflicts)
+          ? body.now.conflicts
+          : det.now.conflicts,
+        { pdfCount },
+      ),
     },
     then: {
-      text: body.then?.text?.trim() || det.then.text,
+      text: zh(body.then?.text?.trim() || det.then.text),
       at: body.then?.at || det.then.at,
       evidence: filterAnchors(body.then?.evidence ?? det.then.evidence),
-      gaps: body.then?.gaps ?? det.then.gaps,
-      conflicts: body.then?.conflicts ?? det.then.conflicts,
+      gaps: humanizeUserFacingList(
+        Array.isArray(body.then?.gaps) ? body.then.gaps : det.then.gaps,
+        {
+          pdfCount,
+        },
+      ),
+      conflicts: humanizeUserFacingList(
+        Array.isArray(body.then?.conflicts)
+          ? body.then.conflicts
+          : det.then.conflicts,
+        { pdfCount },
+      ),
     },
     changed:
-      body.changed?.length > 0
-        ? body.changed.map((c) => ({
-            before: c.before ?? "",
-            after: c.after ?? "",
-            eventIds: c.eventIds ?? [],
-            evidence: filterAnchors(c.evidence ?? []),
+      rawChanged.length > 0
+        ? rawChanged.map((c) => ({
+            before: zh(String(c?.before ?? "")),
+            after: zh(String(c?.after ?? "")),
+            eventIds: Array.isArray(c?.eventIds) ? c.eventIds.map(String) : [],
+            evidence: filterAnchors(c?.evidence),
           }))
         : det.changed,
     why: why.length > 0 ? why : det.why,
-    depends: body.depends?.length ? body.depends : det.depends,
+    depends: (rawDepends.length ? rawDepends : det.depends).map((d) => ({
+      ...d,
+      reason: zh(String(d?.reason ?? "")),
+    })),
     evidenceRevisionIds: pins,
-    nextDecision: body.nextDecision?.trim() || det.nextDecision,
+    nextDecision: zh(nextDecisionText.trim() || det.nextDecision),
   };
 }

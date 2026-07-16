@@ -1,11 +1,15 @@
 "use client";
 
-import { CheckCircle2, Circle, LoaderCircle } from "lucide-react";
+import { CheckCircle2, Circle, LoaderCircle, Radio } from "lucide-react";
 import {
   AGENT_PROCESS_STEPS,
   type AgentProcessStepId,
   type AgentProcessStepStatus,
 } from "../lib/agent-process";
+import {
+  buildLiveFeedFromReceipts,
+  toolTitle,
+} from "../lib/agent-canvas-live";
 import type { AgentToolReceiptSummary } from "../lib/api";
 import styles from "../workbench-entry.module.css";
 
@@ -17,31 +21,9 @@ type Props = {
   compact?: boolean;
   /** Real tool receipts from analysis-runs (not decorative). */
   toolReceipts?: AgentToolReceiptSummary[];
+  runStatus?: string | null;
+  progressSummary?: string | null;
 };
-
-function labelTool(tool: string): string {
-  switch (tool) {
-    case "project_map":
-      return "地图";
-    case "search_text":
-      return "搜索";
-    case "read_revision":
-    case "read_path":
-      return "精读";
-    case "query_project_memory":
-      return "记忆";
-    case "set_canvas_view":
-      return "画布";
-    case "git_status":
-    case "git_log":
-    case "git_diff":
-    case "git_show":
-    case "git_blame":
-      return "git";
-    default:
-      return tool;
-  }
-}
 
 export function AgentProcessPanel({
   statuses,
@@ -50,11 +32,14 @@ export function AgentProcessPanel({
   folderName,
   compact = false,
   toolReceipts = [],
+  runStatus = null,
+  progressSummary = null,
 }: Props) {
-  const receiptLines = toolReceipts
-    .slice()
-    .sort((a, b) => a.sequence - b.sequence)
-    .slice(0, 12);
+  const liveRows = buildLiveFeedFromReceipts(toolReceipts, {
+    runStatus,
+    progressSummary,
+  });
+  const isLive = runStatus === "running" || runStatus === "queued";
 
   return (
     <section
@@ -64,7 +49,9 @@ export function AgentProcessPanel({
       aria-live="polite"
     >
       <div className={styles.agentProcessHeader}>
-        <span className={styles.kicker}>进度</span>
+        <span className={styles.kicker}>
+          {isLive ? "Live" : "进度"}
+        </span>
         <h2>{compact ? "正在处理" : "它在做什么"}</h2>
         {folderName ? (
           <strong className={styles.agentProcessFolder}>{folderName}</strong>
@@ -115,17 +102,34 @@ export function AgentProcessPanel({
           );
         })}
       </ol>
-      {receiptLines.length > 0 ? (
+      {liveRows.length > 0 ? (
         <div
-          className={styles.agentToolReceipts}
+          className={styles.agentLiveFeed}
           data-testid="agent-tool-receipts"
+          data-live={isLive ? "true" : "false"}
         >
-          <span className={styles.kicker}>实际读码步骤</span>
+          <div className={styles.agentLiveFeedHeader}>
+            <span className={styles.kicker}>Live Feed</span>
+            {isLive ? (
+              <span className={styles.agentLiveBadge}>
+                <Radio size={12} aria-hidden /> 实时
+              </span>
+            ) : null}
+          </div>
           <ul>
-            {receiptLines.map((r) => (
-              <li key={`${r.sequence}-${r.tool}`}>
-                <span className={styles.agentToolTag}>{labelTool(r.tool)}</span>
-                <span>{r.summary}</span>
+            {liveRows.map((row) => (
+              <li
+                key={row.id}
+                data-live={row.live ? "true" : "false"}
+                data-outcome={row.outcome ?? ""}
+              >
+                <span className={styles.agentToolTag}>
+                  {row.tool ? toolTitle(row.tool) : row.title}
+                </span>
+                <span className={styles.agentLiveBody}>{row.body}</span>
+                {row.live ? (
+                  <LoaderCircle size={12} className={styles.spin} aria-hidden />
+                ) : null}
               </li>
             ))}
           </ul>

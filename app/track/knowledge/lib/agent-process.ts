@@ -126,7 +126,8 @@ export function deriveProcessFromRun(input: {
     return "tools";
   }
   const tools = input.toolNames ?? [];
-  if (tools.includes("read_revision")) {
+  // Real file open (revision or path) advances past search.
+  if (tools.includes("read_revision") || tools.includes("read_path")) {
     return input.runStatus === "running" ? "reason" : "evidence";
   }
   if (tools.includes("search_text") || tools.includes("search_symbols")) {

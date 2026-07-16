@@ -1,0 +1,48 @@
+agent-tool-loop-live · 2026-07-16T15:32Z
+base: http://127.0.0.1:3331
+fixture_entry: /tmp/mvp-v0-g6-d50-fixture
+fixture_symlink_ok: yes → .ship/fixtures/mvp-v0-g6-owner-project
+fixture_realpath: /Users/mahaoxuan/Desktop/黑客松/fc-opc-ibot/.ship/fixtures/mvp-v0-g6-owner-project
+runtime_data: PROJECT_MEMORY_DATA_DIR=/tmp/fc-opc-ibot-main-owner-runtime-3331
+
+## status codes
+GET  /track/knowledge/mvp                              → 200
+GET  /api/llm/health                                   → 200  ok=true model=step-3.7-flash
+GET  /api/knowledge/project-memory/connections         → 200  (recent was 高手的黑箱, not fixture)
+POST /api/knowledge/project-memory/folder-picker       → 200  selected WRONG folder (shangqiuko-hermespet); not used
+seed: insert fixture grant into runtime sqlite (API continue cannot invent rootPath)
+POST /api/knowledge/project-memory/connections continue → 200
+  projectId=71154dbe-a3d8-585d-958b-24d93ee5e841
+  grantId=grant:68ce25000344e1660e49479c8ba068291735033c7bcdf8bd612d2e8809c76767
+  matterId=matter:a20823239b4afe8de63218c8e6cb4d6bfced2688671a5fa8c27443ed0a62723b
+  reconcile: observed=41 ingested=41 matchedEventCount=7 unmatchedTraceCount=34
+POST /api/knowledge/projects/{id}/analysis-runs        → 201  (no compile error)
+
+## analysis-runs result
+runId: 59d8d88b-ab5a-4bcf-ad6d-df8635d9f9af
+status: awaiting_owner
+progressSummary: 候选已生成（工具 6 次 · 模型 1 轮）
+tool_loop_ran: YES (progressSummary contains 工具; agent_tool_receipts=6)
+modelReceipt: provider=stepfun model=step-3.7-flash effort=high calls=1 fallback.used=false
+stopReason: unknown
+
+tool receipts (seq):
+  1 project_map ok · 项目地图 depth≤3：4 项
+  2 search_text ok · TODO 命中 1
+  3-6 search_text ok · 决定/问题/当前/next 无命中
+  no read_revision in this run
+
+## candidate understanding evidence
+has_evidence_quotes: NO
+now.text: 目前还没有可核对的文件变化。
+now.evidence: []
+why[0].evidence: []
+changed[0].evidence: []
+evidenceRevisionIds: []
+basedOnEventIds: []
+nextDecision: Read each of the 4 files … with project_map/read_revision …
+
+## notes
+- analysis path live works (201) on fixture project after continue.
+- tool loop executed; candidate still has empty evidence quotes (model stopped with unknown; nextDecision asks for read_revision).
+- native picker automation on this host landed on wrong prior folder; fixture path was bound via seeded grant + continue on same runtime DB.

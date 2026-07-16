@@ -133,7 +133,16 @@ function defaultMatterId(projectId: string, grantId: string): string {
   return stableId("matter", projectId, grantId);
 }
 
-const DEFAULT_WATCH_PREFIXES = ["src"];
+/** Stable matter id for a local folder grant (same as connectLocalRoot). */
+export function matterIdForLocalGrant(
+  projectId: string,
+  grantId: string,
+): string {
+  return defaultMatterId(projectId, grantId);
+}
+
+/** Default watch: entire authorized folder (same as native picker ROOT_SENTINEL). */
+const DEFAULT_WATCH_PREFIXES = ["."];
 
 function normalizeSignalPath(grant: SourceGrant, relativePath: string): string {
   const candidate = path.resolve(grant.rootPath, relativePath);

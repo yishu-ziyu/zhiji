@@ -2069,6 +2069,15 @@ export default function KnowledgePage() {
               highlightNodeIds={canvasHighlightIds}
               viewPreset={canvasView}
               onViewPresetChange={setCanvasView}
+              agentLive={
+                agentSession?.projectId === projectId
+                  ? {
+                      toolReceipts: agentSession.toolReceipts ?? [],
+                      runStatus: agentSession.run?.status,
+                      progressSummary: agentSession.run?.progressSummary,
+                    }
+                  : null
+              }
             />
           )}
           <ProjectInspector

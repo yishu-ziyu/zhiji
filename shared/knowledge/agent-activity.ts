@@ -29,6 +29,7 @@ export function isAgentActor(actor: string): boolean {
 
 export function agentDisplayName(actor: string): string {
   if (actor === "agent:project-reviewer") return "Agent 项目复核";
+  if (actor === "agent:folder-reader") return "Agent 读夹理解";
   if (actor === "agent:external") return "外部 Agent";
   if (actor.startsWith("agent:")) {
     const slug = actor.slice("agent:".length).trim();

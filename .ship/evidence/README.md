@@ -1,1 +1,4 @@
-Historical evidence in .ship/archive/2026-07-16-process-noise/
+# Evidence
+
+Historical process dumps deleted per Owner (no archive keep).
+Living acceptance: Owner try at :3331 + fixture only.

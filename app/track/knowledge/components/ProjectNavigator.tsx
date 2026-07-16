@@ -53,7 +53,10 @@ type Props = {
   footprintMode: FootprintViewMode;
   onSelectProject: (id: string) => void;
   onOpenSearch: () => void;
+  /** Canvas "current focus" — work attention, not folder Agent. */
   onFocusAttention: () => void;
+  /** Product AI Copilot — true folder-reading Agent presence. */
+  onOpenAgentCopilot: () => void;
   onCreateWork: () => void;
   onOpenMaterials: () => void;
   onFocus: (ref: CanvasNodeRef) => void;
@@ -84,6 +87,7 @@ export function ProjectNavigator({
   onSelectProject,
   onOpenSearch,
   onFocusAttention,
+  onOpenAgentCopilot,
   onCreateWork,
   onOpenMaterials,
   onFocus,
@@ -597,9 +601,13 @@ export function ProjectNavigator({
           <span>AI Copilot</span>
           <em>Beta</em>
         </div>
-        <p>从项目材料、关系和执行记录中找到当前重点。</p>
-        <button type="button" onClick={onFocusAttention}>
-          <span>查看当前重点</span>
+        <p>在你授权的文件夹里真读材料，给出有出处的理解，请你确认。</p>
+        <button
+          type="button"
+          data-testid="nav-ai-copilot"
+          onClick={onOpenAgentCopilot}
+        >
+          <span>让 Agent 读项目夹</span>
           <Sparkles size={15} />
         </button>
       </section>

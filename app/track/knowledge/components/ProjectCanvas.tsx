@@ -41,7 +41,23 @@ import {
   filterEdgesForView,
   labelStrengthsForView,
 } from "@/shared/knowledge/canvas-command";
+import {
+  deriveNodeAgentPhase,
+  type AgentNodePhase,
+  type AgentToolReceiptLike,
+} from "../lib/agent-canvas-live";
+import {
+  applyDagreLayout,
+  type LayoutDirection,
+} from "../lib/canvas-auto-layout";
 import styles from "../project-canvas.module.css";
+
+/** Live folder-Agent bridge (tool receipts → node phase + canvas pulse). */
+export type CanvasAgentLive = {
+  toolReceipts: AgentToolReceiptLike[];
+  runStatus?: string | null;
+  progressSummary?: string | null;
+};
 
 type Props = {
   snapshot: ProjectCanvasSnapshot | null;
@@ -52,6 +68,8 @@ type Props = {
   /** canvas-menu-v1 presentation preset */
   viewPreset?: CanvasViewId;
   onViewPresetChange?: (view: CanvasViewId) => void;
+  /** Folder-Agent live work (map/search/read) — Canvasight Live Feed bridge */
+  agentLive?: CanvasAgentLive | null;
 };
 
 type GraphNodeData = {
@@ -64,6 +82,8 @@ type GraphNodeData = {
   relationStrength?: CanvasEdge["strength"];
   isCenter: boolean;
   pulse?: boolean;
+  /** Agent currently touching this node (from tool receipts). */
+  agentPhase?: AgentNodePhase;
 };
 
 type GraphEdgeData = {
@@ -226,6 +246,10 @@ function layoutFromSnapshot(
   options?: {
     view?: CanvasViewId;
     highlightIds?: Set<string>;
+    agentLive?: CanvasAgentLive | null;
+    /** When true (or no saved positions), apply dagre hierarchical layout. */
+    autoLayout?: boolean;
+    layoutDirection?: LayoutDirection;
   },
 ): {
   nodes: GraphNode[];
@@ -235,7 +259,18 @@ function layoutFromSnapshot(
 } {
   const view = options?.view ?? "now";
   const highlightIds = options?.highlightIds ?? new Set<string>();
+  const agentLive = options?.agentLive ?? null;
+  const receipts = agentLive?.toolReceipts ?? [];
   const labelStrengths = labelStrengthsForView(view);
+  const layoutDirection = options?.layoutDirection ?? "TB";
+
+  const phaseFor = (node: CanvasNode): AgentNodePhase =>
+    deriveNodeAgentPhase({
+      nodeKind: node.ref.kind,
+      nodeLabel: node.label,
+      toolReceipts: receipts,
+      runStatus: agentLive?.runStatus,
+    });
   const center = snapshot.nodes.find((n) => n.depth === 0);
   const neighbors = snapshot.nodes.filter((n) => n.depth === 1);
   const strengthRank = (node: CanvasNode) => {
@@ -287,7 +322,8 @@ function layoutFromSnapshot(
         subtitle: center.subtitle ?? "当前关注",
         state: center.state,
         isCenter: true,
-        pulse: highlightIds.has(cid),
+        pulse: highlightIds.has(cid) || phaseFor(center) === "reading",
+        agentPhase: phaseFor(center),
       },
       draggable: false,
       selectable: true,
@@ -317,11 +353,13 @@ function layoutFromSnapshot(
         label: node.label,
         subtitle: node.subtitle ?? "直接相关",
         state: node.state,
+        agentPhase: phaseFor(node),
         relationLabel: relation?.label,
         relationStatus: relation?.status,
         relationStrength: relation?.strength,
         isCenter: false,
-        pulse: highlightIds.has(id),
+        pulse:
+          highlightIds.has(id) || phaseFor(node) === "reading",
       },
       draggable: true,
       selectable: true,
@@ -334,7 +372,7 @@ function layoutFromSnapshot(
       nodeIds.has(refKey(edge.source)) && nodeIds.has(refKey(edge.target)),
   );
   const canvasEdges = filterEdgesForView(visibleEdges, view);
-  const edges: Edge[] = canvasEdges.map((edge) => {
+  let edges: Edge[] = canvasEdges.map((edge) => {
     const strength = edge.strength ?? "medium";
     const showLabel = labelStrengths.has(strength);
     // React Flow treats some punctuation poorly in ids; keep stable slug.
@@ -354,20 +392,64 @@ function layoutFromSnapshot(
     };
   });
 
+  // Dagre hierarchical layout: default when no saved positions, or forceAutoLayout.
+  const savedCount = nodes.filter((n) => Boolean(saved[n.id])).length;
+  const useDagre =
+    options?.autoLayout === true ||
+    (options?.autoLayout !== false && savedCount === 0);
+  if (useDagre && nodes.length > 0) {
+    const laid = applyDagreLayout(
+      nodes.map((n) => ({
+        id: n.id,
+        width: typeof n.width === "number" ? n.width : 196,
+        height: typeof n.height === "number" ? n.height : 96,
+        position: n.position,
+        isCenter: Boolean(n.data?.isCenter),
+      })),
+      edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+      })),
+      { direction: layoutDirection },
+    );
+    const byId = new Map(laid.nodes.map((n) => [n.id, n.position]));
+    for (const node of nodes) {
+      const pos = byId.get(node.id);
+      if (pos) node.position = pos;
+    }
+  }
+
   return { nodes, edges, overflow, canvasEdges };
 }
 
 function kindLabel(kind: CanvasNodeKind): string {
   if (kind === "card") return "材料";
-  if (kind === "work_item") return "工作";
+  if (kind === "work_item") return "任务";
   if (kind === "event") return "记录";
   if (kind === "agent") return "Agent";
   if (kind === "project") return "项目";
   return kind;
 }
 
+/** "01 核对理解" → "01" for Canvasight-style index chip. */
+function taskIndexFromLabel(label: string): string | null {
+  const m = label.trim().match(/^(\d{1,2})\s+/);
+  return m ? m[1]!.padStart(2, "0") : null;
+}
+
+function agentPhaseLabel(phase?: AgentNodePhase): string | null {
+  if (!phase || phase === "idle") return null;
+  if (phase === "mapped") return "建地图";
+  if (phase === "searched") return "已搜索";
+  if (phase === "reading") return "正在读";
+  if (phase === "done") return "已读";
+  return null;
+}
+
 function GraphNodeView({ data, selected }: NodeProps) {
   const node = data as GraphNodeData;
+  const phaseTag = agentPhaseLabel(node.agentPhase);
   if (node.isCenter) {
     return (
       <div
@@ -376,6 +458,7 @@ function GraphNodeView({ data, selected }: NodeProps) {
         }`}
         data-state={node.state}
         data-kind={node.ref.kind}
+        data-agent-phase={node.agentPhase ?? "idle"}
         data-testid={
           node.ref.kind === "project"
             ? "focus-state"
@@ -402,6 +485,11 @@ function GraphNodeView({ data, selected }: NodeProps) {
         )}
         <strong title={node.label}>{displayLabel(node.label)}</strong>
         <span>{node.subtitle ?? "当前关注"}</span>
+        {phaseTag ? (
+          <em className={styles.rfAgentPhase} data-phase={node.agentPhase}>
+            {phaseTag}
+          </em>
+        ) : null}
       </div>
     );
   }
@@ -413,6 +501,7 @@ function GraphNodeView({ data, selected }: NodeProps) {
       } ${node.pulse ? styles.rfPulse : ""}`}
       data-state={node.state}
       data-kind={node.ref.kind}
+      data-agent-phase={node.agentPhase ?? "idle"}
       data-testid={`canvas-node-${node.ref.kind}-${node.ref.id}`}
     >
       <i className={styles.rfKindBar} aria-hidden data-kind={node.ref.kind} />
@@ -421,13 +510,28 @@ function GraphNodeView({ data, selected }: NodeProps) {
       <Handle type="source" position={Position.Right} className={styles.rfHandle} />
       <Handle type="source" position={Position.Bottom} className={styles.rfHandle} />
       <span className={styles.relationNodeIcon} aria-hidden="true">
-        <NodeIcon kind={node.ref.kind} />
+        {node.ref.kind === "work_item" && taskIndexFromLabel(node.label) ? (
+          <span className={styles.rfTaskIndex}>
+            {taskIndexFromLabel(node.label)}
+          </span>
+        ) : (
+          <NodeIcon kind={node.ref.kind} />
+        )}
       </span>
       <span className={styles.relationNodeCopy}>
         <em className={styles.rfKindTag}>{kindLabel(node.ref.kind)}</em>
-        <strong title={node.label}>{displayLabel(node.label)}</strong>
+        <strong title={node.label}>
+          {node.ref.kind === "work_item"
+            ? displayLabel(node.label.replace(/^\d{1,2}\s+/, "") || node.label)
+            : displayLabel(node.label)}
+        </strong>
         <small>{node.subtitle ?? "直接相关"}</small>
       </span>
+      {phaseTag ? (
+        <em className={styles.rfAgentPhase} data-phase={node.agentPhase}>
+          {phaseTag}
+        </em>
+      ) : null}
       {node.relationLabel && node.relationStrength !== "weak" ? (
         <span
           className={styles.relationChip}
@@ -453,6 +557,9 @@ function CanvasFlow({
   onSelectEdge,
   viewPreset,
   highlightNodeIds,
+  agentLive,
+  layoutEpoch,
+  layoutDirection,
 }: {
   snapshot: ProjectCanvasSnapshot;
   onFocus: (ref: CanvasNodeRef) => void;
@@ -460,6 +567,10 @@ function CanvasFlow({
   onSelectEdge: (edge: CanvasEdge | null) => void;
   viewPreset: CanvasViewId;
   highlightNodeIds?: string[];
+  agentLive?: CanvasAgentLive | null;
+  /** Increment to force dagre re-layout (clears saved positions). */
+  layoutEpoch: number;
+  layoutDirection: LayoutDirection;
 }) {
   const projectId = snapshot.project.id;
   const focusKey = refKey(snapshot.focus);
@@ -469,14 +580,41 @@ function CanvasFlow({
     () => new Set(highlightKey ? highlightKey.split("|") : []),
     [highlightKey],
   );
+  const agentLiveKey = useMemo(() => {
+    if (!agentLive) return "";
+    const tools = (agentLive.toolReceipts ?? [])
+      .map((r) => `${r.sequence}:${r.tool}:${r.outcome}`)
+      .join(",");
+    return `${agentLive.runStatus ?? ""}|${tools}|${agentLive.progressSummary ?? ""}`;
+  }, [agentLive]);
 
   const layout = useMemo(() => {
-    const saved = readSavedPositions(projectId, focusKey);
+    const force = layoutEpoch > 0;
+    if (force) {
+      try {
+        sessionStorage.removeItem(posStorageKey(projectId, focusKey));
+      } catch {
+        /* */
+      }
+    }
+    const saved = force ? {} : readSavedPositions(projectId, focusKey);
     return layoutFromSnapshot(snapshot, saved, {
       view: viewPreset,
       highlightIds: highlightSet,
+      agentLive,
+      autoLayout: force || Object.keys(saved).length === 0,
+      layoutDirection,
     });
-  }, [snapshot, projectId, focusKey, viewPreset, highlightSet]);
+  }, [
+    snapshot,
+    projectId,
+    focusKey,
+    viewPreset,
+    highlightSet,
+    agentLiveKey,
+    layoutEpoch,
+    layoutDirection,
+  ]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
@@ -488,16 +626,32 @@ function CanvasFlow({
   const prevFocusKeyRef = useRef<string>("");
   const prevLayoutSigRef = useRef<string>("");
 
-  // Topology signature: ignore pulse-only churn; include view + node/edge ids.
+  // Topology + agent-live phase + auto-layout epoch so re-layout fitView works.
   const layoutSig = useMemo(() => {
     const nodeIds = layout.nodes.map((n) => n.id).join(",");
     const edgeIds = layout.edges.map((e) => e.id).join(",");
-    return `${focusKey}|${viewPreset}|${nodeIds}|${edgeIds}|${highlightKey}`;
-  }, [layout.nodes, layout.edges, focusKey, viewPreset, highlightKey]);
+    const phases = layout.nodes
+      .map((n) => `${n.id}:${(n.data as GraphNodeData).agentPhase ?? "idle"}`)
+      .join(",");
+    const pos = layout.nodes
+      .map((n) => `${n.id}:${Math.round(n.position.x)},${Math.round(n.position.y)}`)
+      .join(";");
+    return `${focusKey}|${viewPreset}|${nodeIds}|${edgeIds}|${highlightKey}|${agentLiveKey}|${phases}|${layoutEpoch}|${layoutDirection}|${pos}`;
+  }, [
+    layout.nodes,
+    layout.edges,
+    focusKey,
+    viewPreset,
+    highlightKey,
+    agentLiveKey,
+    layoutEpoch,
+    layoutDirection,
+  ]);
 
   useEffect(() => {
     if (prevLayoutSigRef.current === layoutSig) return;
     const focusChanged = prevFocusKeyRef.current !== focusKey;
+    const layoutForced = layoutEpoch > 0;
     prevFocusKeyRef.current = focusKey;
     prevLayoutSigRef.current = layoutSig;
 
@@ -521,7 +675,7 @@ function CanvasFlow({
       }
       if (updates.size > 0) st.updateNodeInternals(updates);
       for (const id of ids) updateNodeInternals(id);
-      if (focusChanged) {
+      if (focusChanged || layoutForced) {
         void fitView({ padding: 0.22, duration: 220, maxZoom: 1.05 });
       }
       window.setTimeout(() => {
@@ -741,10 +895,14 @@ export function ProjectCanvas({
   highlightNodeIds,
   viewPreset: viewPresetProp,
   onViewPresetChange,
+  agentLive = null,
 }: Props) {
   const [showAllAttention, setShowAllAttention] = useState(false);
   const [selectedEdge, setSelectedEdge] = useState<CanvasEdge | null>(null);
   const [localView, setLocalView] = useState<CanvasViewId>("now");
+  const [layoutEpoch, setLayoutEpoch] = useState(0);
+  const [layoutDirection, setLayoutDirection] =
+    useState<LayoutDirection>("TB");
   const viewPreset = viewPresetProp ?? localView;
   const setViewPreset = (view: CanvasViewId) => {
     if (onViewPresetChange) onViewPresetChange(view);
@@ -946,6 +1104,60 @@ export function ProjectCanvas({
             {f.label}
           </button>
         ))}
+        <button
+          type="button"
+          data-testid="canvas-auto-layout"
+          title="用 Dagre 层次布局重排节点"
+          onClick={() => {
+            setLayoutEpoch((n) => n + 1);
+          }}
+        >
+          自动布局
+        </button>
+        <button
+          type="button"
+          data-testid="canvas-layout-direction"
+          data-active={layoutDirection}
+          title="切换自上而下 / 从左到右"
+          onClick={() => {
+            setLayoutDirection((d) => (d === "TB" ? "LR" : "TB"));
+            setLayoutEpoch((n) => n + 1);
+          }}
+        >
+          {layoutDirection === "TB" ? "↓ 纵向" : "→ 横向"}
+        </button>
+      </div>
+
+      <div
+        className={styles.canvasStatsBar}
+        data-testid="canvas-stats-bar"
+        data-no-pan
+      >
+        <span>
+          <b>{snapshot.nodes.length}</b> 节点
+        </span>
+        <span>
+          <b>{snapshot.edges.length}</b> 关系
+        </span>
+        <span>
+          <b>
+            {
+              snapshot.nodes.filter(
+                (n) => n.ref.kind === "card" || n.ref.kind === "work_item",
+              ).length
+            }
+          </b>{" "}
+          材料/工作
+        </span>
+        <span data-live={agentLive?.toolReceipts?.length ? "true" : "false"}>
+          <b>{agentLive?.toolReceipts?.length ?? 0}</b> Agent 步骤
+        </span>
+        {agentLive?.runStatus === "running" ||
+        agentLive?.runStatus === "queued" ? (
+          <em className={styles.canvasStatsLive} data-testid="canvas-agent-live">
+            Live
+          </em>
+        ) : null}
       </div>
 
       <div className={styles.rfStage}>
@@ -957,6 +1169,9 @@ export function ProjectCanvas({
             onSelectEdge={setSelectedEdge}
             viewPreset={viewPreset}
             highlightNodeIds={highlightNodeIds}
+            agentLive={agentLive}
+            layoutEpoch={layoutEpoch}
+            layoutDirection={layoutDirection}
           />
         </ReactFlowProvider>
       </div>
