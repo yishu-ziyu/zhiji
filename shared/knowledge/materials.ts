@@ -80,6 +80,48 @@ export function readProjectMaterial(
   };
 }
 
+/** Strip path segments and control characters; keep a single basename. */
+export function sanitizeMaterialFileName(name: string): string {
+  const base = path.basename(name.trim()).replace(/[\u0000-\u001f<>:"|?*]/g, "_");
+  if (!base || base === "." || base === "..") {
+    throw new Error("文件名无效");
+  }
+  if (base.includes("/") || base.includes("\\")) {
+    throw new Error("文件名无效");
+  }
+  return base;
+}
+
+/**
+ * Write one local file into the project materials store under files/{projectId}/.
+ * Ownership is the projectId directory - not a global dump.
+ */
+export function writeProjectMaterial(
+  projectId: string,
+  name: string,
+  content: string,
+): MaterialFile {
+  if (!projectId.trim()) throw new Error("项目不存在");
+  if (typeof content !== "string") throw new Error("文件内容无效");
+  const safeName = sanitizeMaterialFileName(name);
+  const dir = projectMaterialsDir(projectId);
+  fs.mkdirSync(dir, { recursive: true });
+  const full = path.join(dir, safeName);
+  if (!full.startsWith(dir + path.sep) && full !== dir) {
+    throw new Error("文件名无效");
+  }
+  fs.writeFileSync(full, content, "utf8");
+  const stat = fs.statSync(full);
+  return {
+    id: safeName,
+    projectId,
+    name: safeName,
+    relativePath: safeName,
+    kind: kindFromName(safeName),
+    updatedAt: stat.mtime.toISOString(),
+  };
+}
+
 /** Very small markdown → safe HTML (headings, lists, code, paragraphs). */
 export function renderMarkdownLite(source: string): string {
   const escaped = source
