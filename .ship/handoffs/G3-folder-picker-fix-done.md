@@ -39,8 +39,8 @@ npm run test:unit -- shared/knowledge/folder-import.test.ts shared/knowledge/a6-
 
 - 不扩 E1/P1  
 - 不改 G4 文档  
-- UX1 浏览器原生确认框  
+- UX1 浏览器原生确认框
 
 ## Commit
 
-（提交后填 SHA）
+`16aebe27` · fix(knowledge): folder picker FileList snapshot and base64 upload
