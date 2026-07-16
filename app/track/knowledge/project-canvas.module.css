@@ -12,7 +12,7 @@
   min-height: 680px;
   display: grid;
   grid-template-columns: var(--pc-nav-width) minmax(690px, 1fr) clamp(286px, 20vw, 342px);
-  grid-template-rows: 82px minmax(450px, 1fr) 268px;
+  grid-template-rows: minmax(82px, auto) minmax(450px, 1fr) 268px;
   overflow: hidden;
   transition: grid-template-columns 180ms ease;
   background:
@@ -653,6 +653,7 @@
 .topbar {
   grid-column: 2 / 4;
   grid-row: 1;
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   justify-content: space-between;
