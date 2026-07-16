@@ -99,6 +99,9 @@ export default function KnowledgePage() {
   } | null>(null);
   const [projectJumpOpen, setProjectJumpOpen] = useState(false);
   const [projectJumpQuery, setProjectJumpQuery] = useState("");
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectSummary, setNewProjectSummary] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -211,6 +214,13 @@ export default function KnowledgePage() {
             loadMyOpenWork(selected.id),
             loadFootprint(),
           ]);
+        } else {
+          // Honest empty: no seed project masquerading as user work.
+          activeProjectIdRef.current = "";
+          setProjectId("");
+          setSnapshot(null);
+          setLoading(false);
+          setCreateProjectOpen(true);
         }
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "读取项目失败");
@@ -305,6 +315,75 @@ export default function KnowledgePage() {
       });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "打开文件失败");
+    }
+  }
+
+  async function handleCreateProject(event: FormEvent) {
+    event.preventDefault();
+    const name = newProjectName.trim();
+    if (!name) {
+      setError("项目名称不能为空");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await apiJson<{ project: Project }>(
+        "/api/knowledge/projects",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            summary: newProjectSummary.trim() || undefined,
+          }),
+        },
+      );
+      setProjects((prev) => [data.project, ...prev.filter((p) => p.id !== data.project.id)]);
+      setNewProjectName("");
+      setNewProjectSummary("");
+      setCreateProjectOpen(false);
+      setBusy(false);
+      setNotice("已创建项目");
+      await handleSelectProject(data.project.id);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "创建项目失败");
+      setBusy(false);
+    }
+  }
+
+  async function handleUploadMaterialFile(file: File) {
+    if (!projectId) return;
+    const mutation = beginMutation();
+    try {
+      const content = await file.text();
+      const data = await apiJson<{
+        material: { id: string; name: string };
+        card: KnowledgeCard;
+      }>(`/api/knowledge/projects/${mutation.projectId}/materials`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: file.name, content }),
+      });
+      if (!mutationIsCurrent(mutation)) return;
+      const list = await apiJson<{
+        materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
+      }>(`/api/knowledge/projects/${mutation.projectId}/materials`);
+      if (!mutationIsCurrent(mutation)) return;
+      setMaterials(list.materials);
+      await loadProjectCards(mutation.projectId);
+      if (!mutationIsCurrent(mutation)) return;
+      setMaterialView({
+        name: data.material.name,
+        content,
+        preview: false,
+      });
+      setBusy(false);
+      setNotice(`已加入项目：${data.material.name}`);
+    } catch (nextError) {
+      if (!mutationIsCurrent(mutation)) return;
+      setError(nextError instanceof Error ? nextError.message : "上传文件失败");
+      setBusy(false);
     }
   }
 
@@ -735,6 +814,8 @@ export default function KnowledgePage() {
     setNewMenuOpen(false);
   }
 
+  const isEmptyWorkspace = !loading && projects.length === 0;
+
   return (
     <main className={styles.workspace} data-testid="project-canvas-shell">
       <ProjectNavigator
@@ -763,7 +844,7 @@ export default function KnowledgePage() {
             type="submit"
             className={styles.searchSubmit}
             aria-label="搜索当前项目"
-            disabled={searching || !query.trim()}
+            disabled={searching || !query.trim() || !projectId}
           >
             <Search size={20} />
           </button>
@@ -771,8 +852,13 @@ export default function KnowledgePage() {
             ref={searchRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索当前项目的材料、任务和记录…"
+            placeholder={
+              projectId
+                ? "搜索当前项目的材料、任务和记录…"
+                : "先新建项目，再搜索材料…"
+            }
             aria-label="搜索内容"
+            disabled={!projectId}
           />
           <kbd>⌘F</kbd>
           {searching ? <span className={styles.searching}>搜索中</span> : null}
@@ -805,6 +891,7 @@ export default function KnowledgePage() {
               const first = snapshot?.attention[0];
               if (first) void handleFocus(first.target);
             }}
+            disabled={!projectId}
           >
             <Sparkles size={17} />AI Copilot
           </button>
@@ -820,13 +907,23 @@ export default function KnowledgePage() {
             </button>
             {newMenuOpen ? (
               <div className={styles.newMenu}>
-                <button type="button" onClick={() => void requestCheckpoint()}>
+                <button
+                  type="button"
+                  data-testid="open-create-project"
+                  onClick={() => {
+                    setCreateProjectOpen(true);
+                    setNewMenuOpen(false);
+                  }}
+                >
+                  <Plus size={16} /><span><strong>新建项目</strong><small>名称必填，真实接入</small></span>
+                </button>
+                <button type="button" onClick={() => void requestCheckpoint()} disabled={!projectId}>
                   <Bot size={16} /><span><strong>记录当前状态</strong><small>保存目标和下一步</small></span>
                 </button>
-                <button type="button" onClick={() => { setCreateWorkOpen(true); setNewMenuOpen(false); }}>
+                <button type="button" onClick={() => { setCreateWorkOpen(true); setNewMenuOpen(false); }} disabled={!projectId}>
                   <FilePlus2 size={16} /><span><strong>新增工作项</strong><small>写入项目和时间线</small></span>
                 </button>
-                <button type="button" onClick={() => { setCreateCardOpen(true); setNewMenuOpen(false); }}>
+                <button type="button" onClick={() => { setCreateCardOpen(true); setNewMenuOpen(false); }} disabled={!projectId}>
                   <FilePlus2 size={16} /><span><strong>新增项目材料</strong><small>加入画布并可被检索</small></span>
                 </button>
               </div>
@@ -835,29 +932,117 @@ export default function KnowledgePage() {
         </div>
       </header>
 
-      <ProjectCanvas snapshot={snapshot} loading={loading} onFocus={handleFocus} />
-      <ProjectInspector
-        key={`${snapshot?.focus.kind ?? "none"}:${snapshot?.focus.id ?? "none"}:${snapshot?.inspector.workItem?.updatedAt ?? "static"}:${checkpointOpen ? "checkpoint" : "view"}`}
-        snapshot={snapshot}
-        projectCards={projectCards}
-        busy={busy}
-        checkpointOpen={checkpointOpen}
-        onFocus={handleFocus}
-        onUpdateNextStep={handleUpdateNextStep}
-        onLinkEvidence={handleLinkEvidence}
-        onUpdateWork={handleUpdateWork}
-        onAddComment={handleAddComment}
-        onCreateRelation={handleCreateRelation}
-        onReviewRelation={handleReviewRelation}
-        onRunAgent={handleRunAgent}
-        onCheckpoint={handleCheckpoint}
-      />
-      <ProjectTimeline snapshot={snapshot} onFocus={handleFocus} />
+      {isEmptyWorkspace ? (
+        <section
+          className={styles.createModal}
+          data-testid="empty-workspace"
+          style={{
+            margin: "48px auto",
+            maxWidth: 480,
+            alignSelf: "center",
+            gridColumn: "1 / -1",
+          }}
+        >
+          <header>
+            <div>
+              <span>首用户接入</span>
+              <h2>还没有项目</h2>
+            </div>
+          </header>
+          <p style={{ margin: "0 0 12px", color: "#5c5f66", fontSize: 14, lineHeight: 1.55 }}>
+            当前环境是空的：没有预置项目，也没有示例任务。创建你的第一个项目后，再加入本地文件。
+          </p>
+          <button
+            type="button"
+            className={styles.newButton}
+            data-testid="empty-create-project"
+            onClick={() => setCreateProjectOpen(true)}
+          >
+            <Plus size={18} />新建项目
+          </button>
+        </section>
+      ) : (
+        <>
+          <ProjectCanvas snapshot={snapshot} loading={loading} onFocus={handleFocus} />
+          <ProjectInspector
+            key={`${snapshot?.focus.kind ?? "none"}:${snapshot?.focus.id ?? "none"}:${snapshot?.inspector.workItem?.updatedAt ?? "static"}:${checkpointOpen ? "checkpoint" : "view"}`}
+            snapshot={snapshot}
+            projectCards={projectCards}
+            busy={busy}
+            checkpointOpen={checkpointOpen}
+            onFocus={handleFocus}
+            onUpdateNextStep={handleUpdateNextStep}
+            onLinkEvidence={handleLinkEvidence}
+            onUpdateWork={handleUpdateWork}
+            onAddComment={handleAddComment}
+            onCreateRelation={handleCreateRelation}
+            onReviewRelation={handleReviewRelation}
+            onRunAgent={handleRunAgent}
+            onCheckpoint={handleCheckpoint}
+          />
+          <ProjectTimeline snapshot={snapshot} onFocus={handleFocus} />
+        </>
+      )}
 
       {notice || error ? (
         <div className={styles.toast} data-error={Boolean(error)}>
           <span>{error ?? notice}</span>
           <button type="button" aria-label="关闭" onClick={() => { setNotice(null); setError(null); }}><X size={15} /></button>
+        </div>
+      ) : null}
+
+      {createProjectOpen ? (
+        <div className={styles.modalBackdrop} role="presentation">
+          <form
+            className={styles.createModal}
+            data-testid="create-project-form"
+            onSubmit={handleCreateProject}
+          >
+            <header>
+              <div>
+                <span>真实项目</span>
+                <h2>新建项目</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭新建项目"
+                onClick={() => setCreateProjectOpen(false)}
+                disabled={projects.length === 0}
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <label>
+              <span>项目名称（必填）</span>
+              <input
+                value={newProjectName}
+                onChange={(event) => setNewProjectName(event.target.value)}
+                autoFocus
+                data-testid="create-project-name"
+                aria-label="项目名称"
+              />
+            </label>
+            <label>
+              <span>摘要（可选）</span>
+              <input
+                value={newProjectSummary}
+                onChange={(event) => setNewProjectSummary(event.target.value)}
+                aria-label="项目摘要"
+              />
+            </label>
+            <footer>
+              <button
+                type="button"
+                onClick={() => setCreateProjectOpen(false)}
+                disabled={projects.length === 0}
+              >
+                取消
+              </button>
+              <button type="submit" disabled={busy || !newProjectName.trim()}>
+                创建项目
+              </button>
+            </footer>
+          </form>
         </div>
       ) : null}
 
@@ -939,8 +1124,35 @@ export default function KnowledgePage() {
             </header>
             <div style={{ display: "grid", gridTemplateColumns: materialView ? "200px 1fr" : "1fr", gap: 12, minHeight: 240 }}>
               <div style={{ display: "grid", gap: 6, alignContent: "start" }}>
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "8px 10px",
+                    border: "1px dashed #c9ccd2",
+                    borderRadius: 10,
+                    cursor: busy ? "not-allowed" : "pointer",
+                    fontSize: 12,
+                    color: "#3d4047",
+                  }}
+                >
+                  <FilePlus2 size={14} />
+                  添加本地文件
+                  <input
+                    type="file"
+                    data-testid="upload-project-file"
+                    style={{ display: "none" }}
+                    disabled={busy || !projectId}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (file) void handleUploadMaterialFile(file);
+                    }}
+                  />
+                </label>
                 {materials.length === 0 ? (
-                  <p style={{ color: "#75787e", fontSize: 12 }}>还没有文件。把 Markdown 放进 data/knowledge/files/项目id/。</p>
+                  <p style={{ color: "#75787e", fontSize: 12 }}>还没有文件。选择本地文件加入当前项目。</p>
                 ) : (
                   materials.map((file) => (
                     <button
