@@ -81,6 +81,8 @@ type Props = {
     editedBody?: UnderstandingBody,
   ) => Promise<void>;
   onRerunAgent?: () => Promise<void>;
+  /** Right-rail chat → dual memory + model loop. */
+  onAgentChatSend?: (text: string) => Promise<void>;
 };
 
 const tabLabels: Array<{ id: InspectorTab; label: string }> = [
@@ -126,6 +128,7 @@ export function ProjectInspector({
   agentResolutionMessage = null,
   onResolveUnderstanding,
   onRerunAgent,
+  onAgentChatSend,
 }: Props) {
   const [tab, setTab] = useState<InspectorTab>("overview");
 
@@ -319,6 +322,7 @@ export function ProjectInspector({
             resolutionMessage={agentResolutionMessage}
             onResolve={onResolveUnderstanding}
             onRerun={onRerunAgent}
+            onChatSend={onAgentChatSend}
             busy={busy}
           />
         ) : null}

@@ -263,12 +263,18 @@ export type ContractApi = {
     projectId: string,
     matterId: string,
     eventIds: string[],
+    options?: { ownerUtterance?: string; trigger?: "source_change" | "owner_question" | "retry" },
   ): Promise<AnalysisRunResult>;
   /** Poll a durable analysis run (tool receipts + status). */
   getAnalysisRun(
     projectId: string,
     runId: string,
   ): Promise<AgentRunViewResult>;
+  /** Recent analysis runs for a project (optional matter filter). */
+  listAnalysisRuns(
+    projectId: string,
+    matterId?: string,
+  ): Promise<Array<{ id: string; status: string; progressSummary?: string }>>;
   interruptAnalysis(projectId: string, runId: string): Promise<{ run: { id: string; status: string } }>;
   resolveCandidate(
     projectId: string,
@@ -727,6 +733,15 @@ function createFixtureApi(): ContractApi {
         candidate: clone(fixtureCandidate),
       };
     },
+    async listAnalysisRuns(_projectId, _matterId) {
+      return [
+        {
+          id: "run-fixture-1",
+          status: "awaiting_owner",
+          progressSummary: "候选已生成（工具 3 次 · 模型 1 轮）",
+        },
+      ];
+    },
     async interruptAnalysis(_projectId, runId) {
       return { run: { id: runId || "run-fixture-1", status: "interrupted" } };
     },
@@ -974,7 +989,7 @@ function createHttpApi(): ContractApi {
       );
       return data.watchSet;
     },
-    async runAnalysis(nextProjectId, nextMatterId, eventIds) {
+    async runAnalysis(nextProjectId, nextMatterId, eventIds, options) {
       const data = await httpJson<{
         candidate?: UnderstandingRevision | null;
         run?: {
@@ -996,7 +1011,8 @@ function createHttpApi(): ContractApi {
           body: JSON.stringify({
             matterId: nextMatterId,
             eventIds,
-            trigger: "source_change",
+            trigger: options?.trigger ?? (options?.ownerUtterance ? "owner_question" : "source_change"),
+            ownerUtterance: options?.ownerUtterance,
           }),
         },
       );
@@ -1015,6 +1031,17 @@ function createHttpApi(): ContractApi {
         toolReceipts: data.toolReceipts ?? [],
         candidate: data.candidate ?? null,
       };
+    },
+    async listAnalysisRuns(nextProjectId, matterId) {
+      const qs = matterId
+        ? `?matterId=${encodeURIComponent(matterId)}`
+        : "";
+      const data = await httpJson<{
+        runs?: Array<{ id: string; status: string; progressSummary?: string }>;
+      }>(
+        `/api/knowledge/projects/${encodeURIComponent(nextProjectId)}/analysis-runs${qs}`,
+      );
+      return data.runs ?? [];
     },
     async interruptAnalysis(nextProjectId, runId) {
       return httpJson(

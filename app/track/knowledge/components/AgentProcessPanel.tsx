@@ -26,9 +26,12 @@ function labelTool(tool: string): string {
     case "search_text":
       return "搜索";
     case "read_revision":
+    case "read_path":
       return "精读";
     case "query_project_memory":
       return "记忆";
+    case "set_canvas_view":
+      return "画布";
     case "git_status":
     case "git_log":
     case "git_diff":

@@ -36,6 +36,11 @@ import type {
   CanvasNodeRef,
   ProjectCanvasSnapshot,
 } from "@/shared/types/knowledge";
+import {
+  type CanvasViewId,
+  filterEdgesForView,
+  labelStrengthsForView,
+} from "@/shared/knowledge/canvas-command";
 import styles from "../project-canvas.module.css";
 
 type Props = {
@@ -44,6 +49,9 @@ type Props = {
   onFocus: (ref: CanvasNodeRef) => void;
   /** Optional: pulse these node ids after search hit */
   highlightNodeIds?: string[];
+  /** canvas-menu-v1 presentation preset */
+  viewPreset?: CanvasViewId;
+  onViewPresetChange?: (view: CanvasViewId) => void;
 };
 
 type GraphNodeData = {
@@ -102,12 +110,11 @@ function writeSavedPositions(
   }
 }
 
-type EdgeFilterId = "all" | "strong" | "hide_weak";
-
-const EDGE_FILTERS: Array<{ id: EdgeFilterId; label: string }> = [
-  { id: "all", label: "全部边" },
-  { id: "strong", label: "仅重点" },
-  { id: "hide_weak", label: "藏弱边" },
+const VIEW_PRESETS: Array<{ id: CanvasViewId; label: string }> = [
+  { id: "now", label: "现在怎样" },
+  { id: "by_kind", label: "类型一眼" },
+  { id: "decision", label: "决策通路" },
+  { id: "evidence", label: "证据网" },
 ];
 
 function refKey(ref: CanvasNodeRef) {
@@ -217,7 +224,7 @@ function layoutFromSnapshot(
   snapshot: ProjectCanvasSnapshot,
   saved: PosMap,
   options?: {
-    edgeFilter?: EdgeFilterId;
+    view?: CanvasViewId;
     highlightIds?: Set<string>;
   },
 ): {
@@ -226,8 +233,9 @@ function layoutFromSnapshot(
   overflow: CanvasNode[];
   canvasEdges: CanvasEdge[];
 } {
-  const edgeFilter = options?.edgeFilter ?? "hide_weak";
+  const view = options?.view ?? "now";
   const highlightIds = options?.highlightIds ?? new Set<string>();
+  const labelStrengths = labelStrengthsForView(view);
   const center = snapshot.nodes.find((n) => n.depth === 0);
   const neighbors = snapshot.nodes.filter((n) => n.depth === 1);
   const strengthRank = (node: CanvasNode) => {
@@ -321,18 +329,14 @@ function layoutFromSnapshot(
   });
 
   const nodeIds = new Set(nodes.map((node) => node.id));
-  let canvasEdges = snapshot.edges.filter(
+  const visibleEdges = snapshot.edges.filter(
     (edge) =>
       nodeIds.has(refKey(edge.source)) && nodeIds.has(refKey(edge.target)),
   );
-  if (edgeFilter === "hide_weak") {
-    canvasEdges = canvasEdges.filter((edge) => edge.strength !== "weak");
-  } else if (edgeFilter === "strong") {
-    canvasEdges = canvasEdges.filter((edge) => edge.strength === "strong");
-  }
+  const canvasEdges = filterEdgesForView(visibleEdges, view);
   const edges: Edge[] = canvasEdges.map((edge) => {
     const strength = edge.strength ?? "medium";
-    const showLabel = strength === "strong";
+    const showLabel = labelStrengths.has(strength);
     // React Flow treats some punctuation poorly in ids; keep stable slug.
     const safeId = edge.id.replace(/>/g, "__");
     return {
@@ -447,14 +451,14 @@ function CanvasFlow({
   onFocus,
   selectedEdgeId,
   onSelectEdge,
-  edgeFilter,
+  viewPreset,
   highlightNodeIds,
 }: {
   snapshot: ProjectCanvasSnapshot;
   onFocus: (ref: CanvasNodeRef) => void;
   selectedEdgeId: string | null;
   onSelectEdge: (edge: CanvasEdge | null) => void;
-  edgeFilter: EdgeFilterId;
+  viewPreset: CanvasViewId;
   highlightNodeIds?: string[];
 }) {
   const projectId = snapshot.project.id;
@@ -469,10 +473,10 @@ function CanvasFlow({
   const layout = useMemo(() => {
     const saved = readSavedPositions(projectId, focusKey);
     return layoutFromSnapshot(snapshot, saved, {
-      edgeFilter,
+      view: viewPreset,
       highlightIds: highlightSet,
     });
-  }, [snapshot, projectId, focusKey, edgeFilter, highlightSet]);
+  }, [snapshot, projectId, focusKey, viewPreset, highlightSet]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
@@ -484,12 +488,12 @@ function CanvasFlow({
   const prevFocusKeyRef = useRef<string>("");
   const prevLayoutSigRef = useRef<string>("");
 
-  // Topology signature: ignore pulse-only churn; include filter + node/edge ids.
+  // Topology signature: ignore pulse-only churn; include view + node/edge ids.
   const layoutSig = useMemo(() => {
     const nodeIds = layout.nodes.map((n) => n.id).join(",");
     const edgeIds = layout.edges.map((e) => e.id).join(",");
-    return `${focusKey}|${edgeFilter}|${nodeIds}|${edgeIds}|${highlightKey}`;
-  }, [layout.nodes, layout.edges, focusKey, edgeFilter, highlightKey]);
+    return `${focusKey}|${viewPreset}|${nodeIds}|${edgeIds}|${highlightKey}`;
+  }, [layout.nodes, layout.edges, focusKey, viewPreset, highlightKey]);
 
   useEffect(() => {
     if (prevLayoutSigRef.current === layoutSig) return;
@@ -563,7 +567,9 @@ function CanvasFlow({
           selectedEdgeId === canvasEdge.id;
         const strength = canvasEdge.strength ?? "medium";
         const showLabel =
-          selected || touchesHover || strength === "strong";
+          selected ||
+          touchesHover ||
+          labelStrengthsForView(viewPreset).has(strength);
         const anyFocus = hoverNodeId != null || selectedEdgeId != null;
         const visual = edgeVisual(canvasEdge, {
           emphasized: selected || touchesHover,
@@ -577,7 +583,7 @@ function CanvasFlow({
         };
       }),
     );
-  }, [hoverNodeId, selectedEdgeId, setEdges]);
+  }, [hoverNodeId, selectedEdgeId, setEdges, viewPreset]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
@@ -733,10 +739,17 @@ export function ProjectCanvas({
   loading,
   onFocus,
   highlightNodeIds,
+  viewPreset: viewPresetProp,
+  onViewPresetChange,
 }: Props) {
   const [showAllAttention, setShowAllAttention] = useState(false);
   const [selectedEdge, setSelectedEdge] = useState<CanvasEdge | null>(null);
-  const [edgeFilter, setEdgeFilter] = useState<EdgeFilterId>("hide_weak");
+  const [localView, setLocalView] = useState<CanvasViewId>("now");
+  const viewPreset = viewPresetProp ?? localView;
+  const setViewPreset = (view: CanvasViewId) => {
+    if (onViewPresetChange) onViewPresetChange(view);
+    else setLocalView(view);
+  };
 
   useEffect(() => {
     setSelectedEdge(null);
@@ -919,16 +932,16 @@ export function ProjectCanvas({
 
       <div
         className={styles.edgeFilterBar}
-        data-testid="canvas-edge-filter"
+        data-testid="canvas-view-preset"
         data-no-pan
       >
-        {EDGE_FILTERS.map((f) => (
+        {VIEW_PRESETS.map((f) => (
           <button
             key={f.id}
             type="button"
-            data-active={edgeFilter === f.id ? "true" : "false"}
-            data-testid={`canvas-edge-filter-${f.id}`}
-            onClick={() => setEdgeFilter(f.id)}
+            data-active={viewPreset === f.id ? "true" : "false"}
+            data-testid={`canvas-view-preset-${f.id}`}
+            onClick={() => setViewPreset(f.id)}
           >
             {f.label}
           </button>
@@ -942,7 +955,7 @@ export function ProjectCanvas({
             onFocus={onFocus}
             selectedEdgeId={selectedEdge?.id ?? null}
             onSelectEdge={setSelectedEdge}
-            edgeFilter={edgeFilter}
+            viewPreset={viewPreset}
             highlightNodeIds={highlightNodeIds}
           />
         </ReactFlowProvider>

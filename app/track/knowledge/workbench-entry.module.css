@@ -180,6 +180,99 @@
   flex: 1;
 }
 
+/* Right-rail dual-memory chat */
+.agentChatPanel {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgba(29, 31, 35, 0.03);
+  min-width: 0;
+}
+.agentChatHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.agentChatHeader h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.agentChatHeader span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.agentChatLog {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 4px 0;
+}
+.agentChatEmpty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.agentChatTurn {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  border: 1px solid rgba(210, 210, 215, 0.7);
+}
+.agentChatTurn[data-role="user"] {
+  background: var(--blue-soft);
+  border-color: #c9dffc;
+}
+.agentChatTurn[data-role="agent"] {
+  background: #f7f7f8;
+}
+.agentChatRole {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.agentChatTurn p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.agentChatError {
+  margin: 0;
+  color: #b14f48;
+  font-size: 11px;
+}
+.agentChatComposer {
+  display: grid;
+  gap: 8px;
+}
+.agentChatComposer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+}
+.agentChatComposer textarea:focus {
+  outline: 2px solid rgba(0, 122, 255, 0.25);
+  border-color: var(--blue);
+}
+
 .inspector { grid-column: 3; grid-row: 1; min-width: 0; overflow: hidden; border-left: 1px solid rgba(220, 221, 216, .9); background: rgba(250,250,248,.76); }
 .inspectorScroll { height: 100%; overflow: auto; padding: 18px 16px 20px; }
 .statePanel, .reviewCard { margin-bottom: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: 0 8px 24px rgba(29,31,35,.035); }

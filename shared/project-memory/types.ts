@@ -288,6 +288,12 @@ export type ProjectAgentToolCall =
       input: { revisionId: string; startLine?: number; endLine?: number };
     }
   | {
+      /** Read a file under grant root by relative path (when revision id unknown). */
+      id: string;
+      name: "read_path";
+      input: { relativePath: string; startLine?: number; endLine?: number };
+    }
+  | {
       id: string;
       name: "search_text";
       input: { query: string; pathPrefix?: string; limit?: number };
@@ -342,6 +348,23 @@ export type ProjectAgentToolCall =
       id: string;
       name: "query_project_memory";
       input: { include: "accepted" | "events" | "both"; limit?: number };
+    }
+  | {
+      /**
+       * UI canvas presentation command (no disk I/O).
+       * Validated against canvas-menu-v1; Owner UI applies command.
+       */
+      id: string;
+      name: "set_canvas_view";
+      input: {
+        view: "now" | "by_kind" | "decision" | "evidence";
+        focus?: { kind: string; id: string };
+        highlightNodeKeys?: string[];
+        fold?: "1hop" | "path";
+        reason?: string;
+        intentId?: string;
+        menuVersion?: string;
+      };
     };
 
 export type AgentLoopDecision =
@@ -430,7 +453,19 @@ export type ToolReceipt = {
   errorClass?: string;
 };
 
-/** Context for future model nextStep (Wave B/C); Wave A stores the shape only. */
+/** Compact dual-memory pack (dialogue + prefs + Owner project statements). */
+export type AgentChatContextPack = {
+  writingStyle: "concise" | "detailed";
+  confirmStyle: "always" | "auto_low_risk";
+  favoritePathPrefixes: string[];
+  recentDialogue: Array<{ role: string; content: string }>;
+  ownerStatements: Array<{ id: string; text: string; createdAt: string }>;
+  openDialogueSessions: number;
+  canvasReady: boolean;
+  ownerUtterance?: string;
+};
+
+/** Context for model nextStep: project facts + optional dialogue pack. */
 export type AgentLoopContext = {
   projectId: string;
   matterId: string;
@@ -440,6 +475,8 @@ export type AgentLoopContext = {
   accepted?: UnderstandingRevision;
   toolReceiptSummaries: Array<{ sequence: number; tool: string; summary: string }>;
   budget: AgentRunBudget;
+  /** Dual memory: session dialogue + user prefs (never replaces evidence). */
+  chat?: AgentChatContextPack;
 };
 
 export type AgentRunView = {
@@ -491,6 +528,8 @@ export interface ProjectAgentRuntime {
     trigger: AnalysisRun["trigger"];
     eventIds?: string[];
     budget?: Partial<AgentRunBudget>;
+    /** Owner natural language → may force set_canvas_view tool */
+    ownerUtterance?: string;
   }): Promise<AnalysisRun>;
   get(projectId: string, runId: string): Promise<AgentRunView | null>;
   interrupt(projectId: string, runId: string): Promise<AnalysisRun>;

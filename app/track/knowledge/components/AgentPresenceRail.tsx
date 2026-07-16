@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { AgentProcessPanel } from "./AgentProcessPanel";
+import { AgentChatPanel } from "./AgentChatPanel";
 import { UnderstandingReviewCard } from "./UnderstandingReviewCard";
 import {
   resolveProcessStatuses,
@@ -38,6 +39,8 @@ type Props = {
     editedBody?: UnderstandingBody,
   ) => Promise<void>;
   onRerun?: () => Promise<void>;
+  /** Owner free-text → dialogue memory + model loop. */
+  onChatSend?: (text: string) => Promise<void>;
   busy?: boolean;
 };
 
@@ -50,6 +53,7 @@ export function AgentPresenceRail({
   resolutionMessage = null,
   onResolve,
   onRerun,
+  onChatSend,
   busy = false,
 }: Props) {
   const processView = useMemo(() => {
@@ -73,6 +77,12 @@ export function AgentPresenceRail({
 
   const candidate = session.memory?.candidate as UnderstandingRevision | undefined;
   const accepted = session.memory?.accepted as UnderstandingRevision | undefined;
+  const chatRefreshKey = [
+    session.run?.id ?? "",
+    session.run?.status ?? "",
+    session.memory?.candidate?.id ?? "",
+    session.toolReceipts.length,
+  ].join(":");
 
   return (
     <aside
@@ -89,6 +99,16 @@ export function AgentPresenceRail({
           toolReceipts={session.toolReceipts}
         />
       </div>
+
+      {onChatSend ? (
+        <AgentChatPanel
+          projectId={session.projectId}
+          matterId={session.matterId}
+          busy={busy}
+          onSend={onChatSend}
+          refreshKey={chatRefreshKey}
+        />
+      ) : null}
 
       {onResolve ? (
         <UnderstandingReviewCard

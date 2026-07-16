@@ -23,11 +23,13 @@ Primary tree:
 
 ## Product rules
 
+0. **Read `docs/product/产品清单.md` before product work.** It is the only product problem/result ledger (未完成 / 已完成). Record new product gaps there; do not invent a parallel issue file. Point peers to it.
 1. The main screen is a **filter**, not a dump of raw logs or internal names. Do not put test titles (e2e, 冒烟, smoke) in the center by default.
 2. On open: go to the **most recent project**, show **one** clear reason to look first; keep other chrome quieter.
 3. Knowledge: project files can open and render (Markdown first). Open on demand. Do not make the whole raw library the center of the canvas.
 4. Relations between evidence cards: type + evidence sentence; canvas shows one hop only.
 5. A change must **lower** understanding cost. If it adds noise, do not ship it.
+6. Canvas presentation menu: `docs/product/CANVAS_MENU_V1.md` (views + `set_canvas_view`).
 
 ## Work style
 

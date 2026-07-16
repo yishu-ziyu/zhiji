@@ -97,7 +97,14 @@ export async function getMemoryView(
     }
     const six = candidate?.body ?? state.accepted?.body ?? null;
     // Matter-relevant events only (not silent full project feed).
-    const events = filterEventsForMatter(state.recentEvents, state);
+    // Hide ledger-archived change events from the default memory view.
+    const { filterActiveEvents } = await import(
+      "@/shared/agent-memory/event-archive"
+    );
+    const events = filterActiveEvents(
+      projectId,
+      filterEventsForMatter(state.recentEvents, state),
+    );
     return {
       matter: state.matter,
       head: state.head,
@@ -143,12 +150,18 @@ export type RunAnalysisInput = {
   trigger?: AnalysisRun["trigger"];
   whySourceQuotes?: string[];
   relatedActionIds?: string[];
+  /** Owner natural language for canvas-menu-v1 set_canvas_view force path */
+  ownerUtterance?: string;
 };
 
 function pathMatchesPrefix(relativePath: string, prefix: string): boolean {
-  const path = relativePath.replace(/\\/g, "/");
+  const rel = relativePath.replace(/\\/g, "/");
   const p = prefix.replace(/\\/g, "/").replace(/\/+$/, "");
-  return path === p || path.startsWith(`${p}/`);
+  // Root sentinel (D-50): entire authorized folder.
+  if (p === "." || prefix.trim() === "." || prefix.trim() === "./") {
+    return rel.length > 0 && !rel.startsWith("/");
+  }
+  return rel === p || rel.startsWith(`${p}/`);
 }
 
 /**
@@ -255,6 +268,12 @@ export async function runStateReconstruction(
 
   // 无事件时禁止调模型编造英文空话：给短中文诚实结果。
   if (events.length === 0) {
+    const priorRaw = state.accepted?.body.now.text?.trim() ?? "";
+    const priorIsFiller =
+      !priorRaw ||
+      /no (current|prior|events)|cannot determine|no events have been/i.test(
+        priorRaw,
+      );
     body = {
       now: {
         text: "目前还没有可核对的文件变化。",
@@ -263,10 +282,12 @@ export async function runStateReconstruction(
         conflicts: [],
       },
       then: {
-        text: state.accepted?.body.now.text ?? "还没有已确认的先前理解",
-        at: state.accepted?.createdAt ?? "unknown",
-        evidence: state.accepted?.body.now.evidence ?? [],
-        gaps: state.accepted ? [] : ["尚无已确认理解"],
+        text: priorIsFiller ? "还没有已确认的先前理解" : priorRaw,
+        at: priorIsFiller
+          ? "unknown"
+          : (state.accepted?.createdAt ?? "unknown"),
+        evidence: priorIsFiller ? [] : (state.accepted?.body.now.evidence ?? []),
+        gaps: priorIsFiller ? ["尚无已确认理解"] : [],
         conflicts: [],
       },
       changed: [
@@ -302,7 +323,7 @@ export async function runStateReconstruction(
     body = {
       ...body,
       now: { ...body.now, text: `${body.now.text}（模型失败）` },
-      nextDecision: "需 Owner 判断",
+      nextDecision: "暂时无法进一步分析。你可以稍后再试，或直接修改这段理解。",
     };
     run = {
       ...run,

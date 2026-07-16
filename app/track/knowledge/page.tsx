@@ -10,6 +10,10 @@ import {
   useState,
 } from "react";
 import {
+  type CanvasViewId,
+  parseCanvasCommand,
+} from "@/shared/knowledge/canvas-command";
+import {
   Bell,
   Bot,
   ChevronDown,
@@ -59,6 +63,11 @@ import {
   type FolderProjectImport,
 } from "@/shared/knowledge/folder-import";
 import { dropOverlayHint } from "./lib/folder-drop";
+import {
+  formatFolderImportProgress,
+  formatUploadProgress,
+  resolveCopilotIntent,
+} from "./lib/copilot-intent";
 import { readDataTransferItems } from "./read-drop-entries";
 import styles from "./project-canvas.module.css";
 
@@ -104,14 +113,21 @@ export default function KnowledgePage() {
   const [footprintRevision, setFootprintRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  /** Visible progress while busy — never leave user staring at a frozen shell. */
+  const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<ProjectSearchHit[]>([]);
-  const canvasHighlightIds = useMemo(
-    () => searchResults.map((hit) => `${hit.ref.kind}:${hit.ref.id}`),
-    [searchResults],
-  );
+  const [canvasView, setCanvasView] = useState<CanvasViewId>("now");
+  const [canvasHighlightOverride, setCanvasHighlightOverride] = useState<
+    string[] | null
+  >(null);
+  const canvasHighlightIds = useMemo(() => {
+    if (canvasHighlightOverride?.length) return canvasHighlightOverride;
+    return searchResults.map((hit) => `${hit.ref.kind}:${hit.ref.id}`);
+  }, [searchResults, canvasHighlightOverride]);
   const [searching, setSearching] = useState(false);
+  const lastCanvasReceiptRef = useRef<string | null>(null);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [createWorkOpen, setCreateWorkOpen] = useState(false);
   const [createCardOpen, setCreateCardOpen] = useState(false);
@@ -335,7 +351,7 @@ export default function KnowledgePage() {
         : ({ kind: "project", id: selected.id } as const);
       activeProjectIdRef.current = selected.id;
       mutationRequestRef.current += 1;
-      setBusy(false);
+      endBusy();
       setProjectId(selected.id);
       setSnapshot(null);
       setQuery("");
@@ -534,6 +550,7 @@ export default function KnowledgePage() {
     ) {
       return;
     }
+    void hydrateFolderAgentSession(id);
 
     // M1: A6 enter project must NOT force-open materials panel.
     // Materials stay available via manual openMaterialsPanel.
@@ -543,17 +560,38 @@ export default function KnowledgePage() {
    * A5 UI: each top-level folder → create project + post materials (relative path).
    * A6: after ≥1 success, actively enter first created project (not stay on old shell).
    */
+  function startBusy(message: string) {
+    setBusy(true);
+    setBusyMessage(message);
+    setNotice(message);
+    setError(null);
+  }
+
+  function endBusy() {
+    setBusy(false);
+    setBusyMessage(null);
+  }
+
   async function handleFolderProjectImports(imports: FolderProjectImport[]) {
     if (imports.length === 0) return;
-    setBusy(true);
-    setError(null);
+    startBusy("正在接入文件夹…");
     try {
       const created: Project[] = [];
       const fileCounts: number[] = [];
       let skipped = 0;
+      const totalFolders = imports.filter((f) => f.projectName.trim()).length;
+      let folderIndex = 0;
       for (const folder of imports) {
         const name = folder.projectName.trim();
         if (!name) continue;
+        folderIndex += 1;
+        startBusy(
+          formatFolderImportProgress({
+            index: folderIndex,
+            total: totalFolders,
+            folderName: name,
+          }),
+        );
         const data = await apiJson<{ project: Project }>(
           "/api/knowledge/projects",
           {
@@ -567,7 +605,21 @@ export default function KnowledgePage() {
         );
         created.push(data.project);
         let n = 0;
-        for (const entry of folder.files) {
+        const fileTotal = folder.files.length;
+        for (let fi = 0; fi < folder.files.length; fi += 1) {
+          const entry = folder.files[fi]!;
+          if (fileTotal > 0 && (fi === 0 || (fi + 1) % 5 === 0 || fi === fileTotal - 1)) {
+            setBusyMessage(
+              `${formatFolderImportProgress({
+                index: folderIndex,
+                total: totalFolders,
+                folderName: name,
+              })} · 文件 ${fi + 1}/${fileTotal}`,
+            );
+            setNotice(
+              `${name}：正在收下文件 ${fi + 1}/${fileTotal}`,
+            );
+          }
           try {
             await apiJson(`/api/knowledge/projects/${data.project.id}/materials`, {
               method: "POST",
@@ -588,7 +640,7 @@ export default function KnowledgePage() {
       }
       if (created.length === 0) {
         // A6: whole batch failed → do not force-switch current project.
-        setBusy(false);
+        endBusy();
         setError("未能从文件夹创建项目");
         return;
       }
@@ -606,10 +658,11 @@ export default function KnowledgePage() {
       }
       setProjects(mergeProjectsForA6Enter(created, existing));
 
+      startBusy(`正在打开项目「${enterTarget.name}」…`);
       // A6: enter first successful project in this batch (not stay on 奕枢 shell).
       await enterProjectAfterImport(enterTarget);
 
-      setBusy(false);
+      endBusy();
       const names = created.map((p) => p.name).join("、");
       const skipHint = skipped > 0 ? `（跳过 ${skipped} 个无法作为文本接入的文件）` : "";
       setNotice(
@@ -619,7 +672,7 @@ export default function KnowledgePage() {
       );
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "文件夹接入失败");
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -642,21 +695,32 @@ export default function KnowledgePage() {
       return;
     }
 
-    setBusy(true);
-    setError(null);
+    startBusy(
+      list.length === 1
+        ? `准备上传：${list[0]!.name}`
+        : `准备上传 ${list.length} 个文件…`,
+    );
     try {
       let lastName = "";
       let lastCardId = "";
-      for (const file of list) {
+      for (let i = 0; i < list.length; i += 1) {
+        const file = list[i]!;
+        startBusy(
+          formatUploadProgress({
+            index: i + 1,
+            total: list.length,
+            fileName: file.name,
+          }),
+        );
         const data = await uploadFileToProject(targetId, file);
         lastName = data.material.name;
         lastCardId = data.card.id;
       }
       if (targetId === activeProjectIdRef.current) {
+        startBusy("正在刷新项目…");
         await loadProjectCards(targetId);
-        if (lastCardId) {
-          await loadSnapshot(targetId, { kind: "card", id: lastCardId });
-        }
+        // Stay on project center after upload — do not jump canvas to a random file/HTML.
+        await loadSnapshot(targetId, { kind: "project", id: targetId });
         // M1: do not force materials panel or auto-open file view.
         if (materialsOpen) {
           const materialList = await apiJson<{
@@ -671,7 +735,7 @@ export default function KnowledgePage() {
           setMaterials(materialList.materials);
         }
       }
-      setBusy(false);
+      endBusy();
       setNotice(
         list.length === 1
           ? `已收下「${lastName}」到当前项目`
@@ -679,7 +743,7 @@ export default function KnowledgePage() {
       );
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "加入文件失败");
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -690,9 +754,12 @@ export default function KnowledgePage() {
       setError("项目名称不能为空");
       return;
     }
-    setBusy(true);
-    setError(null);
     const filesToIngest = pendingFiles;
+    startBusy(
+      filesToIngest.length > 0
+        ? `正在创建项目并收下 ${filesToIngest.length} 个文件…`
+        : "正在创建项目…",
+    );
     try {
       const data = await apiJson<{ project: Project }>(
         "/api/knowledge/projects",
@@ -714,17 +781,25 @@ export default function KnowledgePage() {
 
       if (filesToIngest.length > 0) {
         let lastName = "";
-        let lastCardId = "";
-        for (const file of filesToIngest) {
+        for (let i = 0; i < filesToIngest.length; i += 1) {
+          const file = filesToIngest[i]!;
+          startBusy(
+            formatUploadProgress({
+              index: i + 1,
+              total: filesToIngest.length,
+              fileName: file.name,
+            }),
+          );
           const uploaded = await uploadFileToProject(data.project.id, file);
           lastName = uploaded.material.name;
-          lastCardId = uploaded.card.id;
         }
+        startBusy("正在刷新项目…");
         await loadProjectCards(data.project.id);
-        if (lastCardId) {
-          await loadSnapshot(data.project.id, { kind: "card", id: lastCardId });
-        }
-        setBusy(false);
+        await loadSnapshot(data.project.id, {
+          kind: "project",
+          id: data.project.id,
+        });
+        endBusy();
         setNotice(
           filesToIngest.length === 1
             ? `项目已创建，并收下「${lastName}」`
@@ -733,11 +808,11 @@ export default function KnowledgePage() {
         return;
       }
 
-      setBusy(false);
+      endBusy();
       setNotice("已创建项目");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "创建项目失败");
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -878,7 +953,7 @@ export default function KnowledgePage() {
         }
       }
       if (payloads.length === 0) {
-        setBusy(false);
+        endBusy();
         setError(
           readFailed > 0
             ? "文件夹内文件无法读取"
@@ -899,14 +974,14 @@ export default function KnowledgePage() {
           await handleIncomingFiles(originalLoose);
           return;
         }
-        setBusy(false);
+        endBusy();
         setError("未能接入所选文件");
         return;
       }
-      setBusy(false);
+      endBusy();
       setError("未能从所选文件夹识别出项目结构");
     } catch (nextError) {
-      setBusy(false);
+      endBusy();
       setError(
         nextError instanceof Error ? nextError.message : "上传文件夹失败",
       );
@@ -920,13 +995,14 @@ export default function KnowledgePage() {
     window.history[replace ? "replaceState" : "pushState"]({}, "", url);
   }
 
-  function beginMutation() {
+  function beginMutation(message = "正在处理…") {
     const context = {
       id: ++mutationRequestRef.current,
       navigation: navigationRequestRef.current,
       projectId: activeProjectIdRef.current,
     };
     setBusy(true);
+    setBusyMessage(message);
     setError(null);
     return context;
   }
@@ -935,6 +1011,98 @@ export default function KnowledgePage() {
     return context.id === mutationRequestRef.current &&
       context.navigation === navigationRequestRef.current &&
       context.projectId === activeProjectIdRef.current;
+  }
+
+  /**
+   * Restore Agent presence for a project that already has a folder grant.
+   * Used after sidebar switch / deep-link — not only after first authorize.
+   * Prefers lightweight agent-session API (no reconcile); falls back to continue.
+   * Returns session when available (for Copilot open path).
+   */
+  async function hydrateFolderAgentSession(
+    targetProjectId: string,
+  ): Promise<AgentSession | null> {
+    if (!targetProjectId) return null;
+    try {
+      const data = await apiJson<{
+        session: {
+          projectId: string;
+          matterId: string;
+          grantId?: string;
+          folderName?: string;
+          memory: AgentSession["memory"];
+          toolReceipts?: AgentSession["toolReceipts"];
+          run?: AgentSession["run"];
+        } | null;
+      }>(
+        `/api/knowledge/projects/${encodeURIComponent(targetProjectId)}/agent-session`,
+      );
+      if (activeProjectIdRef.current !== targetProjectId) return null;
+      if (data.session?.matterId) {
+        const session: AgentSession = {
+          projectId: data.session.projectId,
+          matterId: data.session.matterId,
+          grantId: data.session.grantId,
+          folderName: data.session.folderName,
+          memory: data.session.memory,
+          toolReceipts: data.session.toolReceipts ?? [],
+          run: data.session.run ?? null,
+        };
+        setAgentSession(session);
+        return session;
+      }
+
+      // Fallback: only the single most-recent connection (legacy path).
+      const recent = await folderApiRef.current.getRecentConnection();
+      if (!recent?.grantId || recent.projectId !== targetProjectId) {
+        setAgentSession(null);
+        return null;
+      }
+      const boot = await folderApiRef.current.connectConnection({
+        mode: "continue",
+        projectId: recent.projectId,
+        grantId: recent.grantId,
+      });
+      const matterId = boot.matter.id;
+      const memory = await folderApiRef.current.getMemory(
+        boot.projectId,
+        matterId,
+      );
+      const runs = await folderApiRef.current.listAnalysisRuns(
+        boot.projectId,
+        matterId,
+      );
+      const latest = runs[runs.length - 1];
+      let toolReceipts: AgentSession["toolReceipts"] = [];
+      let run: AgentSession["run"] = null;
+      if (latest?.id) {
+        try {
+          const view = await folderApiRef.current.getAnalysisRun(
+            boot.projectId,
+            latest.id,
+          );
+          toolReceipts = view.toolReceipts ?? [];
+          run = view.run;
+        } catch {
+          run = latest;
+        }
+      }
+      if (activeProjectIdRef.current !== targetProjectId) return null;
+      const session: AgentSession = {
+        projectId: boot.projectId,
+        matterId,
+        grantId: boot.grant.id,
+        folderName: boot.folderName || recent.folderName,
+        memory,
+        toolReceipts,
+        run,
+      };
+      setAgentSession(session);
+      return session;
+    } catch {
+      /* no folder grant for this project — canvas still works */
+      return null;
+    }
   }
 
   async function handleFocus(ref: CanvasNodeRef) {
@@ -960,8 +1128,40 @@ export default function KnowledgePage() {
   }
 
   /**
-   * Sidebar / topbar "AI Copilot · 查看当前重点".
-   * Never silent no-op: ranked attention first, else material evidence / card / project center.
+   * Apply canvas-menu-v1 command from Agent tool receipt (set_canvas_view).
+   * Receipt summary embeds JSON detail after first newline.
+   */
+  useEffect(() => {
+    const receipts = agentSession?.toolReceipts;
+    if (!receipts?.length) return;
+    const canvasReceipts = receipts.filter((r) => r.tool === "set_canvas_view");
+    if (!canvasReceipts.length) return;
+    const last = canvasReceipts[canvasReceipts.length - 1]!;
+    const key = `${last.sequence}:${last.summary}`;
+    if (lastCanvasReceiptRef.current === key) return;
+    lastCanvasReceiptRef.current = key;
+    const nl = last.summary.indexOf("\n");
+    const jsonPart =
+      nl >= 0 ? last.summary.slice(nl + 1).trim() : last.summary.trim();
+    try {
+      const raw = JSON.parse(jsonPart) as unknown;
+      const parsed = parseCanvasCommand(raw);
+      if (!parsed.ok) return;
+      setCanvasView(parsed.command.view);
+      if (parsed.command.highlightNodeKeys?.length) {
+        setCanvasHighlightOverride(parsed.command.highlightNodeKeys);
+      }
+      if (parsed.command.focus) {
+        void handleFocus(parsed.command.focus);
+      }
+    } catch {
+      /* ignore non-JSON receipts */
+    }
+  }, [agentSession?.toolReceipts]);
+
+  /**
+   * Sidebar "当前重点" — canvas attention only (work first).
+   * Does NOT open AI Copilot / folder Agent.
    */
   function focusCurrentAttention() {
     if (!projectId) {
@@ -975,35 +1175,131 @@ export default function KnowledgePage() {
       setNotice(first.reason || "已聚焦当前重点。");
       return;
     }
-    const evidenceCard = snapshot?.projectNow?.evidence?.[0];
-    if (evidenceCard?.id) {
-      void handleFocus({ kind: "card", id: evidenceCard.id });
-      setNotice(
-        `还没有工作项重点，已打开材料「${evidenceCard.label || "依据"}」。`,
-      );
-      return;
-    }
-    const cardNode = snapshot?.nodes.find((node) => node.ref.kind === "card");
-    if (cardNode) {
-      void handleFocus(cardNode.ref);
-      setNotice("还没有工作项重点，已打开项目材料节点。");
-      return;
-    }
+    // Prefer project center over a random material/HTML card.
     if (snapshot?.project?.id) {
       void handleFocus({ kind: "project", id: snapshot.project.id });
       setNotice(
-        "当前没有可标成重点的工作变化或材料。先放进材料，或建一个工作项。",
+        "当前没有可标成重点的工作变化。先放进材料，或建一个工作项。",
       );
       return;
     }
     setNotice("当前没有可聚焦的重点。");
   }
 
+  /**
+   * Topbar / card "AI Copilot" — true folder-reading Agent (product innovation).
+   * Never jumps to a random HTML/material card as a fake "focus".
+   */
+  async function openFolderAgentCopilot() {
+    const pre = resolveCopilotIntent({
+      projectId: projectId || null,
+      hasFolderAgent: Boolean(
+        agentSession?.projectId === projectId && agentSession?.matterId,
+      ),
+      hasCandidate: Boolean(
+        agentSession?.projectId === projectId &&
+          agentSession?.memory?.candidate,
+      ),
+      hasAccepted: Boolean(
+        agentSession?.projectId === projectId &&
+          agentSession?.memory?.accepted,
+      ),
+      runStatus:
+        agentSession?.projectId === projectId
+          ? agentSession?.run?.status
+          : null,
+    });
+    if (pre.kind === "need_project") {
+      setError(pre.message);
+      return;
+    }
+
+    setError(null);
+    // Stay on project center so right rail shows project + Agent, not a file.
+    if (projectId) {
+      await handleFocus({ kind: "project", id: projectId });
+    }
+
+    startBusy("正在接上项目 Agent…");
+    try {
+      let session: AgentSession | null =
+        agentSession?.projectId === projectId ? agentSession : null;
+      if (!session?.matterId && projectId) {
+        session = await hydrateFolderAgentSession(projectId);
+      }
+
+      const intent = resolveCopilotIntent({
+        projectId: projectId || null,
+        hasFolderAgent: Boolean(session?.matterId),
+        hasCandidate: Boolean(session?.memory?.candidate),
+        hasAccepted: Boolean(session?.memory?.accepted),
+        runStatus: session?.run?.status ?? null,
+      });
+
+      if (intent.kind === "need_folder_grant" || intent.kind === "need_project") {
+        endBusy();
+        setError(intent.message);
+        return;
+      }
+
+      setNotice(intent.message);
+      requestAnimationFrame(() => {
+        document
+          .querySelector('[data-testid="inspector-agent-process"]')
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+
+      if (intent.rerun && session?.matterId && projectId) {
+        startBusy("Agent 正在阅读授权夹…");
+        const eventIds = session.memory?.events?.map((e) => e.id) ?? [];
+        const analysis = await folderApiRef.current.runAnalysis(
+          projectId,
+          session.matterId,
+          eventIds,
+        );
+        const nextMemory = await folderApiRef.current.getMemory(
+          projectId,
+          session.matterId,
+        );
+        setAgentSession({
+          ...session,
+          memory: {
+            ...nextMemory,
+            watchSet: nextMemory.watchSet ?? session.memory?.watchSet,
+          } as AgentSession["memory"],
+          toolReceipts: analysis.toolReceipts ?? [],
+          run: analysis.run ?? null,
+        });
+        setAgentResolutionMessage(null);
+        endBusy();
+        setNotice(
+          analysis.run?.progressSummary ||
+            "阅读完成。请看右侧过程与待确认理解。",
+        );
+        requestAnimationFrame(() => {
+          document
+            .querySelector('[data-testid="inspector-agent-process"]')
+            ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+        return;
+      }
+
+      endBusy();
+    } catch (nextError) {
+      endBusy();
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Agent 未能阅读授权夹",
+      );
+    }
+  }
+
   async function handleSelectProject(id: string) {
     navigationRequestRef.current += 1;
     mutationRequestRef.current += 1;
     activeProjectIdRef.current = id;
-    setBusy(false);
+    endBusy();
     const focus = { kind: "project", id } as const;
     setProjectId(id);
     setSnapshot(null);
@@ -1026,6 +1322,7 @@ export default function KnowledgePage() {
       loadMyOpenWork(id),
       loadFootprint({ projectId: id }),
     ]);
+    void hydrateFolderAgentSession(id);
   }
 
   async function handleSearch(event: FormEvent) {
@@ -1087,12 +1384,12 @@ export default function KnowledgePage() {
         loadMyOpenWork(mutation.projectId),
       ]);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice("下一步已写入时间线");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
       setError(nextError instanceof Error ? nextError.message : "更新失败");
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -1116,11 +1413,11 @@ export default function KnowledgePage() {
         }),
       ]);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice("依据已关联并写入时间线");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setError(nextError instanceof Error ? nextError.message : "关联依据失败");
     }
   }
@@ -1144,11 +1441,11 @@ export default function KnowledgePage() {
         loadMyOpenWork(mutation.projectId),
       ]);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice("执行结果已写入项目状态和时间线");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setError(nextError instanceof Error ? nextError.message : "写入执行结果失败");
     }
   }
@@ -1168,11 +1465,11 @@ export default function KnowledgePage() {
         loadMyOpenWork(mutation.projectId),
       ]);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice("执行记录已写入时间线");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setError(nextError instanceof Error ? nextError.message : "写入记录失败");
     }
   }
@@ -1203,11 +1500,11 @@ export default function KnowledgePage() {
         loadMyOpenWork(mutation.projectId),
       ]);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice("材料关系已建立");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setError(nextError instanceof Error ? nextError.message : "建立关系失败");
     }
   }
@@ -1229,7 +1526,7 @@ export default function KnowledgePage() {
       const focus = snapshot?.focus ?? { kind: "project" as const, id: projectId };
       await loadSnapshot(mutation.projectId, focus);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice(
         data.count > 0
           ? `已提议 ${data.count} 条材料关系（均带来源句，可确认或否决）`
@@ -1237,7 +1534,7 @@ export default function KnowledgePage() {
       );
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setError(nextError instanceof Error ? nextError.message : "提议关系失败");
     }
   }
@@ -1257,11 +1554,11 @@ export default function KnowledgePage() {
       if (!mutationIsCurrent(mutation)) return;
       await loadSnapshot(mutation.projectId, snapshot.focus);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice(status === "confirmed" ? "建议关系已确认" : "建议关系已否决");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setError(nextError instanceof Error ? nextError.message : "更新关系失败");
     }
   }
@@ -1284,7 +1581,7 @@ export default function KnowledgePage() {
         loadMyOpenWork(mutation.projectId),
       ]);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice("Agent 已写回复核结果，等待你确认");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
@@ -1293,7 +1590,7 @@ export default function KnowledgePage() {
         loadMyOpenWork(mutation.projectId),
       ]);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setError(nextError instanceof Error ? nextError.message : "Agent 执行失败");
     }
   }
@@ -1321,12 +1618,12 @@ export default function KnowledgePage() {
       setCheckpointOpen(false);
       await loadSnapshot(mutation.projectId, { kind: "project", id: mutation.projectId });
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice("已保存你确认的项目状态");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
       setError(nextError instanceof Error ? nextError.message : "保存失败");
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -1360,12 +1657,12 @@ export default function KnowledgePage() {
         loadMyOpenWork(mutation.projectId),
       ]);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice("已创建工作项");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
       setError(nextError instanceof Error ? nextError.message : "创建失败");
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -1395,11 +1692,11 @@ export default function KnowledgePage() {
         handleFocus({ kind: "card", id: data.card.id }),
       ]);
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setNotice("项目材料已加入画布");
     } catch (nextError) {
       if (!mutationIsCurrent(mutation)) return;
-      setBusy(false);
+      endBusy();
       setError(nextError instanceof Error ? nextError.message : "新增材料失败");
     }
   }
@@ -1435,6 +1732,7 @@ export default function KnowledgePage() {
       data-testid="project-canvas-shell"
       data-nav-collapsed={navCollapsed ? "true" : "false"}
       data-drag-over={dragOver ? "true" : "false"}
+      data-busy={busy ? "true" : "false"}
       onDragEnter={handleWorkspaceDragEnter}
       onDragOver={handleWorkspaceDragOver}
       onDragLeave={handleWorkspaceDragLeave}
@@ -1490,6 +1788,7 @@ export default function KnowledgePage() {
           searchRef.current?.select();
         }}
         onFocusAttention={focusCurrentAttention}
+        onOpenAgentCopilot={() => void openFolderAgentCopilot()}
         onCreateWork={() => setCreateWorkOpen(true)}
         onOpenMaterials={() => void openMaterialsPanel()}
         onFocus={(ref) => void handleFocus(ref)}
@@ -1568,8 +1867,10 @@ export default function KnowledgePage() {
           <button
             type="button"
             className={styles.copilotButton}
-            onClick={focusCurrentAttention}
-            disabled={!projectId}
+            data-testid="workspace-ai-copilot"
+            onClick={() => void openFolderAgentCopilot()}
+            disabled={!projectId || busy}
+            title="在授权夹内真读并给出有出处的理解"
           >
             <Sparkles size={17} />AI Copilot
           </button>
@@ -1766,6 +2067,8 @@ export default function KnowledgePage() {
               loading={loading}
               onFocus={handleFocus}
               highlightNodeIds={canvasHighlightIds}
+              viewPreset={canvasView}
+              onViewPresetChange={setCanvasView}
             />
           )}
           <ProjectInspector
@@ -1790,7 +2093,9 @@ export default function KnowledgePage() {
             agentResolutionMessage={agentResolutionMessage}
             onResolveUnderstanding={async (decision, editedBody) => {
               if (!agentSession?.memory?.candidate) return;
-              setBusy(true);
+              startBusy(
+                decision === "reject" ? "正在拒绝这段理解…" : "正在确认理解…",
+              );
               try {
                 const result = await folderApiRef.current.resolveCandidate(
                   agentSession.projectId,
@@ -1830,12 +2135,12 @@ export default function KnowledgePage() {
                     : "确认失败",
                 );
               } finally {
-                setBusy(false);
+                endBusy();
               }
             }}
             onRerunAgent={async () => {
               if (!agentSession) return;
-              setBusy(true);
+              startBusy("Agent 正在重新阅读授权夹…");
               try {
                 const eventIds =
                   agentSession.memory?.events?.map((e) => e.id) ?? [];
@@ -1871,7 +2176,59 @@ export default function KnowledgePage() {
                     : "再读失败",
                 );
               } finally {
-                setBusy(false);
+                endBusy();
+              }
+            }}
+            onAgentChatSend={async (text) => {
+              if (!agentSession) {
+                throw new Error("请先授权文件夹，再和 Agent 对话");
+              }
+              setBusy(true);
+              try {
+                const eventIds =
+                  agentSession.memory?.events?.map((e) => e.id) ?? [];
+                const analysis = await folderApiRef.current.runAnalysis(
+                  agentSession.projectId,
+                  agentSession.matterId,
+                  eventIds,
+                  {
+                    ownerUtterance: text,
+                    trigger: "owner_question",
+                  },
+                );
+                const nextMemory = await folderApiRef.current.getMemory(
+                  agentSession.projectId,
+                  agentSession.matterId,
+                );
+                setAgentSession((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        memory: {
+                          ...nextMemory,
+                          watchSet:
+                            nextMemory.watchSet ?? prev.memory?.watchSet,
+                        } as AgentSession["memory"],
+                        toolReceipts: analysis.toolReceipts ?? [],
+                        run: analysis.run ?? null,
+                      }
+                    : prev,
+                );
+                setAgentResolutionMessage(null);
+                setNotice("Agent 已根据你的问题更新理解");
+                await loadSnapshot(agentSession.projectId, {
+                  kind: "project",
+                  id: agentSession.projectId,
+                });
+              } catch (nextError) {
+                const msg =
+                  nextError instanceof Error
+                    ? nextError.message
+                    : "对话失败";
+                setError(msg);
+                throw nextError;
+              } finally {
+                endBusy();
               }
             }}
           />
@@ -1879,8 +2236,20 @@ export default function KnowledgePage() {
         </>
       )}
 
+      {busy && busyMessage ? (
+        <div
+          className={styles.busyBanner}
+          data-testid="workspace-busy-banner"
+          role="status"
+          aria-live="polite"
+        >
+          <span className={styles.busyBannerDot} aria-hidden />
+          <span>{busyMessage}</span>
+        </div>
+      ) : null}
+
       {notice || error ? (
-        <div className={styles.toast} data-error={Boolean(error)}>
+        <div className={styles.toast} data-error={Boolean(error)} data-busy={busy ? "true" : "false"}>
           <span>{error ?? notice}</span>
           <button type="button" aria-label="关闭" onClick={() => { setNotice(null); setError(null); }}><X size={15} /></button>
         </div>
