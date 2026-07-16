@@ -126,7 +126,7 @@ it("writes new cards and work items into the selected project", async () => {
     .toEqual(["指定项目工作"]);
 });
 
-it("writes Agent start, result, and awaiting-confirmation state", async () => {
+it("writes Agent result without self-confirming work status", async () => {
   const response = await agentRunPost(
     new NextRequest(
       "http://test/api/knowledge/work-items/ka-seed-1/agent-run",
@@ -136,11 +136,21 @@ it("writes Agent start, result, and awaiting-confirmation state", async () => {
   );
   expect(response.status).toBe(200);
   const detail = getWorkItemDetail("ka-seed-1")!;
-  expect(detail.item.status).toBe("confirmed");
+  // Work stays in progress; Agent must not self-transition to 「待确认」/confirmed.
+  expect(detail.item.status).toBe("doing");
+  expect(
+    detail.events.some(
+      (event) =>
+        event.type === "status_change" &&
+        event.actor === "agent:project-reviewer" &&
+        event.meta?.toStatus === "confirmed",
+    ),
+  ).toBe(false);
   const resultEvent = detail.events.find(
     (event) =>
       event.type === "result" && event.actor === "agent:project-reviewer",
   );
+  expect(resultEvent).toBeTruthy();
   expect(resultEvent?.meta?.review).toEqual(
     expect.objectContaining({
       judgment: expect.any(String),

@@ -70,7 +70,8 @@ const workItems: ActionItem[] = [
     id: "confirmed",
     title: "待确认项",
     deadline: "2026-07-16",
-    status: "confirmed",
+    // After Agent result: stay doing; awaiting-human comes from unacked result.
+    status: "doing",
   },
   {
     ...baseItem,
@@ -92,12 +93,21 @@ const events: WorkEvent[] = [
   {
     id: "event-confirmed",
     workItemId: "confirmed",
-    type: "status_change",
+    type: "result",
     actor: "agent:project-reviewer",
-    body: "等待确认",
-    meta: { toStatus: "confirmed" },
+    body: "Agent 已写回复核结果",
+    meta: {
+      review: {
+        judgment: "需要人确认",
+        gaps: [],
+        nextStep: "核对结果",
+        evidenceIds: ["card1"],
+        mode: "deterministic",
+      },
+    },
     createdAt: "2026-07-15T09:10:00.000Z",
   },
+
   {
     id: "event-overdue",
     workItemId: "overdue",
@@ -144,7 +154,38 @@ describe("project canvas domain", () => {
     expect(result).toHaveLength(3);
     expect(result[0].evidenceEventIds).toEqual(["event-block"]);
     expect(result[1].evidenceEventIds).toEqual(["event-confirmed"]);
+    expect(result[1].reason).toMatch(/等你确认/);
+    expect(result[1].reason).not.toMatch(/知识已确认|已确认知识/);
     expect(result[2].evidenceEventIds).toEqual(["event-overdue"]);
+  });
+
+  it("treats human work status confirmed as awaiting human, not knowledge confirm", () => {
+    const humanWaiting: typeof fixture = {
+      ...fixture,
+      workItems: [
+        {
+          ...baseItem,
+          id: "human-confirm",
+          title: "人标待确认",
+          status: "confirmed",
+          deadline: "2026-07-20",
+        },
+      ],
+      events: [
+        {
+          id: "event-human-confirm",
+          workItemId: "human-confirm",
+          type: "status_change",
+          actor: "自己",
+          body: "状态 doing → confirmed",
+          meta: { fromStatus: "doing", toStatus: "confirmed" },
+          createdAt: "2026-07-15T09:15:00.000Z",
+        },
+      ],
+    };
+    const result = rankAttention(humanWaiting, NOW);
+    expect(result[0]?.reasonCode).toBe("awaiting_confirmation");
+    expect(result[0]?.reason).toMatch(/等你确认/);
   });
 
   it("marks the plan for adjustment when a blocking event exists", () => {
@@ -270,19 +311,16 @@ describe("project canvas domain", () => {
         createdAt: "2026-07-15T08:00:00.000Z",
       },
       {
-        id: "latest-confirmed",
+        id: "latest-result",
         workItemId: "confirmed",
-        type: "status_change",
+        type: "result",
         actor: "agent:project-reviewer",
-        body: "等待确认",
-        meta: { toStatus: "confirmed" },
+        body: "较新结果，等人确认",
         createdAt: "2026-07-15T09:00:00.000Z",
       },
     ];
     const timeline = buildCanvasTimeline(confirmedEvents, workItems);
-    expect(timeline.now.map((event) => event.id)).toEqual([
-      "latest-confirmed",
-    ]);
+    expect(timeline.now.map((event) => event.id)).toEqual(["latest-result"]);
     expect(timeline.history.map((event) => event.id)).toContain("old-result");
   });
 

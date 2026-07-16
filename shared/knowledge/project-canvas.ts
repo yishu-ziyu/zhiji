@@ -81,6 +81,7 @@ export function rankAttention(
       reason = `“${item.title}”已阻塞：${item.blockedReason || trigger?.body || "原因待确认"}`;
       score = 600;
     } else if (item.status === "confirmed") {
+      // Human-set work status 「待确认」 — still human attention, not knowledge L4.
       trigger = itemEvents
         .filter(
           (event) =>
@@ -90,35 +91,51 @@ export function rankAttention(
       reasonCode = "awaiting_confirmation";
       reason = `“${item.title}”已有结果，正在等你确认`;
       score = 500;
-    } else if (
-      /^\d{4}-\d{2}-\d{2}/.test(item.deadline) &&
-      Date.parse(`${item.deadline.slice(0, 10)}T23:59:59.999Z`) < nowMs
-    ) {
-      trigger = itemEvents
-        .filter((event) => event.type === "status_change")
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? latest;
-      reasonCode = "overdue";
-      reason = `“${item.title}”已超过 ${item.deadline.slice(0, 10)}，仍未结束`;
-      score = 400;
-    } else {
-      const recent = itemEvents
-        .filter((event) =>
-          ["decision", "next_step_change", "result"].includes(event.type),
-        )
+    } else if (item.status === "doing") {
+      // Agent (or anyone) left a result while work stays open — await human, do not
+      // imply knowledge confirmed. Prefer this over overdue/recent for doing items.
+      const unackedResult = itemEvents
+        .filter((event) => event.type === "result")
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-      if (recent && nowMs - Date.parse(recent.createdAt) <= 2 * DAY) {
-        trigger = recent;
-        reasonCode = recent.type === "result" ? "agent_result" : "recent_change";
-        reason = `“${item.title}”刚发生变化：${recent.body}`;
-        score = recent.type === "result" ? 320 : 350;
-      } else if (
-        item.status === "doing" &&
-        nowMs - Date.parse(item.updatedAt) >= 3 * DAY
+      if (unackedResult) {
+        trigger = unackedResult;
+        reasonCode = "awaiting_confirmation";
+        reason = `“${item.title}”已有结果，正在等你确认`;
+        score = 500;
+      }
+    }
+
+    if (!reasonCode) {
+      if (
+        /^\d{4}-\d{2}-\d{2}/.test(item.deadline) &&
+        Date.parse(`${item.deadline.slice(0, 10)}T23:59:59.999Z`) < nowMs
       ) {
-        trigger = latest;
-        reasonCode = "stale";
-        reason = `“${item.title}”已连续三天没有更新`;
-        score = 200;
+        trigger = itemEvents
+          .filter((event) => event.type === "status_change")
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? latest;
+        reasonCode = "overdue";
+        reason = `“${item.title}”已超过 ${item.deadline.slice(0, 10)}，仍未结束`;
+        score = 400;
+      } else {
+        const recent = itemEvents
+          .filter((event) =>
+            ["decision", "next_step_change", "result"].includes(event.type),
+          )
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        if (recent && nowMs - Date.parse(recent.createdAt) <= 2 * DAY) {
+          trigger = recent;
+          reasonCode = recent.type === "result" ? "agent_result" : "recent_change";
+          reason = `“${item.title}”刚发生变化：${recent.body}`;
+          score = recent.type === "result" ? 320 : 350;
+        } else if (
+          item.status === "doing" &&
+          nowMs - Date.parse(item.updatedAt) >= 3 * DAY
+        ) {
+          trigger = latest;
+          reasonCode = "stale";
+          reason = `“${item.title}”已连续三天没有更新`;
+          score = 200;
+        }
       }
     }
 

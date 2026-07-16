@@ -50,13 +50,14 @@ export async function POST(_req: NextRequest, ctx: Ctx) {
     if (review.evidenceIds.length === 0) {
       throw new Error("Agent 未引用有效依据");
     }
+    // Write result only. Do not self-transition work status to confirmed
+    // (ActionStatus.confirmed = 「待确认」 is a human work gate, not Agent knowledge confirm).
     addWorkEvent(id, {
       type: "result",
       actor: "agent:project-reviewer",
       body: `当前判断：${review.judgment}\n建议下一步：${review.nextStep}`,
       meta: { review },
     });
-    patchWorkItem(id, { status: "confirmed" }, "agent:project-reviewer");
     return NextResponse.json({ detail: getWorkItemDetail(id), review });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Agent 执行失败";
