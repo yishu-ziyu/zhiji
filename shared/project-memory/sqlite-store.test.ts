@@ -776,6 +776,61 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
     expect(run?.modelReceipt).toBeUndefined();
   });
 
+  it("reopens a queued run with its Owner question and can discover it globally", async () => {
+    await store.createRun({
+      id: "queued-after-restart",
+      projectId: "p1",
+      matterId: "m1",
+      trigger: "owner_question",
+      eventIds: [],
+      status: "queued",
+      attempt: 1,
+      ownerUtterance: "重启后继续回答这个问题",
+      createdAt: "2026-07-17T01:00:00.000Z",
+      updatedAt: "2026-07-17T01:00:00.000Z",
+    });
+
+    store.close();
+    store = new SqliteProjectMemoryStore({ dataDir: tmp });
+
+    expect(await store.getRun("p1", "queued-after-restart")).toMatchObject({
+      status: "queued",
+      ownerUtterance: "重启后继续回答这个问题",
+    });
+    expect((await store.listQueuedRuns()).map((run) => run.id)).toContain(
+      "queued-after-restart",
+    );
+  });
+
+  it("keeps per-claim Owner decisions in Project Memory SQLite across restart", () => {
+    store.saveClaimResolutionRecord({
+      id: "claim-resolution-1",
+      projectId: "p1",
+      matterId: "m1",
+      candidateRevisionId: "candidate-1",
+      claimId: "claim:candidate-1:why:0:abc",
+      decision: "accept",
+      claimText: "这是一个判断",
+      resultingClaimStatus: "owner_stated",
+      resolvedAt: "2026-07-17T01:10:00.000Z",
+    });
+
+    store.close();
+    store = new SqliteProjectMemoryStore({ dataDir: tmp });
+
+    expect(
+      store.listClaimResolutionRecords("p1", {
+        candidateRevisionId: "candidate-1",
+      }),
+    ).toMatchObject([
+      {
+        claimId: "claim:candidate-1:why:0:abc",
+        decision: "accept",
+        claimText: "这是一个判断",
+      },
+    ]);
+  });
+
   it("agent run reopen + append-only tool receipts + interrupt flag", async () => {
     const created = await store.createRun({
       id: "run-trace-1",

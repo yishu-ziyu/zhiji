@@ -39,6 +39,7 @@ import type {
   UnderstandingBody,
   UnderstandingRevision,
 } from "./types";
+import type { PersistedClaimResolution } from "./claims/types";
 import {
   gitBlobObjectId,
   isFullGitObjectId,
@@ -82,6 +83,7 @@ type AnalysisRunRow = {
   interrupt_requested?: number | null;
   candidate_revision_id?: string | null;
   progress_summary?: string | null;
+  owner_utterance?: string | null;
 };
 
 type ToolReceiptRow = {
@@ -98,6 +100,21 @@ type ToolReceiptRow = {
   started_at: string;
   finished_at: string;
   error_class: string | null;
+};
+
+type ClaimResolutionRow = {
+  id: string;
+  project_id: string;
+  matter_id: string;
+  candidate_revision_id: string;
+  claim_id: string;
+  decision: string;
+  claim_text: string;
+  resulting_claim_status: string;
+  note: string | null;
+  run_id: string | null;
+  resolved_at: string;
+  understanding_resolution_id: string | null;
 };
 
 type EventRow = {
@@ -350,6 +367,24 @@ export class SqliteProjectMemoryStore
         accepted_revision_id TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS claim_owner_resolutions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        matter_id TEXT NOT NULL,
+        candidate_revision_id TEXT NOT NULL,
+        claim_id TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        claim_text TEXT NOT NULL,
+        resulting_claim_status TEXT NOT NULL,
+        note TEXT,
+        run_id TEXT,
+        resolved_at TEXT NOT NULL,
+        understanding_resolution_id TEXT,
+        UNIQUE(candidate_revision_id, claim_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_claim_owner_resolutions_candidate
+        ON claim_owner_resolutions(project_id, candidate_revision_id, resolved_at);
+
       CREATE TABLE IF NOT EXISTS analysis_runs (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL,
@@ -360,7 +395,8 @@ export class SqliteProjectMemoryStore
         attempt INTEGER NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        error TEXT
+        error TEXT,
+        owner_utterance TEXT
       );
 
       CREATE TABLE IF NOT EXISTS outbox (
@@ -408,6 +444,8 @@ export class SqliteProjectMemoryStore
     this.ensureColumn("analysis_runs", "interrupt_requested", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("analysis_runs", "candidate_revision_id", "TEXT");
     this.ensureColumn("analysis_runs", "progress_summary", "TEXT");
+    this.ensureColumn("analysis_runs", "owner_utterance", "TEXT");
+    this.ensureColumn("source_grants", "policy_version", "TEXT");
   }
 
   /** Additive migration helper for existing DBs. */
@@ -422,13 +460,14 @@ export class SqliteProjectMemoryStore
   upsertGrant(grant: SourceGrant): void {
     this.db
       .prepare(
-        `INSERT INTO source_grants (id, project_id, kind, root_path, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO source_grants (id, project_id, kind, root_path, status, created_at, updated_at, policy_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            status=excluded.status,
            updated_at=excluded.updated_at,
            root_path=excluded.root_path,
-           kind=excluded.kind`,
+           kind=excluded.kind,
+           policy_version=excluded.policy_version`,
       )
       .run(
         grant.id,
@@ -438,6 +477,7 @@ export class SqliteProjectMemoryStore
         grant.status,
         grant.createdAt,
         grant.updatedAt,
+        grant.policyVersion ?? null,
       );
   }
 
@@ -455,6 +495,7 @@ export class SqliteProjectMemoryStore
           status: string;
           created_at: string;
           updated_at: string;
+          policy_version?: string | null;
         }
       | undefined;
     if (!row) return null;
@@ -466,6 +507,7 @@ export class SqliteProjectMemoryStore
       status: row.status as SourceGrant["status"],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      policyVersion: row.policy_version ?? undefined,
     };
   }
 
@@ -488,6 +530,7 @@ export class SqliteProjectMemoryStore
       status: string;
       created_at: string;
       updated_at: string;
+      policy_version?: string | null;
     }>;
     return rows.map((row) => ({
       id: row.id,
@@ -497,6 +540,7 @@ export class SqliteProjectMemoryStore
       status: row.status as SourceGrant["status"],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      policyVersion: row.policy_version ?? undefined,
     }));
   }
 
@@ -679,6 +723,7 @@ export class SqliteProjectMemoryStore
       interruptRequested: (row.interrupt_requested ?? 0) === 1,
       candidateRevisionId: row.candidate_revision_id ?? undefined,
       progressSummary: row.progress_summary ?? undefined,
+      ownerUtterance: row.owner_utterance ?? undefined,
     };
   }
 
@@ -1651,6 +1696,110 @@ private getRevision(id: string): OriginalRevision | null {
     };
   }
 
+  private mapClaimResolution(
+    row: ClaimResolutionRow,
+  ): PersistedClaimResolution {
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      matterId: row.matter_id,
+      candidateRevisionId: row.candidate_revision_id,
+      claimId: row.claim_id,
+      decision: row.decision as PersistedClaimResolution["decision"],
+      claimText: row.claim_text,
+      resultingClaimStatus:
+        row.resulting_claim_status as PersistedClaimResolution["resultingClaimStatus"],
+      note: row.note ?? undefined,
+      runId: row.run_id ?? undefined,
+      resolvedAt: row.resolved_at,
+      understandingResolutionId: row.understanding_resolution_id ?? undefined,
+    };
+  }
+
+  /** Per-claim Owner truth; same decision is idempotent, conflicts are explicit. */
+  saveClaimResolutionRecord(
+    input: PersistedClaimResolution,
+  ): PersistedClaimResolution {
+    const prior = this.db
+      .prepare(
+        `SELECT * FROM claim_owner_resolutions
+         WHERE candidate_revision_id = ? AND claim_id = ?`,
+      )
+      .get(input.candidateRevisionId, input.claimId) as
+      | ClaimResolutionRow
+      | undefined;
+    if (prior) {
+      const existing = this.mapClaimResolution(prior);
+      if (
+        existing.projectId === input.projectId &&
+        existing.matterId === input.matterId &&
+        existing.decision === input.decision
+      ) {
+        return existing;
+      }
+      throw new Error("该判断已被裁决，不能用相反结果覆盖");
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO claim_owner_resolutions
+         (id, project_id, matter_id, candidate_revision_id, claim_id,
+          decision, claim_text, resulting_claim_status, note, run_id,
+          resolved_at, understanding_resolution_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.projectId,
+        input.matterId,
+        input.candidateRevisionId,
+        input.claimId,
+        input.decision,
+        input.claimText,
+        input.resultingClaimStatus,
+        input.note ?? null,
+        input.runId ?? null,
+        input.resolvedAt,
+        input.understandingResolutionId ?? null,
+      );
+    return { ...input };
+  }
+
+  listClaimResolutionRecords(
+    projectId: string,
+    filter?: { candidateRevisionId?: string },
+  ): PersistedClaimResolution[] {
+    const rows = (filter?.candidateRevisionId
+      ? this.db
+          .prepare(
+            `SELECT * FROM claim_owner_resolutions
+             WHERE project_id = ? AND candidate_revision_id = ?
+             ORDER BY resolved_at ASC, rowid ASC`,
+          )
+          .all(projectId, filter.candidateRevisionId)
+      : this.db
+          .prepare(
+            `SELECT * FROM claim_owner_resolutions
+             WHERE project_id = ?
+             ORDER BY resolved_at ASC, rowid ASC`,
+          )
+          .all(projectId)) as ClaimResolutionRow[];
+    return rows.map((row) => this.mapClaimResolution(row));
+  }
+
+  linkClaimResolutionRecords(
+    candidateRevisionId: string,
+    understandingResolutionId: string,
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE claim_owner_resolutions
+         SET understanding_resolution_id = ?
+         WHERE candidate_revision_id = ?`,
+      )
+      .run(understandingResolutionId, candidateRevisionId);
+  }
+
   // --- AgentRunRepository (D-51 durable trace) ---
 
   /** On open: never leave a prior process's `running` as apparent progress. */
@@ -1686,6 +1835,7 @@ private getRevision(id: string): OriginalRevision | null {
       run.interruptRequested ? 1 : 0,
       run.candidateRevisionId ?? null,
       run.progressSummary ?? null,
+      run.ownerUtterance ?? null,
     ];
   }
 
@@ -1696,8 +1846,9 @@ private getRevision(id: string): OriginalRevision | null {
         `INSERT INTO analysis_runs
          (id, project_id, matter_id, trigger, event_ids_json, status, attempt,
           created_at, updated_at, error, grant_id, stop_reason, model_receipt_json,
-          interrupt_requested, candidate_revision_id, progress_summary)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          interrupt_requested, candidate_revision_id, progress_summary,
+          owner_utterance)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(...this.analysisRunBindParams(run));
   }
@@ -1720,7 +1871,8 @@ private getRevision(id: string): OriginalRevision | null {
            model_receipt_json = ?,
            interrupt_requested = ?,
            candidate_revision_id = ?,
-           progress_summary = ?
+           progress_summary = ?,
+           owner_utterance = ?
          WHERE id = ?`,
       )
       .run(
@@ -1739,6 +1891,7 @@ private getRevision(id: string): OriginalRevision | null {
         run.interruptRequested ? 1 : 0,
         run.candidateRevisionId ?? null,
         run.progressSummary ?? null,
+        run.ownerUtterance ?? null,
         run.id,
       );
   }
@@ -1872,6 +2025,17 @@ private getRevision(id: string): OriginalRevision | null {
             .all(projectId)
     ) as AnalysisRunRow[];
     return rows.map((r) => this.mapAnalysisRun(r));
+  }
+
+  async listQueuedRuns(): Promise<AnalysisRun[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM analysis_runs
+         WHERE status = 'queued'
+         ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all() as AnalysisRunRow[];
+    return rows.map((row) => this.mapAnalysisRun(row));
   }
 
   async appendToolReceipt(receipt: ToolReceipt): Promise<void> {
@@ -2131,6 +2295,7 @@ private getRevision(id: string): OriginalRevision | null {
       updateRun: (run) => self.updateRun(run),
       getRun: (projectId, runId) => self.getRun(projectId, runId),
       listRuns: (projectId, matterId) => self.listRuns(projectId, matterId),
+      listQueuedRuns: () => self.listQueuedRuns(),
       appendToolReceipt: (receipt) => self.appendToolReceipt(receipt),
       listToolReceipts: (runId) => self.listToolReceipts(runId),
       requestInterrupt: (projectId, runId) =>

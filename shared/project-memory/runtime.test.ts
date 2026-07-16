@@ -20,13 +20,20 @@ describe("project-memory shared runtime identity", () => {
 
   it("resolveProjectMemoryDataDir is stable under knowledge root (not .data/project-memory)", () => {
     const cwd = "/tmp/fake-cwd";
-    const fromDefault = resolveProjectMemoryDataDir({}, cwd);
-    expect(fromDefault).toBe(
+    const fromDefault = resolveProjectMemoryDataDir(
+      process.env as NodeJS.ProcessEnv,
+      cwd,
+    );
+    // Prefer explicit empty env object with NODE_ENV for typing.
+    const emptyEnv = { NODE_ENV: "test" } as NodeJS.ProcessEnv;
+    const fromEmpty = resolveProjectMemoryDataDir(emptyEnv, cwd);
+    expect(fromEmpty).toBe(
       path.resolve(cwd, "data", "knowledge", "project-memory"),
     );
+    void fromDefault;
 
     const fromKnowledge = resolveProjectMemoryDataDir(
-      { KNOWLEDGE_DATA_DIR: "/var/knowledge" },
+      { NODE_ENV: "test", KNOWLEDGE_DATA_DIR: "/var/knowledge" } as NodeJS.ProcessEnv,
       cwd,
     );
     expect(fromKnowledge).toBe(
@@ -34,7 +41,7 @@ describe("project-memory shared runtime identity", () => {
     );
 
     const explicit = resolveProjectMemoryDataDir(
-      { PROJECT_MEMORY_DATA_DIR: "/explicit/pm" },
+      { NODE_ENV: "test", PROJECT_MEMORY_DATA_DIR: "/explicit/pm" } as NodeJS.ProcessEnv,
       cwd,
     );
     expect(explicit).toBe(path.resolve("/explicit/pm"));

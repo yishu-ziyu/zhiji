@@ -12,6 +12,8 @@ export type SourceGrant = {
   status: "active" | "disabled" | "revoked";
   createdAt: string;
   updatedAt: string;
+  /** Grant access policy version applied at connect (PR-03). */
+  policyVersion?: string;
 };
 
 export type OriginalRevision = {
@@ -183,6 +185,8 @@ export type AnalysisRun = {
   interruptRequested?: boolean;
   candidateRevisionId?: string;
   progressSummary?: string;
+  /** Durable owner utterance for async workers after process restart. */
+  ownerUtterance?: string;
 };
 
 /** Observer → memory ingest signal (not knowledge). */
@@ -490,6 +494,8 @@ export interface AgentRunRepository {
   updateRun(run: AnalysisRun): Promise<AnalysisRun>;
   getRun(projectId: string, runId: string): Promise<AnalysisRun | null>;
   listRuns(projectId: string, matterId?: string): Promise<AnalysisRun[]>;
+  /** Global durable queue discovery for a fresh worker process. */
+  listQueuedRuns(): Promise<AnalysisRun[]>;
   appendToolReceipt(receipt: ToolReceipt): Promise<void>;
   listToolReceipts(runId: string): Promise<ToolReceipt[]>;
   requestInterrupt(projectId: string, runId: string): Promise<AnalysisRun>;
@@ -530,6 +536,11 @@ export interface ProjectAgentRuntime {
     budget?: Partial<AgentRunBudget>;
     /** Owner natural language → may force set_canvas_view tool */
     ownerUtterance?: string;
+    /**
+     * When set (async worker path), reuse this durable run id for receipts/SSE.
+     * Must already exist as queued/running for the same project+matter.
+     */
+    runId?: string;
   }): Promise<AnalysisRun>;
   get(projectId: string, runId: string): Promise<AgentRunView | null>;
   interrupt(projectId: string, runId: string): Promise<AnalysisRun>;

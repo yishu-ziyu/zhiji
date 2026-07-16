@@ -144,6 +144,8 @@ function candidateAlreadyResolved(
 }
 
 export type RunAnalysisInput = {
+  /** Reuse durable async run id (receipts/SSE same as outer). */
+  runId?: string;
   projectId: string;
   matterId: string;
   eventIds?: string[];

@@ -1,6 +1,9 @@
 /**
  * Source-backed understanding gates — product innovation control.
  * A claim is only "read the folder" when usable file evidence is present.
+ *
+ * vNext (PR-07): never auto-fill unrelated pins onto claims that lack evidence.
+ * Missing evidence → unsupported / honest unknown, not fabricated support.
  */
 import type { EvidenceAnchor, UnderstandingBody } from "./types";
 
@@ -42,8 +45,11 @@ export function collectUsableEvidence(
 }
 
 /**
- * Ensure body carries real tool pins. Without pins, demote to honest unknown
- * (caller may still refuse to save as a successful candidate).
+ * Enforce source-backed claims without inventing support links.
+ *
+ * - If the run produced zero usable pins: demote body to honest unknown.
+ * - If a claim says supported but has no usable evidence: demote to unsupported.
+ * - Never attach random pins to fill empty evidence arrays.
  */
 export function enforceSourceBackedBody(
   body: UnderstandingBody,
@@ -75,40 +81,48 @@ export function enforceSourceBackedBody(
     };
   }
 
-  const nowEvidence = (() => {
-    const existing = (body.now?.evidence ?? []).filter(isUsableEvidenceAnchor);
-    return existing.length > 0 ? existing : usable.slice(0, 4);
-  })();
+  const nowExisting = (body.now?.evidence ?? []).filter(isUsableEvidenceAnchor);
+  const nowGaps = [...(body.now?.gaps ?? [])];
+  if (nowExisting.length === 0) {
+    if (!nowGaps.some((g) => /缺少|无可用|无引用|unsupported/i.test(g))) {
+      nowGaps.push("当前摘要缺少直接引用；下列结论须各自自带出处");
+    }
+  }
 
   const why =
     body.why?.length > 0
       ? body.why.map((w) => {
-          const has = (w.evidence ?? []).some(isUsableEvidenceAnchor);
-          if (w.status === "supported" && !has) {
+          const claimEvidence = (w.evidence ?? []).filter(isUsableEvidenceAnchor);
+          if (claimEvidence.length > 0) {
+            return { ...w, evidence: claimEvidence };
+          }
+          // No auto-fill. Supported without evidence is dishonest → unknown.
+          // (WhyClaim.status has no "unsupported"; product shows unknown + empty evidence.)
+          if (w.status === "supported") {
             return {
               ...w,
-              status: "supported" as const,
-              evidence: usable.slice(0, 2),
+              status: "unknown" as const,
+              evidence: [],
             };
           }
-          if (!has && usable.length > 0) {
-            return {
-              ...w,
-              evidence:
-                w.evidence && w.evidence.length > 0
-                  ? w.evidence
-                  : usable.slice(0, 2),
-            };
-          }
-          return w;
+          return {
+            ...w,
+            evidence: [],
+          };
         })
       : [
           {
-            text: usable[0]!.quote.slice(0, 120),
-            status: "supported" as const,
-            evidence: usable.slice(0, 2),
+            text: "已读到材料，但模型未给出可绑定的具体判断。",
+            status: "unknown" as const,
+            evidence: [],
           },
         ];
+
+  const bodyUsable = collectUsableEvidence({
+    ...body,
+    now: { ...body.now, evidence: nowExisting, gaps: nowGaps, conflicts: body.now?.conflicts ?? [], text: body.now?.text ?? "" },
+    why,
+  });
 
   return {
     ...body,
@@ -116,22 +130,41 @@ export function enforceSourceBackedBody(
       ...body.now,
       text:
         body.now?.text?.trim() ||
-        `已从授权夹读到 ${usable[0]!.relativePath} 等材料。`,
-      evidence: nowEvidence,
-      gaps: (body.now?.gaps ?? []).filter((g) => !/缺少可引用/.test(g)),
+        (nowExisting[0]
+          ? `已从授权夹读到 ${nowExisting[0].relativePath} 等材料。`
+          : "已读取授权夹，但摘要尚未绑定具体摘录。"),
+      evidence: nowExisting,
+      gaps: nowGaps.filter((g) => !/缺少可引用原文$/.test(g) || nowExisting.length === 0),
       conflicts: body.now?.conflicts ?? [],
     },
     why,
     evidenceRevisionIds: [
       ...new Set([
         ...(body.evidenceRevisionIds ?? []),
+        ...bodyUsable.map((p) => p.revisionId),
         ...usable.map((p) => p.revisionId),
       ]),
     ],
   };
 }
 
-/** Grant-scoped path check: relativePath must be under known fixture paths when provided. */
+/**
+ * Quote integrity: the quote must appear in the provided revision text.
+ * Callers pass revision bytes/text from CAS; empty text fails closed.
+ */
+export function quoteExistsInRevisionText(
+  quote: string,
+  revisionText: string,
+): boolean {
+  const q = quote.trim();
+  if (!q || !revisionText) return false;
+  return revisionText.includes(q);
+}
+
+/**
+ * Grant-scoped path check: relativePath must be under known fixture paths when provided.
+ * vNext: no loose suffix guessing across unrelated paths.
+ */
 export function evidencePathsInGrant(
   evidence: EvidenceAnchor[],
   allowedRelativePaths: string[],
@@ -144,13 +177,11 @@ export function evidencePathsInGrant(
   return evidence.every((e) => {
     const rel = e.relativePath.replace(/\\/g, "/");
     if (allowed.has(rel)) return true;
-    // prefix allow for nested
     for (const a of allowed) {
       if (rel === a || rel.startsWith(a.endsWith("/") ? a : `${a}/`)) {
         return true;
       }
     }
-    // also accept if any allowed file is a suffix match of pin path
-    return [...allowed].some((a) => rel.endsWith(a) || a.endsWith(rel));
+    return false;
   });
 }

@@ -484,36 +484,65 @@ export function createProjectAgentRuntime(
       const tipEvents = events.length > 0 ? events : grantEvents;
 
       const now = new Date().toISOString();
-      let run: AnalysisRun = {
-        id: randomUUID(),
-        projectId: input.projectId,
-        matterId: input.matterId,
-        grantId,
-        trigger: input.trigger,
-        eventIds: events.map((e) => e.id),
-        status: "running",
-        attempt: 1,
-        createdAt: now,
-        updatedAt: now,
-        progressSummary: "开始工具环",
-      };
-
-      // Persist run if repository available
-      try {
-        await store.createRun(run);
-      } catch {
-        /* createRun may already exist in older stores — ignore */
+      const reuseId = input.runId?.trim();
+      let run: AnalysisRun;
+      if (reuseId) {
+        const existing = await store.getRun(input.projectId, reuseId);
+        if (!existing) {
+          throw new Error(`async run not found for reuse: ${reuseId}`);
+        }
+        if (existing.matterId !== input.matterId) {
+          throw new Error("async run matterId mismatch");
+        }
+        run = {
+          ...existing,
+          grantId: existing.grantId ?? grantId,
+          trigger: input.trigger,
+          eventIds:
+            existing.eventIds.length > 0
+              ? existing.eventIds
+              : events.map((e) => e.id),
+          status: "running",
+          interruptRequested: false,
+          progressSummary: "开始工具环",
+          updatedAt: now,
+        };
+        try {
+          run = await store.updateRun(run);
+        } catch {
+          /* continue with in-memory */
+        }
+      } else {
+        run = {
+          id: randomUUID(),
+          projectId: input.projectId,
+          matterId: input.matterId,
+          grantId,
+          trigger: input.trigger,
+          eventIds: events.map((e) => e.id),
+          status: "running",
+          attempt: 1,
+          createdAt: now,
+          updatedAt: now,
+          progressSummary: "开始工具环",
+        };
       }
 
-      // Dialogue + Owner project statements: chat survives, and understanding elevates.
+      // Persist run if new; reuse path already updateRun'd
+      if (!reuseId) {
+        try {
+          await store.createRun(run);
+        } catch {
+          /* createRun may already exist in older stores — ignore */
+        }
+      }
+
+      // Dialogue: chat survives as session-only. Never auto-elevate to project truth (PR-06).
       let dialogueSessionId: string | undefined;
       const utteranceForDialogue = input.ownerUtterance?.trim();
       if (utteranceForDialogue) {
         try {
           const dialogue = await import("@/shared/agent-memory/dialogue-store");
-          const statements = await import(
-            "@/shared/agent-memory/owner-statements"
-          );
           const open =
             dialogue
               .listDialogueSessions(input.projectId)
@@ -524,21 +553,15 @@ export function createProjectAgentRuntime(
               title: "与 Agent 对话",
             });
           dialogueSessionId = open.id;
-          const userMsg = dialogue.appendDialogueMessage({
+          dialogue.appendDialogueMessage({
             sessionId: open.id,
             role: "user",
             content: utteranceForDialogue,
           });
-          // Elevate: Owner speech about the project becomes durable project fact.
-          statements.recordOwnerProjectStatement({
-            projectId: input.projectId,
-            matterId: input.matterId,
-            text: utteranceForDialogue,
-            source: "chat",
-            dialogueMessageId: userMsg.id,
-          });
+          // Intentionally NOT calling recordOwnerProjectStatement here.
+          // Chat stays session-scoped until Owner explicitly confirms a candidate.
         } catch {
-          /* dialogue / statements best-effort */
+          /* dialogue best-effort */
         }
       }
 
@@ -1090,6 +1113,60 @@ export function createProjectAgentRuntime(
 
       // Hard product gate: usable in-grant file evidence required.
       finalBody = enforceSourceBackedBody(finalBody, allPins);
+      // PR-12: structured Claim demotion — supports only with verified revision text.
+      try {
+        const { buildClaimBundleFromWhy } = await import(
+          "@/shared/project-memory/claims/claim-service"
+        );
+        const revisionTexts: Record<string, string> = {};
+        for (const pin of allPins) {
+          if (!pin.revisionId || pin.revisionId.startsWith("path:")) continue;
+          if (revisionTexts[pin.revisionId]) continue;
+          try {
+            const bytes = await store.readRevision(pin.revisionId);
+            if (bytes) {
+              revisionTexts[pin.revisionId] = new TextDecoder("utf-8", {
+                fatal: false,
+              }).decode(bytes);
+            }
+          } catch {
+            /* missing revision → claim-service refuses supports */
+          }
+        }
+        const bundle = buildClaimBundleFromWhy(finalBody, allPins, {
+          projectId: input.projectId,
+          matterId: input.matterId,
+          runId: run.id,
+          revisionTexts,
+        });
+        if (bundle.claims.length > 0 && finalBody.why?.length) {
+          finalBody = {
+            ...finalBody,
+            why: finalBody.why.map((w, i) => {
+              const c = bundle.claims[i];
+              if (!c) return w;
+              const status =
+                c.status === "supported"
+                  ? ("supported" as const)
+                  : c.status === "conflicted"
+                    ? ("conflicted" as const)
+                    : c.status === "unknown"
+                      ? ("unknown" as const)
+                      : ("unknown" as const);
+              // unsupported / partially / owner_stated → not "supported"
+              if (
+                c.status === "unsupported" ||
+                c.status === "partially_supported"
+              ) {
+                return { ...w, status: "unknown" as const, evidence: w.evidence ?? [] };
+              }
+              return { ...w, status };
+            }),
+          };
+        }
+      } catch {
+        /* claim service optional if types drift */
+      }
       // Re-apply after evidence gate so pin/unknown paths do not erase Owner speech.
       finalBody = await elevateOwnerStatements(finalBody);
       const usablePins = allPins.filter(isUsableEvidenceAnchor);
@@ -1241,6 +1318,7 @@ export async function runToolAugmentedAnalysis(
     trigger: input.trigger ?? "source_change",
     eventIds: input.eventIds,
     ownerUtterance,
+    runId: input.runId,
   });
 
   let toolReceipts: ToolReceipt[] = [];

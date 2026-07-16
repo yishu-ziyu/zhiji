@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { createProjectAgentRuntime } from "@/shared/project-memory/agent-runtime";
+import { checkLocalTrustFromRequest } from "@/shared/security/local-session";
 
 type Ctx = { params: Promise<{ id: string; runId: string }> };
 
 /** Owner interrupt for an in-flight analysis run. */
 export async function POST(_req: Request, ctx: Ctx) {
+  const trust = checkLocalTrustFromRequest(_req);
+  if (!trust.ok) {
+    return NextResponse.json({ error: trust.error }, { status: trust.status });
+  }
   const { id: projectId, runId } = await ctx.params;
   try {
     if (!runId?.trim()) {
