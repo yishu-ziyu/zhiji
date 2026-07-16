@@ -6,11 +6,12 @@ export type MaterialKind =
   | "text"
   | "html"
   | "image"
+  | "audio"
   | "binary"
   | "other";
 
-/** How the overview / materials panel should present a file (A7/A8). */
-export type MaterialPreviewMode = "text" | "image" | "unsupported";
+/** How the overview / materials panel should present a file (A7/A8/M2). */
+export type MaterialPreviewMode = "text" | "image" | "audio" | "unsupported";
 
 export type MaterialFile = {
   id: string;
@@ -19,6 +20,8 @@ export type MaterialFile = {
   relativePath: string;
   kind: MaterialKind;
   updatedAt: string;
+  /** Byte size when known (list/detail). */
+  sizeBytes?: number;
 };
 
 export type MaterialReadResult = {
@@ -27,9 +30,12 @@ export type MaterialReadResult = {
   content: string;
   previewMode: MaterialPreviewMode;
   mimeType: string;
+  /** User-facing type phrase (M2: 音频/图片/文档…). */
   typeLabel: string;
-  /** data: URL for image preview when bytes are available. */
+  /** data: URL for image/audio preview when bytes are available. */
   dataUrl?: string;
+  sizeBytes?: number;
+  sizeLabel?: string;
   /** Human-readable unsupported hint (A7). */
   unsupportedMessage?: string;
 };
@@ -56,6 +62,16 @@ const IMAGE_EXT = new Set([
   ".ico",
 ]);
 
+const AUDIO_EXT = new Set([
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".aac",
+  ".ogg",
+  ".flac",
+  ".opus",
+]);
+
 const BINARY_EXT = new Set([
   ".pdf",
   ".zip",
@@ -71,13 +87,10 @@ const BINARY_EXT = new Set([
   ".dll",
   ".bin",
   ".wasm",
-  ".mp3",
   ".mp4",
   ".webm",
   ".mov",
   ".avi",
-  ".ogg",
-  ".wav",
 ]);
 
 const TEXT_EXT = new Set([
@@ -116,6 +129,7 @@ export function kindFromName(name: string): MaterialKind {
   if (lower.endsWith(".txt")) return "text";
   const ext = extensionOf(lower);
   if (IMAGE_EXT.has(ext)) return "image";
+  if (AUDIO_EXT.has(ext)) return "audio";
   if (BINARY_EXT.has(ext)) return "binary";
   if (TEXT_EXT.has(ext)) return "text";
   return "other";
@@ -139,6 +153,19 @@ export function mimeFromName(name: string): string {
       return "image/svg+xml";
     case ".ico":
       return "image/x-icon";
+    case ".mp3":
+      return "audio/mpeg";
+    case ".wav":
+      return "audio/wav";
+    case ".m4a":
+      return "audio/mp4";
+    case ".aac":
+      return "audio/aac";
+    case ".ogg":
+    case ".opus":
+      return "audio/ogg";
+    case ".flac":
+      return "audio/flac";
     case ".pdf":
       return "application/pdf";
     case ".md":
@@ -156,9 +183,33 @@ export function mimeFromName(name: string): string {
   }
 }
 
+/** User-facing type phrase for list/detail (M2). Never lead with binary/other. */
 export function typeLabelFromName(name: string): string {
-  const ext = extensionOf(name).replace(/^\./, "");
-  return ext || "unknown";
+  const kind = kindFromName(name);
+  switch (kind) {
+    case "markdown":
+    case "text":
+    case "html":
+      return "文档";
+    case "image":
+      return "图片";
+    case "audio":
+      return "音频";
+    case "binary":
+      return "文件";
+    default:
+      return "其他";
+  }
+}
+
+export function formatByteSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "未知大小";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 export function isTextPreviewKind(kind: MaterialKind): boolean {
@@ -198,11 +249,11 @@ export function unsupportedPreviewMessage(
   fileName: string,
   typeLabel: string,
 ): string {
-  return `此类型不支持文本预览\n文件名：${fileName}\n类型：${typeLabel}`;
+  return `无法预览此文件\n文件名：${fileName}\n类型：${typeLabel}`;
 }
 
 /**
- * Safe card / inspector summary for materials (A7/A8).
+ * Safe card / inspector summary for materials (A7/A8/M2).
  * Never return multi-KB binary dumps into overview.
  */
 export function materialCardSummary(
@@ -211,17 +262,15 @@ export function materialCardSummary(
 ): string {
   const kind = kindFromName(fileName);
   const typeLabel = typeLabelFromName(fileName);
+  const base = path.basename(fileName) || fileName;
+  if (kind === "audio") {
+    return `${typeLabel} · ${base}`;
+  }
   if (kind === "image" || kind === "binary") {
-    return unsupportedPreviewMessage(
-      path.basename(fileName) || fileName,
-      typeLabel,
-    );
+    return unsupportedPreviewMessage(base, typeLabel);
   }
   if (looksLikeBinaryText(content)) {
-    return unsupportedPreviewMessage(
-      path.basename(fileName) || fileName,
-      typeLabel || "binary",
-    );
+    return unsupportedPreviewMessage(base, typeLabel);
   }
   // Keep card searchable without flooding UI.
   if (content.length > 4000) {
@@ -319,10 +368,12 @@ function walkMaterials(
       relativePath,
       kind: kindFromName(entry.name),
       updatedAt: stat.mtime.toISOString(),
+      sizeBytes: stat.size,
     });
   }
 }
 
+/** Newest first (M2 recency). */
 export function listProjectMaterials(projectId: string): MaterialFile[] {
   const dir = projectMaterialsDir(projectId);
   if (!fs.existsSync(dir)) return [];
@@ -335,6 +386,7 @@ function materialMeta(
   projectId: string,
   relativePath: string,
   updatedAt: string,
+  sizeBytes?: number,
 ): MaterialFile {
   return {
     id: relativePath,
@@ -343,6 +395,7 @@ function materialMeta(
     relativePath,
     kind: kindFromName(relativePath),
     updatedAt,
+    sizeBytes,
   };
 }
 
@@ -373,11 +426,18 @@ export function readProjectMaterial(
     return null;
   }
   const stat = fs.statSync(resolvedFull);
-  const meta = materialMeta(projectId, relativePath, stat.mtime.toISOString());
+  const meta = materialMeta(
+    projectId,
+    relativePath,
+    stat.mtime.toISOString(),
+    stat.size,
+  );
   const buf = fs.readFileSync(resolvedFull);
   const mimeType = mimeFromName(relativePath);
   const typeLabel = typeLabelFromName(relativePath);
   const fileName = meta.name;
+  const sizeBytes = stat.size;
+  const sizeLabel = formatByteSize(sizeBytes);
 
   // A7: image → preview when bytes look like a real image; never UTF-8 dump.
   if (meta.kind === "image" || looksLikeImageBuffer(buf, relativePath)) {
@@ -392,6 +452,8 @@ export function readProjectMaterial(
         previewMode: "unsupported",
         mimeType,
         typeLabel,
+        sizeBytes,
+        sizeLabel,
         unsupportedMessage: unsupportedPreviewMessage(fileName, typeLabel),
       };
     }
@@ -401,11 +463,27 @@ export function readProjectMaterial(
       previewMode: "image",
       mimeType,
       typeLabel,
+      sizeBytes,
+      sizeLabel,
       dataUrl: `data:${mimeType};base64,${buf.toString("base64")}`,
     };
   }
 
-  // A7: non-image binary
+  // M2: audio → playable data URL + meta (not "unsupported text" wall).
+  if (meta.kind === "audio") {
+    return {
+      meta: { ...meta, kind: "audio" },
+      content: "",
+      previewMode: "audio",
+      mimeType,
+      typeLabel,
+      sizeBytes,
+      sizeLabel,
+      dataUrl: `data:${mimeType};base64,${buf.toString("base64")}`,
+    };
+  }
+
+  // A7: non-image non-audio binary
   if (meta.kind === "binary" || bufferLooksBinary(buf)) {
     return {
       meta: { ...meta, kind: meta.kind === "other" ? "binary" : meta.kind },
@@ -413,6 +491,8 @@ export function readProjectMaterial(
       previewMode: "unsupported",
       mimeType,
       typeLabel,
+      sizeBytes,
+      sizeLabel,
       unsupportedMessage: unsupportedPreviewMessage(fileName, typeLabel),
     };
   }
@@ -426,6 +506,8 @@ export function readProjectMaterial(
       previewMode: "unsupported",
       mimeType,
       typeLabel,
+      sizeBytes,
+      sizeLabel,
       unsupportedMessage: unsupportedPreviewMessage(fileName, typeLabel),
     };
   }
@@ -435,6 +517,8 @@ export function readProjectMaterial(
     previewMode: "text",
     mimeType,
     typeLabel,
+    sizeBytes,
+    sizeLabel,
   };
 }
 
@@ -469,7 +553,12 @@ export function writeProjectMaterial(
     fs.writeFileSync(resolvedFull, content, "utf8");
   }
   const stat = fs.statSync(resolvedFull);
-  return materialMeta(projectId, relativePath, stat.mtime.toISOString());
+  return materialMeta(
+    projectId,
+    relativePath,
+    stat.mtime.toISOString(),
+    stat.size,
+  );
 }
 
 /** Very small markdown → safe HTML (headings, lists, code, paragraphs). */

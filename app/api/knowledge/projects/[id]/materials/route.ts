@@ -34,9 +34,12 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       mimeType: file.mimeType,
       typeLabel: file.typeLabel,
       dataUrl: file.dataUrl,
+      sizeBytes: file.sizeBytes ?? file.meta.sizeBytes,
+      sizeLabel: file.sizeLabel,
       unsupportedMessage: file.unsupportedMessage,
     });
   }
+  // M2: list already sorted newest-first by listProjectMaterials.
   return NextResponse.json({ materials: listProjectMaterials(id) });
 }
 

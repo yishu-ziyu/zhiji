@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  formatByteSize,
   kindFromName,
   listProjectMaterials,
   looksLikeBinaryText,
@@ -10,6 +11,7 @@ import {
   readProjectMaterial,
   renderMarkdownLite,
   sanitizeMaterialFileName,
+  typeLabelFromName,
   writeProjectMaterial,
 } from "./materials";
 
@@ -32,11 +34,16 @@ describe("materials", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("classifies markdown, image, and binary files", () => {
+  it("classifies markdown, image, audio, and binary files", () => {
     expect(kindFromName("note.md")).toBe("markdown");
     expect(kindFromName("logo-horizontal.png")).toBe("image");
+    expect(kindFromName("clip.mp3")).toBe("audio");
     expect(kindFromName("x.PDF")).toBe("binary");
     expect(kindFromName("readme.txt")).toBe("text");
+    expect(typeLabelFromName("clip.mp3")).toBe("音频");
+    expect(typeLabelFromName("a.png")).toBe("图片");
+    expect(typeLabelFromName("a.md")).toBe("文档");
+    expect(formatByteSize(2048)).toMatch(/KB/);
   });
 
   it("renders a heading and paragraph without raw tags", () => {
@@ -97,16 +104,41 @@ describe("materials", () => {
     const read = readProjectMaterial("p-bad", "logo-horizontal.png");
     expect(read?.previewMode).toBe("unsupported");
     expect(read?.content).toBe("");
-    expect(read?.unsupportedMessage).toContain("不支持文本预览");
+    expect(read?.unsupportedMessage).toContain("无法预览");
     expect(read?.unsupportedMessage).toContain("logo-horizontal.png");
-    expect(read?.unsupportedMessage).toContain("png");
+    expect(read?.typeLabel).toBe("图片");
+  });
+
+  it("M2: mp3 is audio preview with dataUrl, not unsupported wall", () => {
+    // Minimal bytes; not a real mp3 frame but enough for storage/preview mode.
+    const fake = Buffer.from("ID3fake-audio-bytes");
+    writeProjectMaterial("p-audio", "clip.mp3", fake.toString("base64"), {
+      encoding: "base64",
+    });
+    const read = readProjectMaterial("p-audio", "clip.mp3");
+    expect(read?.meta.kind).toBe("audio");
+    expect(read?.previewMode).toBe("audio");
+    expect(read?.typeLabel).toBe("音频");
+    expect(read?.dataUrl).toMatch(/^data:audio\/mpeg;base64,/);
+    expect(read?.sizeLabel).toBeTruthy();
+    expect(read?.unsupportedMessage).toBeUndefined();
+  });
+
+  it("M2: list sorts newest first", () => {
+    writeProjectMaterial("p-order", "old.md", "old");
+    const older = path.join(tmpDir, "files", "p-order", "old.md");
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(older, past, past);
+    writeProjectMaterial("p-order", "new.md", "new");
+    const listed = listProjectMaterials("p-order");
+    expect(listed.map((f) => f.id)).toEqual(["new.md", "old.md"]);
   });
 
   it("A7: materialCardSummary never returns binary dump for images", () => {
     const dump = `${"\uFFFD".repeat(20)}PNG\r\n${"x".repeat(500)}`;
     expect(looksLikeBinaryText(dump)).toBe(true);
     const summary = materialCardSummary("logo-horizontal.png", dump);
-    expect(summary).toContain("不支持文本预览");
+    expect(summary).toContain("无法预览");
     expect(summary).toContain("logo-horizontal.png");
     expect(summary.length).toBeLessThan(200);
   });

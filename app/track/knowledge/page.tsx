@@ -108,16 +108,24 @@ export default function KnowledgePage() {
   const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [materialsOpen, setMaterialsOpen] = useState(false);
   const [materials, setMaterials] = useState<
-    Array<{ id: string; name: string; kind: string; updatedAt: string }>
+    Array<{
+      id: string;
+      name: string;
+      kind: string;
+      updatedAt: string;
+      sizeBytes?: number;
+    }>
   >([]);
   const [materialView, setMaterialView] = useState<{
     name: string;
     html?: string;
     content: string;
     preview: boolean;
-    previewMode?: "text" | "image" | "unsupported";
+    previewMode?: "text" | "image" | "audio" | "unsupported";
     typeLabel?: string;
     dataUrl?: string;
+    sizeLabel?: string;
+    sizeBytes?: number;
     unsupportedMessage?: string;
   } | null>(null);
   const [projectJumpOpen, setProjectJumpOpen] = useState(false);
@@ -345,6 +353,23 @@ export default function KnowledgePage() {
     }
   }
 
+  function materialKindLabel(kind: string): string {
+    switch (kind) {
+      case "markdown":
+      case "text":
+      case "html":
+        return "文档";
+      case "image":
+        return "图片";
+      case "audio":
+        return "音频";
+      case "binary":
+        return "文件";
+      default:
+        return "其他";
+    }
+  }
+
   async function openMaterialFile(fileId: string) {
     if (!projectId) return;
     try {
@@ -353,9 +378,11 @@ export default function KnowledgePage() {
         content: string;
         html?: string;
         preview: boolean;
-        previewMode?: "text" | "image" | "unsupported";
+        previewMode?: "text" | "image" | "audio" | "unsupported";
         typeLabel?: string;
         dataUrl?: string;
+        sizeLabel?: string;
+        sizeBytes?: number;
         unsupportedMessage?: string;
       }>(
         `/api/knowledge/projects/${projectId}/materials?file=${encodeURIComponent(fileId)}`,
@@ -368,6 +395,8 @@ export default function KnowledgePage() {
         previewMode: data.previewMode ?? (data.preview ? "text" : "unsupported"),
         typeLabel: data.typeLabel,
         dataUrl: data.dataUrl,
+        sizeLabel: data.sizeLabel,
+        sizeBytes: data.sizeBytes,
         unsupportedMessage: data.unsupportedMessage,
       });
     } catch (nextError) {
@@ -457,25 +486,8 @@ export default function KnowledgePage() {
       return;
     }
 
-    try {
-      const materialList = await apiJson<{
-        materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
-      }>(`/api/knowledge/projects/${id}/materials`);
-      if (
-        navToken !== navigationRequestRef.current ||
-        activeProjectIdRef.current !== id
-      ) {
-        return;
-      }
-      setMaterials(materialList.materials);
-      setMaterialsOpen(true);
-    } catch {
-      // Still entered the project; materials panel optional if list fails.
-      if (activeProjectIdRef.current === id) {
-        setMaterials([]);
-        setMaterialsOpen(true);
-      }
-    }
+    // M1: A6 enter project must NOT force-open materials panel.
+    // Materials stay available via manual openMaterialsPanel.
   }
 
   /**
@@ -586,32 +598,35 @@ export default function KnowledgePage() {
     try {
       let lastName = "";
       let lastCardId = "";
-      let lastMaterialId = "";
       for (const file of list) {
         const data = await uploadFileToProject(targetId, file);
         lastName = data.material.name;
         lastCardId = data.card.id;
-        lastMaterialId = data.material.id;
       }
       if (targetId === activeProjectIdRef.current) {
-        const materialList = await apiJson<{
-          materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
-        }>(`/api/knowledge/projects/${targetId}/materials`);
-        setMaterials(materialList.materials);
-        if (lastMaterialId) {
-          await openMaterialFile(lastMaterialId);
-        }
         await loadProjectCards(targetId);
         if (lastCardId) {
           await loadSnapshot(targetId, { kind: "card", id: lastCardId });
         }
+        // M1: do not force materials panel or auto-open file view.
+        if (materialsOpen) {
+          const materialList = await apiJson<{
+            materials: Array<{
+              id: string;
+              name: string;
+              kind: string;
+              updatedAt: string;
+              sizeBytes?: number;
+            }>;
+          }>(`/api/knowledge/projects/${targetId}/materials`);
+          setMaterials(materialList.materials);
+        }
       }
-      setMaterialsOpen(true);
       setBusy(false);
       setNotice(
         list.length === 1
-          ? `已加入当前项目：${lastName}`
-          : `已加入当前项目 ${list.length} 个文件`,
+          ? `已收下「${lastName}」到当前项目`
+          : `已收下 ${list.length} 份材料到当前项目`,
       );
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "加入文件失败");
@@ -651,21 +666,11 @@ export default function KnowledgePage() {
       if (filesToIngest.length > 0) {
         let lastName = "";
         let lastCardId = "";
-        let lastMaterialId = "";
         for (const file of filesToIngest) {
           const uploaded = await uploadFileToProject(data.project.id, file);
           lastName = uploaded.material.name;
           lastCardId = uploaded.card.id;
-          lastMaterialId = uploaded.material.id;
         }
-        const materialList = await apiJson<{
-          materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
-        }>(`/api/knowledge/projects/${data.project.id}/materials`);
-        setMaterials(materialList.materials);
-        if (lastMaterialId) {
-          await openMaterialFile(lastMaterialId);
-        }
-        setMaterialsOpen(true);
         await loadProjectCards(data.project.id);
         if (lastCardId) {
           await loadSnapshot(data.project.id, { kind: "card", id: lastCardId });
@@ -674,7 +679,7 @@ export default function KnowledgePage() {
         setNotice(
           filesToIngest.length === 1
             ? `项目已创建，并收下「${lastName}」`
-            : `项目已创建，并收下 ${filesToIngest.length} 个文件`,
+            : `项目已创建，并收下 ${filesToIngest.length} 份材料`,
         );
         return;
       }
@@ -1786,14 +1791,14 @@ export default function KnowledgePage() {
                     style={{ display: "none" }}
                     disabled={busy || !projectId}
                     onChange={(event) => {
-                      const file = event.target.files?.[0];
+                      const list = Array.from(event.target.files ?? []);
                       event.target.value = "";
-                      if (file) void handleUploadMaterialFile(file);
+                      if (list[0]) void handleUploadMaterialFile(list[0]);
                     }}
                   />
                 </label>
                 {materials.length === 0 ? (
-                  <p style={{ color: "#75787e", fontSize: 12 }}>还没有文件。选择本地文件加入当前项目。</p>
+                  <p style={{ color: "#75787e", fontSize: 12 }}>还没有材料。选择本地文件加入当前项目。</p>
                 ) : (
                   materials.map((file) => (
                     <button
@@ -1811,7 +1816,9 @@ export default function KnowledgePage() {
                       }}
                     >
                       <strong style={{ fontSize: 12 }}>{file.name}</strong>
-                      <small style={{ display: "block", color: "#81848a" }}>{file.kind}</small>
+                      <small style={{ display: "block", color: "#81848a" }}>
+                        {materialKindLabel(file.kind)}
+                      </small>
                     </button>
                   ))
                 )}
@@ -1840,15 +1847,61 @@ export default function KnowledgePage() {
                       style={{ maxWidth: "100%", height: "auto", display: "block" }}
                     />
                   ) : null}
+                  {materialView.previewMode === "audio" ? (
+                    <div data-testid="material-audio-preview" style={{ display: "grid", gap: 10 }}>
+                      <div
+                        style={{
+                          padding: "12px 14px",
+                          borderRadius: 10,
+                          background: "#fff",
+                          border: "1px solid #e4e4df",
+                        }}
+                      >
+                        <div style={{ fontSize: 12, color: "#5c5f66", marginBottom: 6 }}>
+                          {materialView.typeLabel || "音频"}
+                          {materialView.sizeLabel ? ` · ${materialView.sizeLabel}` : ""}
+                        </div>
+                        {materialView.dataUrl ? (
+                          // eslint-disable-next-line jsx-a11y/media-has-caption
+                          <audio
+                            controls
+                            src={materialView.dataUrl}
+                            style={{ width: "100%" }}
+                            data-testid="material-audio-player"
+                          />
+                        ) : (
+                          <p style={{ margin: 0, color: "#5c5f66" }}>
+                            已保存为音频材料（当前无法内嵌播放）。
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                   {materialView.previewMode === "unsupported" ||
                   (materialView.previewMode === "image" && !materialView.dataUrl) ? (
-                    <pre
+                    <div
                       data-testid="material-unsupported-preview"
-                      style={{ whiteSpace: "pre-wrap", margin: 0, color: "#5c5f66" }}
+                      style={{
+                        padding: "12px 14px",
+                        borderRadius: 10,
+                        background: "#fff",
+                        border: "1px solid #e4e4df",
+                        color: "#3d4047",
+                      }}
                     >
-                      {materialView.unsupportedMessage ||
-                        `此类型不支持文本预览\n文件名：${materialView.name}\n类型：${materialView.typeLabel || "binary"}`}
-                    </pre>
+                      <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                        {materialView.typeLabel || "文件"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#5c5f66", lineHeight: 1.5 }}>
+                        <div>文件名：{materialView.name}</div>
+                        {materialView.sizeLabel ? (
+                          <div>大小：{materialView.sizeLabel}</div>
+                        ) : null}
+                        <div style={{ marginTop: 8 }}>
+                          {materialView.unsupportedMessage || "此文件无法在面板内预览。"}
+                        </div>
+                      </div>
+                    </div>
                   ) : null}
                   {materialView.previewMode === "text" ||
                   (!materialView.previewMode && (materialView.preview || materialView.content)) ? (
