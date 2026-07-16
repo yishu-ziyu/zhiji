@@ -1,42 +1,80 @@
+# --- dependencies & build ---
 node_modules/
 .next/
+out/
+dist/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# --- test / playwright ---
 test-results/
 playwright-report/
-.DS_Store
-*.log
+coverage/
+.tmp/
+ui-test.mjs
+
+# --- env & secrets (never publish) ---
 .env
 .env.local
 .env.*.local
-tsconfig.tsbuildinfo
-.progress/
-ui-test.mjs
-.tmp/
+*.pem
 
-# Local orchestration and raw review evidence. These are preserved on the
-# internal checkpoint branch, not published from this public repository.
+# --- OS / editor ---
+.DS_Store
+*.log
+.idea/
+.vscode/
+*.swp
+
+# --- agent / local tool homes (not product) ---
+.agents/
+.claude/
+.firecrawl/
 .lavish/
-/tmp/
-/.ship/config.yaml
-/.ship/tasks/attention-file-kb-20260715/
-/.ship/tasks/attention-protocol-v0-20260715/
-/.ship/tasks/knowledge-retrieval-v0-20260716/
-/.ship/tasks/overnight-20260716/
-/.ship/tasks/replace-decorative-radial-canvas-with-state-first-focus-canv/
-/WORKTREE_MAP.md
-/docs/design/project-canvas-implementation-state-first.png
-/docs/design/proof-relation-card-focus.png
-/docs/operations/
-/docs/product/2026-07-15-external-review-5-6-pro-alignment.md
-/docs/product/2026-07-15-open-product-and-agent-questions-for-review.md
-/docs/product/CODEX_LAVISH_INTEGRATION_REVIEW_PROMPT.md
-/docs/product/CODEX_SOCRATIC_PRODUCT_PROMPT.md
-/docs/product/FOUR_WINDOW_COLLAB.md
-/docs/product/LIVE_COLLABORATION_BOARD.md
-/docs/product/dev-contract-*.md
-/docs/product/reviews/
-/docs/product/socratic-product-clarity.md
-/docs/research/2026-07-15-lavish-product-integration-independent-review.md
+.progress/
+.review/
+.scratch/
+.superpowers/
+.no-mistakes/
+skills-lock.json
 
-# Knowledge store (runtime JSON; re-seeded if empty)
-data/knowledge/*.json
+# --- runtime knowledge store (local DB / uploads) ---
+data/knowledge/**
 !data/knowledge/.gitkeep
+data/knowledge.bak-*/
+data/skills/
+data/**/*.sqlite
+data/**/*.db
+
+# --- ship orchestration noise (keep fixtures + slim evidence only) ---
+.ship/config.yaml
+.ship/pm-state.yaml
+.ship/archive/
+.ship/handoffs/
+.ship/research/
+.ship/tasks/
+.ship/evidence/d50-residual/
+.ship/evidence/g6-d50/
+.ship/evidence/**/*.png
+# keep intentional text evidence if already committed; large dumps stay local
+.ship/evidence/g5-*
+.ship/evidence/policy-a/
+
+# --- internal worktree / ops ---
+WORKTREE_MAP.md
+docs/operations/
+docs/code-wiki/
+docs/decisions/
+docs/product/reviews/
+docs/product/dev-contract-*.md
+docs/product/socratic-product-clarity.md
+docs/product/CODEX_*.md
+docs/product/FOUR_WINDOW_COLLAB.md
+docs/product/LIVE_COLLABORATION_BOARD.md
+docs/product/TEAM_*.md
+docs/product/*-for-review.md
+docs/product/*-alignment.md
+
+# --- generated next types path can flip between builds ---
+# next-env.d.ts stays tracked; ignore only local route type dumps
+.next/dev/
