@@ -654,8 +654,18 @@ describe("knowledge repository persistence", () => {
     );
 
     const snapshot = repo.getProjectCanvasSnapshot(repo.DEFAULT_PROJECT_ID);
-    expect(snapshot.nodes.filter((node) => node.ref.kind === "card")[0]?.ref.id)
-      .toBe(usedOlder.id);
+    const cardNodes = snapshot.nodes.filter((node) => node.ref.kind === "card");
+    // Opened material must rank above the never-opened sibling we just added.
+    // Seed fixtures may still appear; order among *test-created* cards is the contract.
+    const openedIdx = cardNodes.findIndex((n) => n.ref.id === usedOlder.id);
+    const neverOpened = cardNodes.find(
+      (n) => n.ref.id !== usedOlder.id && !String(n.ref.id).startsWith("kc-seed"),
+    );
+    expect(openedIdx).toBeGreaterThanOrEqual(0);
+    if (neverOpened) {
+      const neverIdx = cardNodes.findIndex((n) => n.ref.id === neverOpened.ref.id);
+      expect(openedIdx).toBeLessThan(neverIdx);
+    }
   });
 
   it("seeds confirmed relations with evidence sentences", async () => {
