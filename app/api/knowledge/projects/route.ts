@@ -10,10 +10,21 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { name?: string; summary?: string };
+    const body = (await req.json()) as {
+      name?: string;
+      summary?: string;
+      sensitive?: boolean;
+      sensitivity?: string;
+      visibility?: string;
+    };
+    const sensitive =
+      body.sensitive === true ||
+      body.sensitivity === "sensitive" ||
+      body.visibility === "sensitive";
     const project = addProject({
       name: body.name ?? "",
       summary: body.summary,
+      sensitive,
     });
     return NextResponse.json({ project }, { status: 201 });
   } catch (error) {

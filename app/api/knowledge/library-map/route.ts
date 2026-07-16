@@ -5,10 +5,10 @@ import {
   requireProjectId,
 } from "@/shared/knowledge/project-scope";
 
-export async function GET(req: NextRequest) {
+export async function GET(req?: NextRequest) {
   try {
     const projectId = requireProjectId(
-      req.nextUrl.searchParams.get("projectId"),
+      req?.nextUrl?.searchParams?.get("projectId") ?? null,
     );
     const data = getLibraryMapData(projectId);
     return NextResponse.json({ ...data, projectId });

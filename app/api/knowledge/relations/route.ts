@@ -10,43 +10,56 @@ import {
   RELATION_STATUSES,
   RELATION_TYPES,
 } from "@/shared/types/knowledge";
+import {
+  ProjectScopeError,
+  requireProjectId,
+} from "@/shared/knowledge/project-scope";
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const cardId = searchParams.get("cardId") ?? undefined;
-  const workItemId = searchParams.get("workItemId") ?? undefined;
-  const includeRejected = searchParams.get("includeRejected") === "1";
-  const statusParam = searchParams.get("status");
-  const typeParam = searchParams.get("type");
+  try {
+    const { searchParams } = new URL(req.url);
+    const projectId = requireProjectId(searchParams.get("projectId"));
+    const cardId = searchParams.get("cardId") ?? undefined;
+    const workItemId = searchParams.get("workItemId") ?? undefined;
+    const includeRejected = searchParams.get("includeRejected") === "1";
+    const statusParam = searchParams.get("status");
+    const typeParam = searchParams.get("type");
 
-  let status: RelationStatus | RelationStatus[] | undefined;
-  if (statusParam) {
-    const parts = statusParam
-      .split(",")
-      .filter((s): s is RelationStatus =>
-        RELATION_STATUSES.includes(s as RelationStatus),
-      );
-    status = parts.length === 1 ? parts[0] : parts.length ? parts : undefined;
+    let status: RelationStatus | RelationStatus[] | undefined;
+    if (statusParam) {
+      const parts = statusParam
+        .split(",")
+        .filter((s): s is RelationStatus =>
+          RELATION_STATUSES.includes(s as RelationStatus),
+        );
+      status = parts.length === 1 ? parts[0] : parts.length ? parts : undefined;
+    }
+
+    let type: RelationType | RelationType[] | undefined;
+    if (typeParam) {
+      const parts = typeParam
+        .split(",")
+        .filter((t): t is RelationType =>
+          RELATION_TYPES.includes(t as RelationType),
+        );
+      type = parts.length === 1 ? parts[0] : parts.length ? parts : undefined;
+    }
+
+    const items = listRelations({
+      projectId,
+      cardId,
+      workItemId,
+      status,
+      type,
+      includeRejected,
+    });
+    return NextResponse.json({ items, projectId });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "读取失败" },
+      { status: error instanceof ProjectScopeError ? 400 : 400 },
+    );
   }
-
-  let type: RelationType | RelationType[] | undefined;
-  if (typeParam) {
-    const parts = typeParam
-      .split(",")
-      .filter((t): t is RelationType =>
-        RELATION_TYPES.includes(t as RelationType),
-      );
-    type = parts.length === 1 ? parts[0] : parts.length ? parts : undefined;
-  }
-
-  const items = listRelations({
-    cardId,
-    workItemId,
-    status,
-    type,
-    includeRejected,
-  });
-  return NextResponse.json({ items });
 }
 
 export async function POST(req: NextRequest) {
