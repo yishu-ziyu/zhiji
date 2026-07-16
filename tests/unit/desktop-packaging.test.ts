@@ -11,6 +11,7 @@ const {
   findSensitivePaths,
   assertStagingClean,
   assertStagingStructure,
+  removeBrokenSymlinks,
 } = await import("../../scripts/prepare-desktop-bundle.mjs");
 
 const tmpDirs: string[] = [];
@@ -67,6 +68,22 @@ describe("live .desktop-stage (when prepared)", () => {
     expect(fs.readdirSync(staticDir).length).toBeGreaterThan(0);
     const publicDir = path.join(stage, "runtime", "public");
     expect(fs.readdirSync(publicDir).length).toBeGreaterThan(0);
+  });
+});
+
+describe("removeBrokenSymlinks", () => {
+  it("removes dangling links without deleting valid links", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "desk-links-"));
+    tmpDirs.push(dir);
+    fs.writeFileSync(path.join(dir, "target.txt"), "ok");
+    fs.symlinkSync("target.txt", path.join(dir, "valid-link"));
+    fs.symlinkSync("missing.txt", path.join(dir, "broken-link"));
+
+    removeBrokenSymlinks(dir);
+
+    expect(fs.existsSync(path.join(dir, "valid-link"))).toBe(true);
+    expect(fs.lstatSync(path.join(dir, "valid-link")).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(path.join(dir, "broken-link"))).toBe(false);
   });
 });
 

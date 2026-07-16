@@ -236,6 +236,39 @@ export function assertStagingStructure(stage) {
  * Strip secrets, user data, evidence, tests, and desktop sources from runtime.
  * @param {string} runtimeRoot
  */
+/**
+ * Remove broken symlinks (Next NFT sometimes leaves dangling links that break packager).
+ * @param {string} dir
+ */
+export function removeBrokenSymlinks(dir) {
+  if (!fs.existsSync(dir)) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    try {
+      const st = fs.lstatSync(full);
+      if (st.isSymbolicLink()) {
+        try {
+          fs.statSync(full); // throws if target missing
+        } catch {
+          fs.rmSync(full, { force: true });
+        }
+        continue;
+      }
+      if (st.isDirectory()) {
+        removeBrokenSymlinks(full);
+      }
+    } catch {
+      // ignore race
+    }
+  }
+}
+
 export function pruneStandaloneRuntime(runtimeRoot) {
   const dropNames = [
     "data",
@@ -273,6 +306,7 @@ export function pruneStandaloneRuntime(runtimeRoot) {
     }
   };
   walkDropEnv(runtimeRoot);
+  removeBrokenSymlinks(runtimeRoot);
 }
 
 export function prepareDesktopBundle() {
