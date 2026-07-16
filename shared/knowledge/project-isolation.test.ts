@@ -7,8 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { materialContentHash, writeProjectMaterial } from "./materials";
-import { ProjectScopeError } from "./project-scope";
+import { ProjectAccessError, ProjectScopeError } from "./project-scope";
 import { searchKnowledge } from "./search";
+import { NextRequest } from "next/server";
 
 describe("T-19 project-hard isolation", () => {
   let tmpDir: string;
@@ -101,6 +102,140 @@ describe("T-19 project-hard isolation", () => {
     expect(() =>
       repo.getFootprintData({ mode: "window", projectId: "" as string }),
     ).toThrow(ProjectScopeError);
+  });
+
+  it("neighbors/path require projectId and deny foreign card ids under A", async () => {
+    const a = repo.addProject({ name: "图A" });
+    const b = repo.addProject({ name: "图B" });
+    const cardA1 = repo.addCard({
+      projectId: a.id,
+      content: "A路径起点 path-a1",
+      title: "A1",
+    });
+    const cardA2 = repo.addCard({
+      projectId: a.id,
+      content: "A路径终点 path-a2",
+      title: "A2",
+    });
+    const cardB1 = repo.addCard({
+      projectId: b.id,
+      content: "B秘密邻接点 secret-neighbor-B",
+      title: "B1",
+    });
+    const cardB2 = repo.addCard({
+      projectId: b.id,
+      content: "B秘密路径点 secret-path-B",
+      title: "B2",
+    });
+    repo.createRelation({
+      fromCardId: cardA1.id,
+      toCardId: cardA2.id,
+      relationType: "supports",
+      evidenceSentence: "A内边",
+      status: "confirmed",
+    });
+    repo.createRelation({
+      fromCardId: cardB1.id,
+      toCardId: cardB2.id,
+      relationType: "supports",
+      evidenceSentence: "B内边",
+      status: "confirmed",
+    });
+
+    expect(() => repo.getNeighbors(cardA1.id)).toThrow(ProjectScopeError);
+    expect(() =>
+      repo.getPathBetween(cardA1.id, cardA2.id),
+    ).toThrow(ProjectScopeError);
+
+    expect(() =>
+      repo.getNeighbors(cardB1.id, { projectId: a.id }),
+    ).toThrow(ProjectAccessError);
+    expect(() =>
+      repo.getPathBetween(cardB1.id, cardB2.id, { projectId: a.id }),
+    ).toThrow(ProjectAccessError);
+    expect(() =>
+      repo.getPathBetween(cardA1.id, cardB1.id, { projectId: a.id }),
+    ).toThrow(ProjectAccessError);
+
+    const neighborsA = repo.getNeighbors(cardA1.id, { projectId: a.id });
+    expect(neighborsA.edges.some((e) => e.otherCard.id === cardA2.id)).toBe(
+      true,
+    );
+    expect(
+      neighborsA.edges.some((e) => e.otherCard.id === cardB1.id),
+    ).toBe(false);
+    const pathA = repo.getPathBetween(cardA1.id, cardA2.id, {
+      projectId: a.id,
+      maxDepth: 3,
+    });
+    expect(pathA).not.toBeNull();
+    expect(pathA!.nodes).toContain(cardA1.id);
+    expect(pathA!.nodes).toContain(cardA2.id);
+    expect(pathA!.nodes).not.toContain(cardB1.id);
+
+    // API surfaces
+    const { GET: neighborsGet } = await import(
+      "@/app/api/knowledge/cards/[id]/neighbors/route"
+    );
+    const { GET: pathGet } = await import("@/app/api/knowledge/path/route");
+
+    const noScope = await neighborsGet(
+      new NextRequest(
+        `http://test/api/knowledge/cards/${cardB1.id}/neighbors`,
+      ),
+      { params: Promise.resolve({ id: cardB1.id }) },
+    );
+    expect(noScope.status).toBe(400);
+
+    const foreignNeighbors = await neighborsGet(
+      new NextRequest(
+        `http://test/api/knowledge/cards/${cardB1.id}/neighbors?projectId=${a.id}`,
+      ),
+      { params: Promise.resolve({ id: cardB1.id }) },
+    );
+    expect([403, 404]).toContain(foreignNeighbors.status);
+    expect(JSON.stringify(await foreignNeighbors.json())).not.toContain(
+      "secret-neighbor-B",
+    );
+
+    const okNeighbors = await neighborsGet(
+      new NextRequest(
+        `http://test/api/knowledge/cards/${cardA1.id}/neighbors?projectId=${a.id}`,
+      ),
+      { params: Promise.resolve({ id: cardA1.id }) },
+    );
+    expect(okNeighbors.status).toBe(200);
+    const okBody = JSON.stringify(await okNeighbors.json());
+    expect(okBody).toContain(cardA2.id);
+    expect(okBody).not.toContain(cardB1.id);
+    expect(okBody).not.toContain("secret-neighbor-B");
+
+    const pathNoScope = await pathGet(
+      new NextRequest(
+        `http://test/api/knowledge/path?from=${cardA1.id}&to=${cardA2.id}`,
+      ),
+    );
+    expect(pathNoScope.status).toBe(400);
+
+    const pathForeign = await pathGet(
+      new NextRequest(
+        `http://test/api/knowledge/path?from=${cardB1.id}&to=${cardB2.id}&projectId=${a.id}`,
+      ),
+    );
+    expect([403, 404]).toContain(pathForeign.status);
+    expect(JSON.stringify(await pathForeign.json())).not.toContain(
+      "secret-path-B",
+    );
+
+    const pathOk = await pathGet(
+      new NextRequest(
+        `http://test/api/knowledge/path?from=${cardA1.id}&to=${cardA2.id}&projectId=${a.id}`,
+      ),
+    );
+    expect(pathOk.status).toBe(200);
+    const pathBody = JSON.stringify(await pathOk.json());
+    expect(pathBody).toContain(cardA1.id);
+    expect(pathBody).not.toContain(cardB1.id);
   });
 
   it("Owner-approved revision-pinned cross-project ref; drift marks review", () => {

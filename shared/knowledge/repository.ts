@@ -1803,25 +1803,25 @@ export function deleteRelation(id: string): boolean {
 
 export function getNeighbors(
   cardId: string,
-  options?: { status?: RelationStatus | RelationStatus[] },
+  options?: {
+    status?: RelationStatus | RelationStatus[];
+    /** T-19: required project scope — foreign card id under another project is deny */
+    projectId?: string;
+  },
 ): NeighborView {
-  const focusCard = getCard(cardId);
+  const projectId = requireProjectId(options?.projectId);
+  const focusCard = getCardInProject(projectId, cardId);
   if (!focusCard) {
-    throw new RelationValidationError("卡不存在");
+    throw new ProjectAccessError("卡不存在或不在当前项目范围内");
   }
   const cards = new Map(
-    listCards({ projectId: focusCard.projectId }).map((card) => [card.id, card]),
+    listCards({ projectId }).map((card) => [card.id, card]),
   );
   const projectRelations = [...workingRelations().values()].filter(
     (relation) =>
       cards.has(relation.fromCardId) && cards.has(relation.toCardId),
   );
-  return buildNeighborView(
-    cardId,
-    projectRelations,
-    cards,
-    options,
-  );
+  return buildNeighborView(cardId, projectRelations, cards, options);
 }
 
 export function getPathBetween(
@@ -1830,27 +1830,46 @@ export function getPathBetween(
   options?: {
     maxDepth?: number;
     status?: RelationStatus | RelationStatus[];
+    /** T-19: required project scope — path cannot escape via foreign ids */
+    projectId?: string;
   },
 ): PathView | null {
-  if (!getCard(fromCardId) || !getCard(toCardId)) {
-    throw new RelationValidationError("起点或终点卡不存在");
+  const projectId = requireProjectId(options?.projectId);
+  const fromCard = getCardInProject(projectId, fromCardId);
+  const toCard = getCardInProject(projectId, toCardId);
+  if (!fromCard || !toCard) {
+    throw new ProjectAccessError("起点或终点卡不存在或不在当前项目范围内");
   }
-  return findPath(fromCardId, toCardId, [...workingRelations().values()], options);
+  const cards = new Map(
+    listCards({ projectId }).map((card) => [card.id, card]),
+  );
+  const projectRelations = [...workingRelations().values()].filter(
+    (relation) =>
+      cards.has(relation.fromCardId) && cards.has(relation.toCardId),
+  );
+  return findPath(fromCardId, toCardId, projectRelations, options);
 }
 
 export function getEvidenceIsland(
   workItemId: string,
+  options?: { projectId?: string },
 ): {
   workItemId: string;
   cardIds: string[];
   edges: KnowledgeRelation[];
 } {
-  const item = getAction(workItemId);
-  if (!item) throw new Error("工作项不存在");
-  const cardIds = item.evidenceIds;
-  const edges = islandEdges(cardIds, [...workingRelations().values()]).map(
-    copyRelation,
+  const projectId = requireProjectId(options?.projectId);
+  const item = getActionInProject(projectId, workItemId);
+  if (!item) throw new ProjectAccessError("工作项不存在或不在当前项目范围内");
+  const projectCardIds = new Set(
+    listCards({ projectId }).map((c) => c.id),
   );
+  const cardIds = item.evidenceIds.filter((id) => projectCardIds.has(id));
+  const edges = islandEdges(cardIds, [...workingRelations().values()])
+    .filter(
+      (e) => projectCardIds.has(e.fromCardId) && projectCardIds.has(e.toCardId),
+    )
+    .map(copyRelation);
   return { workItemId, cardIds, edges };
 }
 

@@ -682,7 +682,9 @@ describe("knowledge repository persistence", () => {
       source: "manual",
     });
     expect(created.evidenceSentence).toContain("单测");
-    const neighbors = repo.getNeighbors(a.id);
+    const neighbors = repo.getNeighbors(a.id, {
+      projectId: repo.DEFAULT_PROJECT_ID,
+    });
     expect(neighbors.edges.some((e) => e.otherCard.id === b.id)).toBe(true);
   });
 
@@ -719,6 +721,7 @@ describe("knowledge repository persistence", () => {
     // seed: seed-2 -> seed-1 <- seed-4
     const path = repo.getPathBetween("kc-seed-2", "kc-seed-4", {
       maxDepth: 3,
+      projectId: repo.DEFAULT_PROJECT_ID,
     });
     expect(path).not.toBeNull();
     expect(path!.nodes[0]).toBe("kc-seed-2");
@@ -739,11 +742,15 @@ describe("knowledge repository persistence", () => {
       source: "rule",
     });
     expect(
-      repo.getNeighbors(cards[0].id).edges.some((e) => e.id === rel.id),
+      repo
+        .getNeighbors(cards[0].id, { projectId: repo.DEFAULT_PROJECT_ID })
+        .edges.some((e) => e.id === rel.id),
     ).toBe(true);
     repo.patchRelation(rel.id, { status: "rejected" });
     expect(
-      repo.getNeighbors(cards[0].id).edges.some((e) => e.id === rel.id),
+      repo
+        .getNeighbors(cards[0].id, { projectId: repo.DEFAULT_PROJECT_ID })
+        .edges.some((e) => e.id === rel.id),
     ).toBe(false);
   });
 
@@ -767,7 +774,9 @@ describe("knowledge repository persistence", () => {
   it("evidence island only includes edges inside evidence set", async () => {
     const repo = await loadRepo();
     repo.resetKnowledgeStoreForTests();
-    const island = repo.getEvidenceIsland("ka-seed-1");
+    const island = repo.getEvidenceIsland("ka-seed-1", {
+      projectId: repo.DEFAULT_PROJECT_ID,
+    });
     expect(island.cardIds).toContain("kc-seed-2");
     expect(island.cardIds).toContain("kc-seed-1");
     for (const e of island.edges) {
