@@ -12,6 +12,7 @@ const {
   assertStagingClean,
   assertStagingStructure,
   removeBrokenSymlinks,
+  materializeNextNodeModuleSymlinks,
 } = await import("../../scripts/prepare-desktop-bundle.mjs");
 
 const tmpDirs: string[] = [];
@@ -84,6 +85,28 @@ describe("removeBrokenSymlinks", () => {
     expect(fs.existsSync(path.join(dir, "valid-link"))).toBe(true);
     expect(fs.lstatSync(path.join(dir, "valid-link")).isSymbolicLink()).toBe(true);
     expect(fs.existsSync(path.join(dir, "broken-link"))).toBe(false);
+  });
+});
+
+describe("materializeNextNodeModuleSymlinks", () => {
+  it("turns NFT absolute package links into self-contained directories", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "desk-nft-links-"));
+    tmpDirs.push(dir);
+    const source = path.join(dir, "source");
+    const runtime = path.join(dir, "runtime");
+    const packageDir = path.join(source, "node_modules", "@parcel", "watcher");
+    const linkDir = path.join(runtime, ".next", "node_modules", "@parcel");
+    fs.mkdirSync(packageDir, { recursive: true });
+    fs.mkdirSync(path.join(runtime, "node_modules"), { recursive: true });
+    fs.mkdirSync(linkDir, { recursive: true });
+    fs.writeFileSync(path.join(packageDir, "package.json"), "{}");
+    const link = path.join(linkDir, "watcher-hash");
+    fs.symlinkSync(packageDir, link, "dir");
+
+    materializeNextNodeModuleSymlinks(runtime, source);
+
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(path.join(link, "package.json"), "utf8")).toBe("{}");
   });
 });
 

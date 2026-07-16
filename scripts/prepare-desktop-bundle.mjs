@@ -269,6 +269,66 @@ export function removeBrokenSymlinks(dir) {
   }
 }
 
+/**
+ * Next NFT may emit absolute links from `.next/node_modules` back into the
+ * build directory. Materialize only links whose targets are inside the
+ * standalone node_modules trees so the packaged app stays self-contained.
+ * @param {string} runtimeRoot
+ * @param {string} sourceStandaloneRoot
+ */
+export function materializeNextNodeModuleSymlinks(
+  runtimeRoot,
+  sourceStandaloneRoot,
+) {
+  const nextModules = path.join(runtimeRoot, ".next", "node_modules");
+  if (!fs.existsSync(nextModules)) return;
+
+  const allowedRoots = [
+    path.join(runtimeRoot, "node_modules"),
+    path.join(sourceStandaloneRoot, "node_modules"),
+    path.join(sourceStandaloneRoot, ".next", "node_modules"),
+  ]
+    .filter((candidate) => fs.existsSync(candidate))
+    .map((candidate) => fs.realpathSync(candidate));
+
+  const isWithinAllowedRoot = (candidate) =>
+    allowedRoots.some((root) => {
+      const relative = path.relative(root, candidate);
+      return (
+        relative === "" ||
+        (!relative.startsWith(`..${path.sep}`) &&
+          relative !== ".." &&
+          !path.isAbsolute(relative))
+      );
+    });
+
+  const walk = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      const stat = fs.lstatSync(full);
+      if (stat.isSymbolicLink()) {
+        const target = fs.realpathSync(full);
+        if (!isWithinAllowedRoot(target)) {
+          throw new Error(
+            `standalone node_modules link escapes allowed roots: ${path.relative(runtimeRoot, full)}`,
+          );
+        }
+        const targetStat = fs.statSync(target);
+        fs.rmSync(full, { recursive: true, force: true });
+        fs.cpSync(target, full, {
+          recursive: targetStat.isDirectory(),
+          force: true,
+          dereference: true,
+        });
+        continue;
+      }
+      if (stat.isDirectory()) walk(full);
+    }
+  };
+
+  walk(nextModules);
+}
+
 export function pruneStandaloneRuntime(runtimeRoot) {
   const dropNames = [
     "data",
@@ -335,6 +395,7 @@ export function prepareDesktopBundle() {
 
   // Next standalone root may be repo root contents under .next/standalone
   copyRecursive(standalone, runtimeDir);
+  materializeNextNodeModuleSymlinks(runtimeDir, standalone);
   pruneStandaloneRuntime(runtimeDir);
 
   // Explicit static + public (not always in standalone)
