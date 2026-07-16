@@ -40,8 +40,8 @@ npm run test:unit -- shared/knowledge/materials.test.ts
 ## 未做
 
 - 全站重设计、A5 规则、UX1 原生确认框  
-- 时长/波形/转写  
+- 时长/波形/转写
 
 ## Commit
 
-（提交后填）
+`91e99715` · feat(knowledge): M1 quiet ingest toast and M2 materials panel UX
