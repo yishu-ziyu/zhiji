@@ -16,6 +16,7 @@ import type {
   WorkEvent,
 } from "@/shared/types/knowledge";
 import { RELATION_TYPE_LABELS, STATUS_LABELS } from "@/shared/types/knowledge";
+import { edgeDirection } from "@/shared/knowledge/relations";
 
 export type ProjectFacts = {
   project: Project;
@@ -348,7 +349,10 @@ function makeEdge(
   source: CanvasNodeRef,
   target: CanvasNodeRef,
   label: string,
-  options?: Pick<CanvasEdge, "evidenceSentence" | "status" | "relationId">,
+  options?: Pick<
+    CanvasEdge,
+    "evidenceSentence" | "status" | "relationId" | "direction"
+  >,
 ): CanvasEdge {
   return {
     id: options?.relationId
@@ -360,6 +364,7 @@ function makeEdge(
     label,
     evidenceSentence: options?.evidenceSentence,
     status: options?.status ?? "confirmed",
+    direction: options?.direction ?? "out",
   };
 }
 
@@ -535,6 +540,7 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
           evidenceSentence: relation.evidenceSentence,
           status:
             relation.status === "suggested" ? "suggested" : "confirmed",
+          direction: edgeDirection(relation, card.id),
         }),
       );
     }
@@ -543,30 +549,6 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
       const target = { kind: "work_item", id: item.id } as const;
       add(makeNode(target, item.title, STATUS_LABELS[item.status], 1, itemState(item)));
       edges.push(makeEdge(input.focus, target, "被工作项使用"));
-    }
-    const relatedWorkIds = new Set(
-      input.workItems
-        .filter((item) => item.evidenceIds.includes(card.id))
-        .map((item) => item.id),
-    );
-    const relatedEvents = input.events
-      .filter(
-        (event) =>
-          relatedWorkIds.has(event.workItemId) && event.type !== "comment",
-      )
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    for (const event of relatedEvents) {
-      const target = { kind: "event", id: event.id } as const;
-      add(
-        makeNode(
-          target,
-          event.body || event.type,
-          event.actor,
-          1,
-          event.type === "block" ? "blocked" : "changed",
-        ),
-      );
-      edges.push(makeEdge(input.focus, target, "相关记录"));
     }
   }
 

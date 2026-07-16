@@ -318,19 +318,23 @@ describe("project canvas domain", () => {
         relationId: "relation-directed",
         source: { kind: "card", id: "card2" },
         target: { kind: "card", id: "card1" },
+        direction: "in",
       }),
     );
   });
 
-  it("shows card-related events and only explicit event evidence", () => {
+  it("keeps card-related events in the timeline without treating them as direct neighbors", () => {
     const cardSnapshot = buildProjectCanvasSnapshot({
       ...fixture,
       focus: { kind: "card", id: "card1" },
       now: NOW,
     });
-    expect(cardSnapshot.nodes.some((node) => node.ref.kind === "event")).toBe(
-      true,
-    );
+    expect(cardSnapshot.nodes.some((node) => node.ref.kind === "event")).toBe(false);
+    expect(
+      [...cardSnapshot.timeline.now, ...cardSnapshot.timeline.history].some(
+        (event) => event.ref.kind === "event",
+      ),
+    ).toBe(true);
 
     const eventSnapshot = buildProjectCanvasSnapshot({
       ...fixture,
@@ -420,6 +424,64 @@ describe("project canvas domain", () => {
       .toBe("used-older");
   });
 
+  it("keeps recent materials after higher-priority project work", () => {
+    const recent = { ...cards[0], id: "recent", title: "最近材料" };
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: [recent],
+      workItems: [workItems[0], workItems[1]],
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+    expect(snapshot.nodes.map((node) => node.ref.id)).toEqual(
+      expect.arrayContaining(["blocked", "confirmed", "recent"]),
+    );
+  });
+
+  it("keeps every card relation and reports its direction from the focused card", () => {
+    const second = { ...cards[0], id: "card2", title: "第二份材料" };
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: [...cards, second],
+      relations: [
+        {
+          id: "relation-out",
+          fromCardId: "card1",
+          toCardId: "card2",
+          relationType: "supports",
+          evidenceSentence: "甲支持乙",
+          status: "confirmed",
+          directed: true,
+          source: "manual",
+          createdBy: "自己",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: "relation-both",
+          fromCardId: "card1",
+          toCardId: "card2",
+          relationType: "same_topic",
+          evidenceSentence: "甲与乙同题",
+          status: "suggested",
+          directed: false,
+          source: "manual",
+          createdBy: "自己",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      focus: { kind: "card", id: "card1" },
+      now: NOW,
+    });
+    expect(snapshot.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ relationId: "relation-out", direction: "out" }),
+        expect.objectContaining({ relationId: "relation-both", direction: "both" }),
+      ]),
+    );
+  });
+
   it("does not emit card references absent from the project facts", () => {
     const foreignRef = "foreign-card";
     const snapshot = buildProjectCanvasSnapshot({
@@ -485,5 +547,26 @@ describe("project canvas domain", () => {
     expect(snapshot.focus).toEqual(focus);
     expect(snapshot.nodes.every((node) => node.depth <= 1)).toBe(true);
     expect(snapshot.nodes.filter((node) => node.depth === 0)).toHaveLength(1);
+  });
+
+  it.each([
+    { kind: "project", id: "p1" },
+    { kind: "card", id: "card1" },
+  ] as const)("connects every visible neighbor directly to $kind", (focus) => {
+    const snapshot = buildProjectCanvasSnapshot({ ...fixture, focus, now: NOW });
+    const centerKey = `${focus.kind}:${focus.id}`;
+    for (const node of snapshot.nodes.filter((entry) => entry.depth === 1)) {
+      const nodeKey = `${node.ref.kind}:${node.ref.id}`;
+      expect(
+        snapshot.edges.some((edge) => {
+          const sourceKey = `${edge.source.kind}:${edge.source.id}`;
+          const targetKey = `${edge.target.kind}:${edge.target.id}`;
+          return (
+            (sourceKey === centerKey && targetKey === nodeKey) ||
+            (targetKey === centerKey && sourceKey === nodeKey)
+          );
+        }),
+      ).toBe(true);
+    }
   });
 });
