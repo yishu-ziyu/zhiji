@@ -16,9 +16,11 @@ import {
 } from "./sqlite-store";
 import type {
   AgentMemoryService,
+  AgentRunRepository,
   ObservationWriter,
   OwnerDecisionWriter,
   ProjectMemoryReader,
+  SourceRevisionCatalog,
 } from "./types";
 
 /** Env override for the entire Project Memory truth directory (sqlite + cas/). */
@@ -134,6 +136,24 @@ export function getSharedProjectMemoryReader(options?: {
     getMatterState: (projectId, matterId) =>
       store.getMatterState(projectId, matterId),
   };
+}
+
+/** Agent-run durability: create/update/read runs + append tool receipts. No Owner resolve. */
+export function getSharedAgentRunRepository(options?: {
+  dataDir?: string;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+}): AgentRunRepository {
+  return getSharedProjectMemoryStore(options).asAgentRunRepository();
+}
+
+/** Current-revision listing + git-blob capture into CAS (no change events). */
+export function getSharedSourceRevisionCatalog(options?: {
+  dataDir?: string;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+}): SourceRevisionCatalog {
+  return getSharedProjectMemoryStore(options).asSourceRevisionCatalog();
 }
 
 /** Test helper: close singleton and optionally open a fresh one on dataDir. */

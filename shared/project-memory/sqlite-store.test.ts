@@ -728,4 +728,186 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
       ),
     ).rejects.toThrow(/quote not found/i);
   });
+
+  it("legacy analysis_runs row remains readable after additive columns", async () => {
+    // Simulate pre-Wave-A insert (only original columns populated).
+    const db = (
+      store as unknown as {
+        db: {
+          prepare: (sql: string) => {
+            run: (
+              ...args: Array<string | number | null>
+            ) => unknown;
+          };
+        };
+      }
+    ).db;
+    db.prepare(
+      `INSERT INTO analysis_runs
+       (id, project_id, matter_id, trigger, event_ids_json, status, attempt, created_at, updated_at, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "legacy-run",
+      "p1",
+      "m1",
+      "source_change",
+      "[]",
+      "completed",
+      1,
+      "2026-07-16T10:00:00.000Z",
+      "2026-07-16T10:00:00.000Z",
+      null,
+    );
+    const run = await store.getRun("p1", "legacy-run");
+    expect(run).toMatchObject({
+      id: "legacy-run",
+      projectId: "p1",
+      matterId: "m1",
+      status: "completed",
+      interruptRequested: false,
+    });
+    expect(run?.stopReason).toBeUndefined();
+    expect(run?.modelReceipt).toBeUndefined();
+  });
+
+  it("agent run reopen + append-only tool receipts + interrupt flag", async () => {
+    const created = await store.createRun({
+      id: "run-trace-1",
+      projectId: "p1",
+      matterId: "m1",
+      grantId: "g1",
+      trigger: "owner_question",
+      eventIds: [],
+      status: "queued",
+      attempt: 1,
+      createdAt: "2026-07-16T18:00:00.000Z",
+      updatedAt: "2026-07-16T18:00:00.000Z",
+    });
+    expect(created.status).toBe("queued");
+
+    await store.updateRun({
+      ...created,
+      status: "running",
+      updatedAt: "2026-07-16T18:00:01.000Z",
+      progressSummary: "turn 1",
+    });
+
+    await store.appendToolReceipt({
+      id: "tr-1",
+      runId: "run-trace-1",
+      sequence: 1,
+      tool: "project_map",
+      projectId: "p1",
+      grantId: "g1",
+      scope: { mode: "initial_root", relativePaths: ["."] },
+      outcome: "ok",
+      summary: "mapped 3 paths",
+      pins: [],
+      startedAt: "2026-07-16T18:00:01.000Z",
+      finishedAt: "2026-07-16T18:00:02.000Z",
+    });
+    await store.appendToolReceipt({
+      id: "tr-2",
+      runId: "run-trace-1",
+      sequence: 2,
+      tool: "read_revision",
+      projectId: "p1",
+      grantId: "g1",
+      scope: { mode: "matter", relativePaths: ["docs/a.md"] },
+      outcome: "ok",
+      summary: "read orev",
+      pins: [
+        {
+          revisionId: "orev:x",
+          relativePath: "docs/a.md",
+          quote: "q",
+          lastVerifiedAt: "2026-07-16T18:00:02.000Z",
+        },
+      ],
+      startedAt: "2026-07-16T18:00:02.000Z",
+      finishedAt: "2026-07-16T18:00:03.000Z",
+    });
+
+    await expect(
+      store.appendToolReceipt({
+        id: "tr-dup",
+        runId: "run-trace-1",
+        sequence: 1,
+        tool: "git_status",
+        projectId: "p1",
+        grantId: "g1",
+        scope: { mode: "initial_root", relativePaths: [] },
+        outcome: "ok",
+        summary: "dup",
+        pins: [],
+        startedAt: "2026-07-16T18:00:04.000Z",
+        finishedAt: "2026-07-16T18:00:04.000Z",
+      }),
+    ).rejects.toThrow(/sequence 1 already exists/i);
+
+    const receipts = await store.listToolReceipts("run-trace-1");
+    expect(receipts.map((r) => r.sequence)).toEqual([1, 2]);
+    expect(receipts[1]?.tool).toBe("read_revision");
+
+    const interrupted = await store.requestInterrupt("p1", "run-trace-1");
+    expect(interrupted.interruptRequested).toBe(true);
+    expect(interrupted.status).toBe("interrupted");
+    expect(interrupted.stopReason).toBe("owner_interrupt");
+
+    const reopened = await store.getRunView("p1", "run-trace-1");
+    expect(reopened?.run.interruptRequested).toBe(true);
+    expect(reopened?.toolReceipts).toHaveLength(2);
+
+    const listed = await store.listRuns("p1", "m1");
+    expect(listed.some((r) => r.id === "run-trace-1")).toBe(true);
+  });
+
+  it("lists current revisions and git-blob capture does not move tip or emit events", async () => {
+    const live = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "added",
+      relativePath: "docs/SPEC.md",
+      content: new TextEncoder().encode("live tip v1"),
+      observedAt: "2026-07-16T19:00:00.000Z",
+    });
+    expect(live.event).toBeTruthy();
+    const eventsBefore = (await store.listEvents("p1")).length;
+
+    const blob = new TextEncoder().encode("historical blob at commit");
+    const captured = await store.captureGitBlob({
+      projectId: "p1",
+      grantId: "g1",
+      relativePath: "docs/SPEC.md",
+      commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      blobOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      content: blob,
+      observedAt: "2026-07-16T19:05:00.000Z",
+    });
+    expect(captured.sourceVersion).toBe(
+      "git:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    );
+    expect(captured.sha256).toBe(sha256Hex(blob));
+
+    const again = await store.captureGitBlob({
+      projectId: "p1",
+      grantId: "g1",
+      relativePath: "docs/SPEC.md",
+      commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      blobOid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      content: blob,
+    });
+    expect(again.id).toBe(captured.id);
+
+    const eventsAfter = (await store.listEvents("p1")).length;
+    expect(eventsAfter).toBe(eventsBefore);
+
+    const tips = await store.listCurrentRevisions("p1", "g1");
+    const specTip = tips.find((r) => r.relativePath === "docs/SPEC.md");
+    expect(specTip?.id).toBe(live.revision!.id);
+    expect(specTip?.sourceVersion).toBeUndefined();
+
+    const bytes = await store.readRevision(captured.id);
+    expect(bytes && new TextDecoder().decode(bytes)).toBe("historical blob at commit");
+  });
 });

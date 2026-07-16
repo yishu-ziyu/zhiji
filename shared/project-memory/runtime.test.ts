@@ -4,8 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   getSharedAgentMemoryService,
+  getSharedAgentRunRepository,
   getSharedProjectMemoryDataDir,
   getSharedProjectMemoryStore,
+  getSharedSourceRevisionCatalog,
   projectMemorySqlitePath,
   resetSharedProjectMemoryStoreForTests,
   resolveProjectMemoryDataDir,
@@ -116,6 +118,62 @@ describe("project-memory shared runtime identity", () => {
       expect(Object.keys(routeOwner).sort()).toEqual(["resolveCandidate"]);
       // Full store must not be returned as OwnerDecisionWriter
       expect(routeOwner).not.toBe(getSharedProjectMemoryStore({ dataDir: tmp }));
+    } finally {
+      resetSharedProjectMemoryStoreForTests();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("AgentRunRepository and SourceRevisionCatalog accessors share store and never expose resolve", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pm-runtime-wave-a-"));
+    try {
+      resetSharedProjectMemoryStoreForTests(tmp);
+      const runs = getSharedAgentRunRepository({ dataDir: tmp });
+      const catalog = getSharedSourceRevisionCatalog({ dataDir: tmp });
+      const store = getSharedProjectMemoryStore({ dataDir: tmp });
+
+      expect("resolveCandidate" in runs).toBe(false);
+      expect("resolveCandidate" in catalog).toBe(false);
+      expect(typeof runs.createRun).toBe("function");
+      expect(typeof catalog.listCurrentRevisions).toBe("function");
+      expect(typeof catalog.captureGitBlob).toBe("function");
+
+      store.upsertGrant({
+        id: "g1",
+        projectId: "p1",
+        kind: "local_folder",
+        rootPath: "/tmp/x",
+        status: "active",
+        createdAt: "2026-07-16T00:00:00.000Z",
+        updatedAt: "2026-07-16T00:00:00.000Z",
+      });
+      store.upsertMatter({
+        id: "m1",
+        projectId: "p1",
+        title: "t",
+        goal: "g",
+        status: "active",
+        createdAt: "2026-07-16T00:00:00.000Z",
+        updatedAt: "2026-07-16T00:00:00.000Z",
+      });
+
+      const run = await runs.createRun({
+        id: "r1",
+        projectId: "p1",
+        matterId: "m1",
+        trigger: "retry",
+        eventIds: [],
+        status: "queued",
+        attempt: 1,
+        createdAt: "2026-07-16T00:00:00.000Z",
+        updatedAt: "2026-07-16T00:00:00.000Z",
+      });
+      expect(run.id).toBe("r1");
+      const again = await getSharedAgentRunRepository({ dataDir: tmp }).getRun(
+        "p1",
+        "r1",
+      );
+      expect(again?.id).toBe("r1");
     } finally {
       resetSharedProjectMemoryStoreForTests();
       fs.rmSync(tmp, { recursive: true, force: true });

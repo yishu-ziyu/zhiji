@@ -15,8 +15,12 @@ import {
 } from "./reducer";
 import type {
   AgentMemoryService,
+  AgentRunReceipt,
+  AgentRunRepository,
+  AgentRunView,
   AnalysisRun,
   CandidateWriter,
+  CaptureGitBlobInput,
   ChangeEvent,
   ChangeKind,
   Matter,
@@ -30,6 +34,8 @@ import type {
   OwnerResolution,
   ProjectMemoryReader,
   SourceGrant,
+  SourceRevisionCatalog,
+  ToolReceipt,
   UnderstandingBody,
   UnderstandingRevision,
 } from "./types";
@@ -51,6 +57,42 @@ type RevisionRow = {
   observed_at: string;
   previous_revision_id: string | null;
   tombstone: number;
+  source_version?: string | null;
+};
+
+type AnalysisRunRow = {
+  id: string;
+  project_id: string;
+  matter_id: string;
+  trigger: string;
+  event_ids_json: string;
+  status: string;
+  attempt: number;
+  created_at: string;
+  updated_at: string;
+  error: string | null;
+  grant_id?: string | null;
+  stop_reason?: string | null;
+  model_receipt_json?: string | null;
+  interrupt_requested?: number | null;
+  candidate_revision_id?: string | null;
+  progress_summary?: string | null;
+};
+
+type ToolReceiptRow = {
+  id: string;
+  run_id: string;
+  sequence: number;
+  tool: string;
+  project_id: string;
+  grant_id: string;
+  scope_json: string;
+  outcome: string;
+  summary: string;
+  pins_json: string;
+  started_at: string;
+  finished_at: string;
+  error_class: string | null;
 };
 
 type EventRow = {
@@ -166,7 +208,9 @@ export class SqliteProjectMemoryStore
     ProjectMemoryReader,
     ObservationWriter,
     CandidateWriter,
-    OwnerDecisionWriter
+    OwnerDecisionWriter,
+    AgentRunRepository,
+    SourceRevisionCatalog
 {
   readonly dbPath: string;
   readonly cas: ContentAddressedStore;
@@ -330,7 +374,42 @@ export class SqliteProjectMemoryStore
         ON understanding_revisions(project_id, matter_id, created_at);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_resolutions_candidate
         ON owner_resolutions(candidate_revision_id);
+
+      CREATE TABLE IF NOT EXISTS agent_tool_receipts (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        tool TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        grant_id TEXT NOT NULL,
+        scope_json TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        pins_json TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL,
+        error_class TEXT,
+        UNIQUE(run_id, sequence)
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_tool_receipts_run
+        ON agent_tool_receipts(run_id, sequence);
     `);
+    this.ensureColumn("original_revisions", "source_version", "TEXT");
+    this.ensureColumn("analysis_runs", "grant_id", "TEXT");
+    this.ensureColumn("analysis_runs", "stop_reason", "TEXT");
+    this.ensureColumn("analysis_runs", "model_receipt_json", "TEXT");
+    this.ensureColumn("analysis_runs", "interrupt_requested", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("analysis_runs", "candidate_revision_id", "TEXT");
+    this.ensureColumn("analysis_runs", "progress_summary", "TEXT");
+  }
+
+  /** Additive migration helper for existing DBs. */
+  private ensureColumn(table: string, column: string, decl: string): void {
+    const rows = this.db
+      .prepare(`PRAGMA table_info(${table})`)
+      .all() as Array<{ name: string }>;
+    if (rows.some((r) => r.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
   }
 
   upsertGrant(grant: SourceGrant): void {
@@ -559,6 +638,58 @@ export class SqliteProjectMemoryStore
       observedAt: row.observed_at,
       previousRevisionId: row.previous_revision_id ?? undefined,
       tombstone: row.tombstone === 1,
+      sourceVersion: row.source_version ?? undefined,
+    };
+  }
+
+  private isGitCaptureSource(sourceVersion?: string | null): boolean {
+    return Boolean(sourceVersion && sourceVersion.startsWith("git:"));
+  }
+
+  private mapAnalysisRun(row: AnalysisRunRow): AnalysisRun {
+    let modelReceipt: AgentRunReceipt | undefined;
+    if (row.model_receipt_json) {
+      try {
+        modelReceipt = JSON.parse(row.model_receipt_json) as AgentRunReceipt;
+      } catch {
+        modelReceipt = undefined;
+      }
+    }
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      matterId: row.matter_id,
+      trigger: row.trigger as AnalysisRun["trigger"],
+      eventIds: JSON.parse(row.event_ids_json) as string[],
+      status: row.status as AnalysisRun["status"],
+      attempt: row.attempt,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      error: row.error ?? undefined,
+      grantId: row.grant_id ?? undefined,
+      stopReason: (row.stop_reason as AnalysisRun["stopReason"]) ?? undefined,
+      modelReceipt,
+      interruptRequested: (row.interrupt_requested ?? 0) === 1,
+      candidateRevisionId: row.candidate_revision_id ?? undefined,
+      progressSummary: row.progress_summary ?? undefined,
+    };
+  }
+
+  private mapToolReceipt(row: ToolReceiptRow): ToolReceipt {
+    return {
+      id: row.id,
+      runId: row.run_id,
+      sequence: row.sequence,
+      tool: row.tool as ToolReceipt["tool"],
+      projectId: row.project_id,
+      grantId: row.grant_id,
+      scope: JSON.parse(row.scope_json) as ToolReceipt["scope"],
+      outcome: row.outcome as ToolReceipt["outcome"],
+      summary: row.summary,
+      pins: JSON.parse(row.pins_json) as ToolReceipt["pins"],
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      errorClass: row.error_class ?? undefined,
     };
   }
 
@@ -637,10 +768,12 @@ export class SqliteProjectMemoryStore
     grantId: string,
     relativePath: string,
   ): OriginalRevision | null {
+    // Exclude git-history captures so evidence blobs never move the observer tip.
     const row = this.db
       .prepare(
         `SELECT * FROM original_revisions
          WHERE project_id = ? AND grant_id = ? AND relative_path = ?
+           AND (source_version IS NULL OR source_version = '' OR source_version NOT LIKE 'git:%')
          ORDER BY observed_at DESC, rowid DESC
          LIMIT 1`,
       )
@@ -1508,6 +1641,336 @@ private getRevision(id: string): OriginalRevision | null {
       resolution: plan.resolution,
       accepted: plan.acceptedToInsert,
       head: plan.nextHead,
+    };
+  }
+
+  // --- AgentRunRepository (D-51 durable trace) ---
+
+  private upsertAnalysisRunRow(run: AnalysisRun): void {
+    this.db
+      .prepare(
+        `INSERT INTO analysis_runs
+         (id, project_id, matter_id, trigger, event_ids_json, status, attempt,
+          created_at, updated_at, error, grant_id, stop_reason, model_receipt_json,
+          interrupt_requested, candidate_revision_id, progress_summary)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           status=excluded.status,
+           attempt=excluded.attempt,
+           updated_at=excluded.updated_at,
+           error=excluded.error,
+           grant_id=excluded.grant_id,
+           stop_reason=excluded.stop_reason,
+           model_receipt_json=excluded.model_receipt_json,
+           interrupt_requested=excluded.interrupt_requested,
+           candidate_revision_id=excluded.candidate_revision_id,
+           progress_summary=excluded.progress_summary,
+           event_ids_json=excluded.event_ids_json`,
+      )
+      .run(
+        run.id,
+        run.projectId,
+        run.matterId,
+        run.trigger,
+        JSON.stringify(run.eventIds),
+        run.status,
+        run.attempt,
+        run.createdAt,
+        run.updatedAt,
+        run.error ?? null,
+        run.grantId ?? null,
+        run.stopReason ?? null,
+        run.modelReceipt ? JSON.stringify(run.modelReceipt) : null,
+        run.interruptRequested ? 1 : 0,
+        run.candidateRevisionId ?? null,
+        run.progressSummary ?? null,
+      );
+  }
+
+  async createRun(run: AnalysisRun): Promise<AnalysisRun> {
+    this.requireMatter(run.projectId, run.matterId);
+    this.upsertAnalysisRunRow(run);
+    const stored = await this.getRun(run.projectId, run.id);
+    if (!stored) throw new Error("createRun failed to persist");
+    return stored;
+  }
+
+  async updateRun(run: AnalysisRun): Promise<AnalysisRun> {
+    const existing = await this.getRun(run.projectId, run.id);
+    if (!existing) throw new Error("analysis run not found");
+    this.upsertAnalysisRunRow({
+      ...run,
+      // once interrupt is requested, sticky until explicit clear (not provided)
+      interruptRequested:
+        Boolean(existing.interruptRequested) || Boolean(run.interruptRequested),
+    });
+    const stored = await this.getRun(run.projectId, run.id);
+    if (!stored) throw new Error("updateRun failed to load");
+    return stored;
+  }
+
+  async getRun(projectId: string, runId: string): Promise<AnalysisRun | null> {
+    const row = this.db
+      .prepare(`SELECT * FROM analysis_runs WHERE id = ? AND project_id = ?`)
+      .get(runId, projectId) as AnalysisRunRow | undefined;
+    return row ? this.mapAnalysisRun(row) : null;
+  }
+
+  async listRuns(projectId: string, matterId?: string): Promise<AnalysisRun[]> {
+    const rows = (
+      matterId
+        ? this.db
+            .prepare(
+              `SELECT * FROM analysis_runs
+               WHERE project_id = ? AND matter_id = ?
+               ORDER BY created_at ASC, rowid ASC`,
+            )
+            .all(projectId, matterId)
+        : this.db
+            .prepare(
+              `SELECT * FROM analysis_runs
+               WHERE project_id = ?
+               ORDER BY created_at ASC, rowid ASC`,
+            )
+            .all(projectId)
+    ) as AnalysisRunRow[];
+    return rows.map((r) => this.mapAnalysisRun(r));
+  }
+
+  async appendToolReceipt(receipt: ToolReceipt): Promise<void> {
+    const run = this.db
+      .prepare(`SELECT id FROM analysis_runs WHERE id = ?`)
+      .get(receipt.runId) as { id: string } | undefined;
+    if (!run) throw new Error("analysis run not found for tool receipt");
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO agent_tool_receipts
+           (id, run_id, sequence, tool, project_id, grant_id, scope_json, outcome,
+            summary, pins_json, started_at, finished_at, error_class)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          receipt.id,
+          receipt.runId,
+          receipt.sequence,
+          receipt.tool,
+          receipt.projectId,
+          receipt.grantId,
+          JSON.stringify(receipt.scope),
+          receipt.outcome,
+          receipt.summary,
+          JSON.stringify(receipt.pins),
+          receipt.startedAt,
+          receipt.finishedAt,
+          receipt.errorClass ?? null,
+        );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (/UNIQUE/i.test(msg)) {
+        throw new Error(
+          `tool receipt sequence ${receipt.sequence} already exists for run ${receipt.runId}`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async listToolReceipts(runId: string): Promise<ToolReceipt[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM agent_tool_receipts WHERE run_id = ? ORDER BY sequence ASC`,
+      )
+      .all(runId) as ToolReceiptRow[];
+    return rows.map((r) => this.mapToolReceipt(r));
+  }
+
+  async requestInterrupt(
+    projectId: string,
+    runId: string,
+  ): Promise<AnalysisRun> {
+    const existing = await this.getRun(projectId, runId);
+    if (!existing) throw new Error("analysis run not found");
+    const now = new Date().toISOString();
+    const next: AnalysisRun = {
+      ...existing,
+      interruptRequested: true,
+      status:
+        existing.status === "queued" || existing.status === "running"
+          ? "interrupted"
+          : existing.status,
+      stopReason:
+        existing.status === "queued" || existing.status === "running"
+          ? "owner_interrupt"
+          : existing.stopReason,
+      updatedAt: now,
+    };
+    this.upsertAnalysisRunRow(next);
+    const stored = await this.getRun(projectId, runId);
+    if (!stored) throw new Error("requestInterrupt failed");
+    return stored;
+  }
+
+  async getRunView(
+    projectId: string,
+    runId: string,
+  ): Promise<AgentRunView | null> {
+    const run = await this.getRun(projectId, runId);
+    if (!run) return null;
+    const toolReceipts = await this.listToolReceipts(runId);
+    const candidate = run.candidateRevisionId
+      ? this.getUnderstanding(run.candidateRevisionId) ?? undefined
+      : undefined;
+    return { run, toolReceipts, candidate };
+  }
+
+  // --- SourceRevisionCatalog ---
+
+  async listCurrentRevisions(
+    projectId: string,
+    grantId: string,
+  ): Promise<OriginalRevision[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM original_revisions
+         WHERE project_id = ? AND grant_id = ?
+         ORDER BY observed_at ASC, rowid ASC`,
+      )
+      .all(projectId, grantId) as RevisionRow[];
+    const byPath = new Map<string, OriginalRevision>();
+    for (const row of rows) {
+      if (this.isGitCaptureSource(row.source_version)) continue;
+      // later observed_at wins (list is ascending)
+      byPath.set(row.relative_path, this.mapRevision(row));
+    }
+    return [...byPath.values()].sort((a, b) =>
+      a.relativePath.localeCompare(b.relativePath),
+    );
+  }
+
+  async captureGitBlob(input: CaptureGitBlobInput): Promise<OriginalRevision> {
+    this.requireActiveGrant(input.projectId, input.grantId);
+    const relativePath = input.relativePath.replace(/\\/g, "/");
+    if (
+      !relativePath ||
+      relativePath.startsWith("/") ||
+      relativePath.includes("..")
+    ) {
+      throw new Error("relativePath invalid");
+    }
+    const commit = input.commit.trim().toLowerCase();
+    const blobOid = input.blobOid.trim().toLowerCase();
+    if (!/^[0-9a-f]{7,64}$/.test(commit) || !/^[0-9a-f]{7,64}$/.test(blobOid)) {
+      throw new Error("commit and blobOid must be hex object ids");
+    }
+    const sourceVersion = `git:${commit}:${blobOid}`;
+    const existing = this.db
+      .prepare(
+        `SELECT * FROM original_revisions
+         WHERE project_id = ? AND grant_id = ? AND relative_path = ? AND source_version = ?`,
+      )
+      .get(
+        input.projectId,
+        input.grantId,
+        relativePath,
+        sourceVersion,
+      ) as RevisionRow | undefined;
+    if (existing) {
+      return this.mapRevision(existing);
+    }
+
+    const casResult = this.cas.put(input.content);
+    const prevKey = `git:${commit}:${blobOid}`;
+    const revId = makeOccurrenceRevisionId({
+      projectId: input.projectId,
+      grantId: input.grantId,
+      relativePath,
+      contentSha256: casResult.sha256,
+      previousRevisionId: prevKey,
+      tombstone: false,
+    });
+    const already = this.getRevision(revId);
+    if (already) return already;
+
+    const observedAt = input.observedAt ?? new Date().toISOString();
+    const revision: OriginalRevision = {
+      id: revId,
+      projectId: input.projectId,
+      grantId: input.grantId,
+      relativePath,
+      sha256: casResult.sha256,
+      sizeBytes: casResult.sizeBytes,
+      observedAt,
+      previousRevisionId: prevKey,
+      tombstone: false,
+      sourceVersion,
+    };
+
+    const eventCountBefore = (
+      this.db
+        .prepare(`SELECT COUNT(*) AS c FROM change_events WHERE project_id = ?`)
+        .get(input.projectId) as { c: number }
+    ).c;
+
+    this.db
+      .prepare(
+        `INSERT INTO original_revisions
+         (id, project_id, grant_id, relative_path, sha256, size_bytes, observed_at, previous_revision_id, tombstone, source_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      )
+      .run(
+        revision.id,
+        revision.projectId,
+        revision.grantId,
+        revision.relativePath,
+        revision.sha256,
+        revision.sizeBytes,
+        revision.observedAt,
+        revision.previousRevisionId ?? null,
+        revision.sourceVersion ?? null,
+      );
+
+    const eventCountAfter = (
+      this.db
+        .prepare(`SELECT COUNT(*) AS c FROM change_events WHERE project_id = ?`)
+        .get(input.projectId) as { c: number }
+    ).c;
+    if (eventCountAfter !== eventCountBefore) {
+      throw new Error("git blob capture must not create change events");
+    }
+
+    // Tip for real path must remain the non-git observation tip.
+    const tip = this.latestTip(input.projectId, input.grantId, relativePath);
+    if (tip && tip.id === revision.id) {
+      throw new Error("git blob capture must not become path tip");
+    }
+
+    return revision;
+  }
+
+  /** Capability slice: AgentRunRepository only (no Owner resolve). */
+  asAgentRunRepository(): AgentRunRepository {
+    const self = this;
+    return {
+      createRun: (run) => self.createRun(run),
+      updateRun: (run) => self.updateRun(run),
+      getRun: (projectId, runId) => self.getRun(projectId, runId),
+      listRuns: (projectId, matterId) => self.listRuns(projectId, matterId),
+      appendToolReceipt: (receipt) => self.appendToolReceipt(receipt),
+      listToolReceipts: (runId) => self.listToolReceipts(runId),
+      requestInterrupt: (projectId, runId) =>
+        self.requestInterrupt(projectId, runId),
+      getRunView: (projectId, runId) => self.getRunView(projectId, runId),
+    };
+  }
+
+  /** Capability slice: SourceRevisionCatalog only. */
+  asSourceRevisionCatalog(): SourceRevisionCatalog {
+    const self = this;
+    return {
+      listCurrentRevisions: (projectId, grantId) =>
+        self.listCurrentRevisions(projectId, grantId),
+      captureGitBlob: (input) => self.captureGitBlob(input),
     };
   }
 }
