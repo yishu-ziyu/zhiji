@@ -10,7 +10,16 @@ import {
   type ParcelWatchEvent,
   type ParcelWatcher,
 } from "./observer";
-import { selectMatterEvents, SourceGrantManager } from "./grants";
+import {
+  getDefaultSourceGrantManager,
+  resetDefaultSourceGrantManagerForTests,
+  selectMatterEvents,
+  SourceGrantManager,
+} from "./grants";
+import {
+  getSharedAgentMemoryService,
+  resetSharedProjectMemoryStoreForTests,
+} from "./runtime";
 import type { ChangeEvent, ObservationSignal, SourceGrant } from "./types";
 
 class FakeWatcher implements ParcelWatcher {
@@ -159,6 +168,101 @@ describe("MVP-V0 local project observer and grant boundary", () => {
     });
     expect(observed[0]?.content).toEqual(new TextEncoder().encode("rename content"));
     await stop.stop();
+  });
+
+  it("bootstraps a usable matter/watch and shares observed events with Agent", async () => {
+    const storeDir = path.join(tmp, "shared-runtime");
+    const watcher = new FakeWatcher();
+    resetDefaultSourceGrantManagerForTests(storeDir);
+    try {
+      const manager = getDefaultSourceGrantManager({
+        adapter: createLocalObservationAdapter({ watcher }),
+        clock: () => "2026-07-16T10:00:00.000Z",
+      });
+      const connection = await manager.connectLocalRoot({
+        projectId: "project-1",
+        rootPath: root,
+      });
+      expect(connection.matter.projectId).toBe("project-1");
+      expect(connection.matter.status).toBe("active");
+      expect(connection.watchSet).toMatchObject({
+        projectId: "project-1",
+        matterId: connection.matter.id,
+        grantId: connection.grant.id,
+        status: "active",
+      });
+      expect(connection.watchSet.includePathPrefixes.length).toBeGreaterThan(0);
+
+      fs.mkdirSync(path.join(root, "src"));
+      fs.writeFileSync(path.join(root, "src", "observed.ts"), "shared");
+      await watcher.emit({
+        type: "create",
+        path: path.join(root, "src", "observed.ts"),
+      });
+
+      const agent = getSharedAgentMemoryService({ dataDir: storeDir });
+      const events = await agent.listEvents("project-1");
+      expect(events.some((event) => event.relativePath === "src/observed.ts")).toBe(true);
+      const state = await agent.getMatterState("project-1", connection.matter.id);
+      expect(state.watchSet?.id).toBe(connection.watchSet.id);
+      await manager.stopAll();
+    } finally {
+      resetDefaultSourceGrantManagerForTests();
+      resetSharedProjectMemoryStoreForTests();
+    }
+  });
+
+  it("hydrates the persisted connection and resumes its observer after restart", async () => {
+    const storeDir = path.join(tmp, "restart-runtime");
+    const firstWatcher = new FakeWatcher();
+    resetDefaultSourceGrantManagerForTests(storeDir);
+    let firstManager: SourceGrantManager | undefined;
+    try {
+      firstManager = getDefaultSourceGrantManager({
+        adapter: createLocalObservationAdapter({ watcher: firstWatcher }),
+        clock: () => "2026-07-16T10:00:00.000Z",
+      });
+      const first = await firstManager.connectLocalRoot({
+        projectId: "project-1",
+        rootPath: root,
+      });
+      await firstManager.stopAll();
+
+      resetDefaultSourceGrantManagerForTests();
+      resetSharedProjectMemoryStoreForTests();
+
+      const secondWatcher = new FakeWatcher();
+      resetDefaultSourceGrantManagerForTests(storeDir);
+      const secondManager = getDefaultSourceGrantManager({
+        adapter: createLocalObservationAdapter({ watcher: secondWatcher }),
+        clock: () => "2026-07-16T10:00:00.000Z",
+      });
+      const second = await secondManager.connectLocalRoot({
+        projectId: "project-1",
+        rootPath: root,
+      });
+      expect(second.grant.id).toBe(first.grant.id);
+      expect(second.matter.id).toBe(first.matter.id);
+      expect(second.watchSet.id).toBe(first.watchSet.id);
+      expect(second.watchSet.includePathPrefixes).toEqual(
+        first.watchSet.includePathPrefixes,
+      );
+
+      fs.mkdirSync(path.join(root, "src"));
+      fs.writeFileSync(path.join(root, "src", "after-restart.ts"), "resumed");
+      await secondWatcher.emit({
+        type: "create",
+        path: path.join(root, "src", "after-restart.ts"),
+      });
+      const agent = getSharedAgentMemoryService({ dataDir: storeDir });
+      const events = await agent.listEvents("project-1");
+      expect(events.some((event) => event.relativePath === "src/after-restart.ts")).toBe(true);
+      await secondManager.stopAll();
+    } finally {
+      await firstManager?.stopAll();
+      resetDefaultSourceGrantManagerForTests();
+      resetSharedProjectMemoryStoreForTests();
+    }
   });
 
   it("revoke stops new signals while retaining prior history", async () => {

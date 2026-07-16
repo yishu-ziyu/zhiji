@@ -18,6 +18,8 @@ type Ctx = { params: Promise<{ id: string }> };
 type LocalGrantBody = {
   rootPath?: string;
   kind?: "local_folder" | "local_git";
+  includePathPrefixes?: string[];
+  excludePathPrefixes?: string[];
   projectId?: string;
 };
 
@@ -65,12 +67,14 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     }
 
     if (isLocalGrantBody(body)) {
-      const grant = await getDefaultSourceGrantManager().authorizeLocalRoot({
+      const connection = await getDefaultSourceGrantManager().connectLocalRoot({
         projectId,
         rootPath: body.rootPath!,
         kind: body.kind,
+        includePathPrefixes: body.includePathPrefixes,
+        excludePathPrefixes: body.excludePathPrefixes,
       });
-      return NextResponse.json({ grant, projectId }, { status: 201 });
+      return NextResponse.json({ ...connection, projectId }, { status: 201 });
     }
 
     // Preserve the pre-existing T-19 cross-project grant surface. It is not

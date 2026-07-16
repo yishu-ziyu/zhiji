@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -7,12 +7,13 @@ import {
 } from "./observer";
 import {
   getSharedObservationWriter,
+  getSharedProjectMemoryReader,
   getSharedProjectMemoryStore,
   resetSharedProjectMemoryStoreForTests,
 } from "./runtime";
-import type { SqliteProjectMemoryStore } from "./sqlite-store";
 import type {
   ChangeEvent,
+  Matter,
   MatterWatchSet,
   ObservationAdapter,
   ObservationSignal,
@@ -28,7 +29,9 @@ export type GrantPersistence = Pick<
   "listEvents" | "getMatterState"
 > &
   ObservationWriter & {
+    getGrant?: (projectId: string, grantId: string) => SourceGrant | null;
     upsertGrant?: (grant: SourceGrant) => void | Promise<void>;
+    upsertMatter?: (matter: Matter) => void | Promise<void>;
     upsertWatchSet?: (watchSet: MatterWatchSet) => void | Promise<void>;
   };
 
@@ -56,6 +59,7 @@ export type AuthorizeLocalGrantInput = {
   projectId: string;
   rootPath: string;
   kind?: SourceGrant["kind"];
+  grantId?: string;
 };
 
 export type ReconcileResult = {
@@ -71,6 +75,12 @@ export type WatchSetInput = {
   includePathPrefixes?: string[];
   excludePathPrefixes?: string[];
   status?: MatterWatchSet["status"];
+};
+
+export type LocalRootConnection = {
+  grant: SourceGrant;
+  matter: Matter;
+  watchSet: MatterWatchSet;
 };
 
 export type MatterEventSelection = {
@@ -98,6 +108,10 @@ function copyGrant(grant: SourceGrant): SourceGrant {
   return { ...grant };
 }
 
+function copyMatter(matter: Matter): Matter {
+  return { ...matter };
+}
+
 function copyWatchSet(watchSet: MatterWatchSet): MatterWatchSet {
   return {
     ...watchSet,
@@ -105,6 +119,21 @@ function copyWatchSet(watchSet: MatterWatchSet): MatterWatchSet {
     excludePathPrefixes: [...watchSet.excludePathPrefixes],
   };
 }
+
+function stableId(prefix: string, ...parts: string[]): string {
+  const digest = createHash("sha256").update(parts.join("\0")).digest("hex");
+  return `${prefix}:${digest}`;
+}
+
+function stableGrantId(projectId: string, kind: SourceGrant["kind"], rootPath: string): string {
+  return stableId("grant", projectId, kind, rootPath);
+}
+
+function defaultMatterId(projectId: string, grantId: string): string {
+  return stableId("matter", projectId, grantId);
+}
+
+const DEFAULT_WATCH_PREFIXES = ["src"];
 
 function normalizeSignalPath(grant: SourceGrant, relativePath: string): string {
   const candidate = path.resolve(grant.rootPath, relativePath);
@@ -246,7 +275,7 @@ export class SourceGrantManager {
     }
     const now = this.clock();
     const grant: SourceGrant = {
-      id: randomUUID(),
+      id: input.grantId ?? randomUUID(),
       projectId: input.projectId,
       kind: input.kind ?? "local_folder",
       rootPath,
@@ -263,6 +292,59 @@ export class SourceGrantManager {
       throw error;
     }
     return copyGrant(grant);
+  }
+
+  /**
+   * Connect a local root and return the default Owner-visible matter/watch set.
+   * A stable grant/matter identity lets a fresh manager reopen persisted state
+   * before restarting the observer, without widening the authorized root.
+   */
+  async connectLocalRoot(input: {
+    projectId: string;
+    rootPath: string;
+    kind?: SourceGrant["kind"];
+    includePathPrefixes?: string[];
+    excludePathPrefixes?: string[];
+  }): Promise<LocalRootConnection> {
+    const rootPath = await fs.promises.realpath(input.rootPath);
+    const kind = input.kind ?? "local_folder";
+    const grantId = stableGrantId(input.projectId, kind, rootPath);
+    const persisted = this.store.getGrant?.(input.projectId, grantId);
+    let grant: SourceGrant;
+    if (persisted) {
+      if (persisted.rootPath !== rootPath || persisted.kind !== kind) {
+        throw new SourceGrantStateError("persisted grant identity does not match root");
+      }
+      if (persisted.status !== "active") {
+        throw new SourceGrantStateError(`grant is ${persisted.status}`);
+      }
+      this.register(persisted);
+      await this.start(persisted);
+      grant = persisted;
+    } else {
+      grant = await this.authorizeLocalRoot({
+        projectId: input.projectId,
+        rootPath,
+        kind,
+        grantId,
+      });
+    }
+
+    return {
+      grant: copyGrant(grant),
+      ...(await this.bootstrapDefaultMatterWatchSet({
+        projectId: grant.projectId,
+        grantId: grant.id,
+        includePathPrefixes: input.includePathPrefixes,
+        excludePathPrefixes: input.excludePathPrefixes,
+      })),
+    };
+  }
+
+  async stopAll(): Promise<void> {
+    const stops = [...this.stops.values()];
+    this.stops.clear();
+    await Promise.all(stops.map((stop) => stop.stop()));
   }
 
   register(grant: SourceGrant): SourceGrant {
@@ -367,6 +449,49 @@ export class SourceGrantManager {
     return copyWatchSet(watchSet);
   }
 
+  private async bootstrapDefaultMatterWatchSet(input: {
+    projectId: string;
+    grantId: string;
+    includePathPrefixes?: string[];
+    excludePathPrefixes?: string[];
+  }): Promise<{ matter: Matter; watchSet: MatterWatchSet }> {
+    const matterId = defaultMatterId(input.projectId, input.grantId);
+    let matter: Matter;
+    try {
+      matter = (await this.store.getMatterState(input.projectId, matterId)).matter;
+    } catch {
+      const now = this.clock();
+      matter = {
+        id: matterId,
+        projectId: input.projectId,
+        title: "本地项目默认事项",
+        goal: "跟踪已授权项目根目录中的可见变化",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (!this.store.upsertMatter) {
+        throw new SourceGrantStateError("shared project-memory matter writer is unavailable");
+      }
+      await this.store.upsertMatter(matter);
+    }
+
+    const existing = await this.getWatchSet(input.projectId, matterId);
+    const watchSet =
+      existing && existing.grantId === input.grantId
+        ? existing
+        : await this.upsertWatchSet({
+            projectId: input.projectId,
+            matterId,
+            grantId: input.grantId,
+            includePathPrefixes:
+              input.includePathPrefixes ?? DEFAULT_WATCH_PREFIXES,
+            excludePathPrefixes: input.excludePathPrefixes,
+          });
+    this.watchSets.set(key(input.projectId, `${matterId}\0${input.grantId}`), watchSet);
+    return { matter: copyMatter(matter), watchSet: copyWatchSet(watchSet) };
+  }
+
   async getWatchSet(projectId: string, matterId: string): Promise<MatterWatchSet | null> {
     const candidates = [...this.watchSets.values()].filter(
       (watchSet) => watchSet.projectId === projectId && watchSet.matterId === matterId,
@@ -412,14 +537,26 @@ let defaultManager: SourceGrantManager | undefined;
  * Observation writes go through ObservationWriter capability; grant rows still
  * need store.upsertGrant (same singleton instance, not a second dataDir).
  */
-export function getDefaultSourceGrantManager(): SourceGrantManager {
+export function getDefaultSourceGrantManager(options: {
+  adapter?: ObservationAdapter;
+  clock?: () => string;
+} = {}): SourceGrantManager {
   if (!defaultManager) {
-    const store = getSharedProjectMemoryStore();
-    // Ensure observation writer is the shared capability (same SQLite).
-    void getSharedObservationWriter();
+    const metadata = getSharedProjectMemoryStore();
+    const reader = getSharedProjectMemoryReader();
+    const observationWriter = getSharedObservationWriter();
     defaultManager = new SourceGrantManager({
-      store,
-      adapter: createLocalObservationAdapter(),
+      store: {
+        listEvents: reader.listEvents,
+        getMatterState: reader.getMatterState,
+        ingest: observationWriter.ingest,
+        getGrant: (projectId, grantId) => metadata.getGrant(projectId, grantId),
+        upsertGrant: (grant) => metadata.upsertGrant(grant),
+        upsertMatter: (matter) => metadata.upsertMatter(matter),
+        upsertWatchSet: (watchSet) => metadata.upsertWatchSet(watchSet),
+      },
+      adapter: options.adapter ?? createLocalObservationAdapter(),
+      clock: options.clock,
     });
   }
   return defaultManager;
