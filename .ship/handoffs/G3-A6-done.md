@@ -44,8 +44,8 @@ npm run test:unit -- shared/knowledge/a6-enter.test.ts
 
 - UX1 浏览器原生 Upload 确认框  
 - A5 拆夹语义改动  
-- 自宣布整条 015 验收  
+- 自宣布整条 015 验收
 
 ## Commit
 
-见本提交 `git log -1 --oneline`（实现后写入）。
+`f89ff270` · feat(knowledge): A6 enter first new project after folder import
