@@ -33,6 +33,7 @@ import {
   KNOWLEDGE_SOURCES,
   UNDIRECTED_RELATION_TYPES,
 } from "@/shared/types/knowledge";
+import { materialCardSummary } from "@/shared/knowledge/materials";
 
 export { DEFAULT_PROJECT_ID } from "@/shared/types/knowledge";
 
@@ -933,14 +934,22 @@ export function searchProjectRecords(
     .map(copyEvent);
 
   const hits: ProjectSearchHit[] = [
-    ...cards.map((card) => ({
-      ref: { kind: "card" as const, id: card.id },
-      title: card.title || "项目材料",
-      summary: card.content,
-      source: card.source,
-      score: searchScore(query, card.title || "项目材料", `${card.content} ${card.tags.join(" ")} ${card.source}`),
-      updatedAt: card.timestamp,
-    })),
+    ...cards.map((card) => {
+      const label = card.sourceFileId || card.title || "material";
+      const summary = materialCardSummary(label, card.content ?? "");
+      return {
+        ref: { kind: "card" as const, id: card.id },
+        title: card.title || "项目材料",
+        summary,
+        source: card.source,
+        score: searchScore(
+          query,
+          card.title || "项目材料",
+          `${summary} ${card.tags.join(" ")} ${card.source}`,
+        ),
+        updatedAt: card.timestamp,
+      };
+    }),
     ...items.map((item) => ({
       ref: { kind: "work_item" as const, id: item.id },
       title: item.title,

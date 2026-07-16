@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  kindFromName,
   listProjectMaterials,
+  materialCardSummary,
   readProjectMaterial,
   renderMarkdownLite,
   writeProjectMaterial,
@@ -17,18 +19,22 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     if (!file) {
       return NextResponse.json({ error: "文件不存在" }, { status: 404 });
     }
+    const isText = file.previewMode === "text";
     const html =
-      file.meta.kind === "markdown" || file.meta.kind === "text"
+      isText &&
+      (file.meta.kind === "markdown" || file.meta.kind === "text")
         ? renderMarkdownLite(file.content)
         : undefined;
     return NextResponse.json({
       file: file.meta,
-      content: file.content,
+      content: isText ? file.content : "",
       html,
-      preview:
-        file.meta.kind === "markdown" || file.meta.kind === "text"
-          ? true
-          : false,
+      preview: isText,
+      previewMode: file.previewMode,
+      mimeType: file.mimeType,
+      typeLabel: file.typeLabel,
+      dataUrl: file.dataUrl,
+      unsupportedMessage: file.unsupportedMessage,
     });
   }
   return NextResponse.json({ materials: listProjectMaterials(id) });
@@ -45,6 +51,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       name?: string;
       content?: string;
       title?: string;
+      encoding?: "utf8" | "base64";
     };
     const name = body.name?.trim() ?? "";
     if (!name) {
@@ -53,12 +60,24 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     if (typeof body.content !== "string") {
       return NextResponse.json({ error: "文件内容无效" }, { status: 400 });
     }
-    const material = writeProjectMaterial(id, name, body.content);
-    // Card makes the file searchable/openable inside the project canvas.
+    const encoding = body.encoding === "base64" ? "base64" : "utf8";
+    const material = writeProjectMaterial(id, name, body.content, { encoding });
+    const kind = kindFromName(material.name);
+    // A7: do not store binary dumps into card content (overview source).
+    const rawText =
+      encoding === "base64"
+        ? ""
+        : typeof body.content === "string"
+          ? body.content
+          : "";
+    const cardContent = materialCardSummary(
+      material.relativePath || material.name,
+      kind === "image" || kind === "binary" ? "" : rawText,
+    );
     const card = addCard({
       projectId: id,
       title: body.title?.trim() || material.name,
-      content: body.content,
+      content: cardContent,
       source: "doc",
       sourceFileId: material.id,
     });

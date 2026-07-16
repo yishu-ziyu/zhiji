@@ -246,7 +246,12 @@ export function ProjectInspector({
             <section className={styles.focusSummary}>
               <span className={styles.sectionEyebrow}>当前关注</span>
               <h3>{snapshot.inspector.title}</h3>
-              <p>{snapshot.inspector.summary}</p>
+              <p
+                data-testid="inspector-overview-summary"
+                style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+              >
+                {snapshot.inspector.summary}
+              </p>
               <div className={styles.whyImportant}>
                 <CircleAlert size={16} />
                 <span>{snapshot.inspector.whyImportant}</span>

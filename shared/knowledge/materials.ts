@@ -1,7 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type MaterialKind = "markdown" | "text" | "html" | "other";
+export type MaterialKind =
+  | "markdown"
+  | "text"
+  | "html"
+  | "image"
+  | "binary"
+  | "other";
+
+/** How the overview / materials panel should present a file (A7/A8). */
+export type MaterialPreviewMode = "text" | "image" | "unsupported";
 
 export type MaterialFile = {
   id: string;
@@ -10,6 +19,19 @@ export type MaterialFile = {
   relativePath: string;
   kind: MaterialKind;
   updatedAt: string;
+};
+
+export type MaterialReadResult = {
+  meta: MaterialFile;
+  /** Text body only; never binary dump for image/binary. */
+  content: string;
+  previewMode: MaterialPreviewMode;
+  mimeType: string;
+  typeLabel: string;
+  /** data: URL for image preview when bytes are available. */
+  dataUrl?: string;
+  /** Human-readable unsupported hint (A7). */
+  unsupportedMessage?: string;
 };
 
 function dataRoot(): string {
@@ -23,12 +45,228 @@ export function projectMaterialsDir(projectId: string): string {
   return path.join(dataRoot(), "files", projectId);
 }
 
+const IMAGE_EXT = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".svg",
+  ".ico",
+]);
+
+const BINARY_EXT = new Set([
+  ".pdf",
+  ".zip",
+  ".gz",
+  ".tar",
+  ".rar",
+  ".7z",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".eot",
+  ".exe",
+  ".dll",
+  ".bin",
+  ".wasm",
+  ".mp3",
+  ".mp4",
+  ".webm",
+  ".mov",
+  ".avi",
+  ".ogg",
+  ".wav",
+]);
+
+const TEXT_EXT = new Set([
+  ".txt",
+  ".md",
+  ".markdown",
+  ".html",
+  ".htm",
+  ".css",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".json",
+  ".csv",
+  ".xml",
+  ".yml",
+  ".yaml",
+  ".toml",
+  ".ini",
+  ".log",
+  ".svg", // svg also image; classified as image first
+]);
+
+export function extensionOf(name: string): string {
+  const base = path.basename(name).toLowerCase();
+  const dot = base.lastIndexOf(".");
+  if (dot < 0) return "";
+  return base.slice(dot);
+}
+
 export function kindFromName(name: string): MaterialKind {
   const lower = name.toLowerCase();
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown";
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
   if (lower.endsWith(".txt")) return "text";
+  const ext = extensionOf(lower);
+  if (IMAGE_EXT.has(ext)) return "image";
+  if (BINARY_EXT.has(ext)) return "binary";
+  if (TEXT_EXT.has(ext)) return "text";
   return "other";
+}
+
+export function mimeFromName(name: string): string {
+  const ext = extensionOf(name);
+  switch (ext) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".bmp":
+      return "image/bmp";
+    case ".svg":
+      return "image/svg+xml";
+    case ".ico":
+      return "image/x-icon";
+    case ".pdf":
+      return "application/pdf";
+    case ".md":
+    case ".markdown":
+      return "text/markdown";
+    case ".txt":
+      return "text/plain";
+    case ".html":
+    case ".htm":
+      return "text/html";
+    case ".json":
+      return "application/json";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+export function typeLabelFromName(name: string): string {
+  const ext = extensionOf(name).replace(/^\./, "");
+  return ext || "unknown";
+}
+
+export function isTextPreviewKind(kind: MaterialKind): boolean {
+  return kind === "markdown" || kind === "text" || kind === "html";
+}
+
+/** Detect UTF-8 mojibake / control-heavy dumps that must not fill the overview. */
+export function looksLikeBinaryText(text: string): boolean {
+  if (!text) return false;
+  if (text.includes("\u0000")) return true;
+  // Replacement chars from binary→utf8 (common after file.text() on PNG).
+  const sample = text.slice(0, 4096);
+  const replacement = (sample.match(/\uFFFD/g) || []).length;
+  if (replacement >= 3) return true;
+  // PNG / ZIP / PDF magic when partially preserved
+  if (
+    sample.startsWith("\uFFFDPNG") ||
+    sample.startsWith("PNG\r\n") ||
+    sample.includes("IHDR") && sample.includes("IDAT") && sample.length > 200
+  ) {
+    // PNG-like with binary noise
+    if (replacement > 0 || /[\x00-\x08\x0e-\x1f]/.test(sample.slice(0, 200))) {
+      return true;
+    }
+  }
+  let control = 0;
+  const n = Math.min(sample.length, 2048);
+  for (let i = 0; i < n; i += 1) {
+    const c = sample.charCodeAt(i);
+    if (c === 9 || c === 10 || c === 13) continue;
+    if (c < 32) control += 1;
+  }
+  return n > 0 && control / n > 0.08;
+}
+
+export function unsupportedPreviewMessage(
+  fileName: string,
+  typeLabel: string,
+): string {
+  return `此类型不支持文本预览\n文件名：${fileName}\n类型：${typeLabel}`;
+}
+
+/**
+ * Safe card / inspector summary for materials (A7/A8).
+ * Never return multi-KB binary dumps into overview.
+ */
+export function materialCardSummary(
+  fileName: string,
+  content: string,
+): string {
+  const kind = kindFromName(fileName);
+  const typeLabel = typeLabelFromName(fileName);
+  if (kind === "image" || kind === "binary") {
+    return unsupportedPreviewMessage(
+      path.basename(fileName) || fileName,
+      typeLabel,
+    );
+  }
+  if (looksLikeBinaryText(content)) {
+    return unsupportedPreviewMessage(
+      path.basename(fileName) || fileName,
+      typeLabel || "binary",
+    );
+  }
+  // Keep card searchable without flooding UI.
+  if (content.length > 4000) {
+    return `${content.slice(0, 4000)}\n…（已截断）`;
+  }
+  return content;
+}
+
+function looksLikeImageBuffer(buf: Buffer, name: string): boolean {
+  if (kindFromName(name) === "image") return true;
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return true;
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return true;
+  }
+  if (
+    buf.length >= 6 &&
+    buf[0] === 0x47 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46
+  ) {
+    return true;
+  }
+  if (
+    buf.length >= 12 &&
+    buf.toString("ascii", 0, 4) === "RIFF" &&
+    buf.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function bufferLooksBinary(buf: Buffer): boolean {
+  if (buf.includes(0)) return true;
+  const n = Math.min(buf.length, 2048);
+  if (n === 0) return false;
+  let control = 0;
+  for (let i = 0; i < n; i += 1) {
+    const b = buf[i];
+    if (b === 9 || b === 10 || b === 13) continue;
+    if (b < 32) control += 1;
+  }
+  return control / n > 0.08;
 }
 
 /** Allow nested paths under the project dir (A5); reject traversal. */
@@ -93,10 +331,25 @@ export function listProjectMaterials(projectId: string): MaterialFile[] {
   return files.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function materialMeta(
+  projectId: string,
+  relativePath: string,
+  updatedAt: string,
+): MaterialFile {
+  return {
+    id: relativePath,
+    projectId,
+    name: path.basename(relativePath),
+    relativePath,
+    kind: kindFromName(relativePath),
+    updatedAt,
+  };
+}
+
 export function readProjectMaterial(
   projectId: string,
   fileId: string,
-): { meta: MaterialFile; content: string } | null {
+): MaterialReadResult | null {
   if (!fileId || fileId.includes("..")) {
     return null;
   }
@@ -120,28 +373,81 @@ export function readProjectMaterial(
     return null;
   }
   const stat = fs.statSync(resolvedFull);
-  const content = fs.readFileSync(resolvedFull, "utf8");
+  const meta = materialMeta(projectId, relativePath, stat.mtime.toISOString());
+  const buf = fs.readFileSync(resolvedFull);
+  const mimeType = mimeFromName(relativePath);
+  const typeLabel = typeLabelFromName(relativePath);
+  const fileName = meta.name;
+
+  // A7: image → preview when bytes look like a real image; never UTF-8 dump.
+  if (meta.kind === "image" || looksLikeImageBuffer(buf, relativePath)) {
+    const imageMeta = { ...meta, kind: "image" as const };
+    // file.text()→utf8 write corrupts PNG: file often starts with EF BF BD (U+FFFD).
+    const corruptedUtf8Store =
+      buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbf && buf[2] === 0xbd;
+    if (corruptedUtf8Store) {
+      return {
+        meta: imageMeta,
+        content: "",
+        previewMode: "unsupported",
+        mimeType,
+        typeLabel,
+        unsupportedMessage: unsupportedPreviewMessage(fileName, typeLabel),
+      };
+    }
+    return {
+      meta: imageMeta,
+      content: "",
+      previewMode: "image",
+      mimeType,
+      typeLabel,
+      dataUrl: `data:${mimeType};base64,${buf.toString("base64")}`,
+    };
+  }
+
+  // A7: non-image binary
+  if (meta.kind === "binary" || bufferLooksBinary(buf)) {
+    return {
+      meta: { ...meta, kind: meta.kind === "other" ? "binary" : meta.kind },
+      content: "",
+      previewMode: "unsupported",
+      mimeType,
+      typeLabel,
+      unsupportedMessage: unsupportedPreviewMessage(fileName, typeLabel),
+    };
+  }
+
+  // A8: text / markdown / html / other-as-text
+  const content = buf.toString("utf8");
+  if (looksLikeBinaryText(content)) {
+    return {
+      meta,
+      content: "",
+      previewMode: "unsupported",
+      mimeType,
+      typeLabel,
+      unsupportedMessage: unsupportedPreviewMessage(fileName, typeLabel),
+    };
+  }
   return {
-    meta: {
-      id: relativePath,
-      projectId,
-      name: path.basename(relativePath),
-      relativePath,
-      kind: kindFromName(relativePath),
-      updatedAt: stat.mtime.toISOString(),
-    },
+    meta,
     content,
+    previewMode: "text",
+    mimeType,
+    typeLabel,
   };
 }
 
 /**
  * Write one local file into the project materials store under files/{projectId}/.
  * name may be a nested relative path (A5 folder import).
+ * encoding base64 preserves binary (images) without UTF-8 corruption.
  */
 export function writeProjectMaterial(
   projectId: string,
   name: string,
   content: string,
+  options?: { encoding?: "utf8" | "base64" },
 ): MaterialFile {
   if (!projectId.trim()) throw new Error("项目不存在");
   if (typeof content !== "string") throw new Error("文件内容无效");
@@ -157,16 +463,13 @@ export function writeProjectMaterial(
     throw new Error("文件名无效");
   }
   fs.mkdirSync(path.dirname(resolvedFull), { recursive: true });
-  fs.writeFileSync(resolvedFull, content, "utf8");
+  if (options?.encoding === "base64") {
+    fs.writeFileSync(resolvedFull, Buffer.from(content, "base64"));
+  } else {
+    fs.writeFileSync(resolvedFull, content, "utf8");
+  }
   const stat = fs.statSync(resolvedFull);
-  return {
-    id: relativePath,
-    projectId,
-    name: path.basename(relativePath),
-    relativePath,
-    kind: kindFromName(relativePath),
-    updatedAt: stat.mtime.toISOString(),
-  };
+  return materialMeta(projectId, relativePath, stat.mtime.toISOString());
 }
 
 /** Very small markdown → safe HTML (headings, lists, code, paragraphs). */

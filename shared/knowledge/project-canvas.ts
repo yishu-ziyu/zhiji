@@ -17,6 +17,7 @@ import type {
 } from "@/shared/types/knowledge";
 import { RELATION_TYPE_LABELS, STATUS_LABELS } from "@/shared/types/knowledge";
 import { edgeDirection } from "@/shared/knowledge/relations";
+import { materialCardSummary } from "@/shared/knowledge/materials";
 
 export type ProjectFacts = {
   project: Project;
@@ -682,9 +683,11 @@ function buildInspector(
   if (input.focus.kind === "card") {
     const card = input.cards.find((entry) => entry.id === input.focus.id);
     if (!card) throw new Error("卡片不属于当前项目");
+    // A7/A8: never dump binary/image bytes into 概览 (e.g. logo-horizontal.png).
+    const summarySource = card.sourceFileId || card.title || "material";
     return {
       title: card.title || "项目材料",
-      summary: card.content,
+      summary: materialCardSummary(summarySource, card.content ?? ""),
       whyImportant: "这条材料被当前项目的关系或工作项引用。",
       evidence: [{ kind: "card", id: card.id }],
       impacts: input.workItems

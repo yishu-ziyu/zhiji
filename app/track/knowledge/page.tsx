@@ -115,6 +115,10 @@ export default function KnowledgePage() {
     html?: string;
     content: string;
     preview: boolean;
+    previewMode?: "text" | "image" | "unsupported";
+    typeLabel?: string;
+    dataUrl?: string;
+    unsupportedMessage?: string;
   } | null>(null);
   const [projectJumpOpen, setProjectJumpOpen] = useState(false);
   const [projectJumpQuery, setProjectJumpQuery] = useState("");
@@ -329,31 +333,68 @@ export default function KnowledgePage() {
         content: string;
         html?: string;
         preview: boolean;
+        previewMode?: "text" | "image" | "unsupported";
+        typeLabel?: string;
+        dataUrl?: string;
+        unsupportedMessage?: string;
       }>(
         `/api/knowledge/projects/${projectId}/materials?file=${encodeURIComponent(fileId)}`,
       );
       setMaterialView({
         name: data.file.name,
-        content: data.content,
+        content: data.content ?? "",
         html: data.html,
         preview: data.preview,
+        previewMode: data.previewMode ?? (data.preview ? "text" : "unsupported"),
+        typeLabel: data.typeLabel,
+        dataUrl: data.dataUrl,
+        unsupportedMessage: data.unsupportedMessage,
       });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "打开文件失败");
     }
   }
 
+  /** Image/binary → base64 (A7 preserve bytes); text → utf8 (A8). */
+  function isBinaryUploadName(name: string): boolean {
+    return /\.(png|jpe?g|gif|webp|bmp|ico|pdf|zip|gz|tar|rar|7z|woff2?|ttf|eot|mp3|mp4|webm|mov|avi|wasm|bin)$/i.test(
+      name,
+    );
+  }
+
+  async function fileToMaterialPayload(file: File): Promise<{
+    name: string;
+    content: string;
+    encoding?: "utf8" | "base64";
+  }> {
+    if (isBinaryUploadName(file.name) || (file.type && !file.type.startsWith("text/") && file.type !== "application/json" && !file.type.includes("xml"))) {
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      return {
+        name: file.name,
+        content: btoa(binary),
+        encoding: "base64",
+      };
+    }
+    return { name: file.name, content: await file.text(), encoding: "utf8" };
+  }
+
   async function uploadFileToProject(targetProjectId: string, file: File) {
-    const content = await file.text();
+    const payload = await fileToMaterialPayload(file);
     const data = await apiJson<{
       material: { id: string; name: string; projectId: string };
       card: KnowledgeCard;
     }>(`/api/knowledge/projects/${targetProjectId}/materials`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: file.name, content }),
+      body: JSON.stringify(payload),
     });
-    return { ...data, content };
+    return { ...data, content: payload.encoding === "base64" ? "" : payload.content };
   }
 
   /**
@@ -524,23 +565,21 @@ export default function KnowledgePage() {
     try {
       let lastName = "";
       let lastCardId = "";
+      let lastMaterialId = "";
       for (const file of list) {
         const data = await uploadFileToProject(targetId, file);
         lastName = data.material.name;
         lastCardId = data.card.id;
-        if (targetId === activeProjectIdRef.current) {
-          setMaterialView({
-            name: data.material.name,
-            content: data.content,
-            preview: false,
-          });
-        }
+        lastMaterialId = data.material.id;
       }
       if (targetId === activeProjectIdRef.current) {
         const materialList = await apiJson<{
           materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
         }>(`/api/knowledge/projects/${targetId}/materials`);
         setMaterials(materialList.materials);
+        if (lastMaterialId) {
+          await openMaterialFile(lastMaterialId);
+        }
         await loadProjectCards(targetId);
         if (lastCardId) {
           await loadSnapshot(targetId, { kind: "card", id: lastCardId });
@@ -591,20 +630,20 @@ export default function KnowledgePage() {
       if (filesToIngest.length > 0) {
         let lastName = "";
         let lastCardId = "";
+        let lastMaterialId = "";
         for (const file of filesToIngest) {
           const uploaded = await uploadFileToProject(data.project.id, file);
           lastName = uploaded.material.name;
           lastCardId = uploaded.card.id;
-          setMaterialView({
-            name: uploaded.material.name,
-            content: uploaded.content,
-            preview: false,
-          });
+          lastMaterialId = uploaded.material.id;
         }
         const materialList = await apiJson<{
           materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
         }>(`/api/knowledge/projects/${data.project.id}/materials`);
         setMaterials(materialList.materials);
+        if (lastMaterialId) {
+          await openMaterialFile(lastMaterialId);
+        }
         setMaterialsOpen(true);
         await loadProjectCards(data.project.id);
         if (lastCardId) {
@@ -1684,11 +1723,33 @@ export default function KnowledgePage() {
                   }}
                 >
                   <strong style={{ display: "block", marginBottom: 8 }}>{materialView.name}</strong>
-                  {materialView.preview && materialView.html ? (
-                    <div dangerouslySetInnerHTML={{ __html: materialView.html }} />
-                  ) : (
-                    <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{materialView.content}</pre>
-                  )}
+                  {materialView.previewMode === "image" && materialView.dataUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      data-testid="material-image-preview"
+                      src={materialView.dataUrl}
+                      alt={materialView.name}
+                      style={{ maxWidth: "100%", height: "auto", display: "block" }}
+                    />
+                  ) : null}
+                  {materialView.previewMode === "unsupported" ||
+                  (materialView.previewMode === "image" && !materialView.dataUrl) ? (
+                    <pre
+                      data-testid="material-unsupported-preview"
+                      style={{ whiteSpace: "pre-wrap", margin: 0, color: "#5c5f66" }}
+                    >
+                      {materialView.unsupportedMessage ||
+                        `此类型不支持文本预览\n文件名：${materialView.name}\n类型：${materialView.typeLabel || "binary"}`}
+                    </pre>
+                  ) : null}
+                  {materialView.previewMode === "text" ||
+                  (!materialView.previewMode && (materialView.preview || materialView.content)) ? (
+                    materialView.html ? (
+                      <div dangerouslySetInnerHTML={{ __html: materialView.html }} />
+                    ) : (
+                      <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{materialView.content}</pre>
+                    )
+                  ) : null}
                 </div>
               ) : null}
             </div>
