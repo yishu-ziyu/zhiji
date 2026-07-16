@@ -1,4 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Gochi+Hand&family=Noto+Serif+SC:wght@400;500;600&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap");
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
@@ -8,8 +7,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-hand: var(--font-hand);
-  --font-serif: var(--font-serif);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -40,62 +37,58 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --color-paper: var(--paper);
-  --color-paper-foreground: var(--paper-foreground);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);
-  --radius-sm: 4px;
-  --radius-md: 8px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
   --radius-lg: 12px;
-  --radius-xl: 20px;
-  --radius-2xl: 24px;
-  --radius-3xl: 32px;
-  --radius-4xl: 40px;
-  --radius-pill: 60px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-3xl: 24px;
+  --radius-4xl: 32px;
+  --radius-pill: 980px;
 }
 
-/* DESIGN.md — 奕枢视觉系统 tokens */
+/* LifeOS product shell — Apple-like light industrial SaaS */
 :root {
-  --background: #000000;
-  --foreground: #e8e8e8;
-  --card: #111111;
-  --card-foreground: #e8e8e8;
-  --popover: #111111;
-  --popover-foreground: #e8e8e8;
-  --primary: #e35342;
+  --background: #f5f5f7;
+  --foreground: #1d1d1f;
+  --card: #ffffff;
+  --card-foreground: #1d1d1f;
+  --popover: #ffffff;
+  --popover-foreground: #1d1d1f;
+  --primary: #007aff;
   --primary-foreground: #ffffff;
-  --secondary: #1a1a1a;
-  --secondary-foreground: #e8e8e8;
-  --muted: #1a1a1a;
-  --muted-foreground: #999999;
-  --accent: #e35342;
+  --secondary: #e8e8ed;
+  --secondary-foreground: #1d1d1f;
+  --muted: #e8e8ed;
+  --muted-foreground: #6e6e73;
+  --accent: #007aff;
   --accent-foreground: #ffffff;
-  --destructive: #d71921;
-  --border: #222222;
-  --input: #222222;
-  --ring: #e35342;
-  --paper: #f2e3cf;
-  --paper-foreground: #1a1a1a;
-  --surface: #111111;
-  --surface-raised: #1a1a1a;
-  --chart-1: #e35342;
-  --chart-2: #edbe24;
-  --chart-3: #f2e3cf;
-  --chart-4: #999999;
-  --chart-5: #2754a9;
+  --destructive: #ff3b30;
+  --border: #d2d2d7;
+  --input: #d2d2d7;
+  --ring: #007aff;
+  --surface: #ffffff;
+  --surface-raised: #f5f5f7;
+  --chart-1: #007aff;
+  --chart-2: #34c759;
+  --chart-3: #ff9500;
+  --chart-4: #af52de;
+  --chart-5: #5ac8fa;
   --radius: 12px;
-  --sidebar: #000000;
-  --sidebar-foreground: #e8e8e8;
-  --sidebar-primary: #e35342;
+  --sidebar: #f5f5f7;
+  --sidebar-foreground: #1d1d1f;
+  --sidebar-primary: #007aff;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #111111;
-  --sidebar-accent-foreground: #e8e8e8;
-  --sidebar-border: #222222;
-  --sidebar-ring: #e35342;
-  --font-sans: "Space Grotesk", system-ui, sans-serif;
-  --font-mono: "Space Mono", ui-monospace, monospace;
-  --font-hand: "Gochi Hand", "Segoe Print", cursive;
-  --font-serif: "Noto Serif SC", "Songti SC", serif;
+  --sidebar-accent: #e8e8ed;
+  --sidebar-accent-foreground: #1d1d1f;
+  --sidebar-border: #d2d2d7;
+  --sidebar-ring: #007aff;
+  --font-sans: var(--font-plus-jakarta), "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    monospace;
 }
 
 @layer base {
@@ -112,68 +105,29 @@
   }
 }
 
-/* Mono labels: instrument panel */
 .mono-label {
   font-family: var(--font-mono);
   font-size: 11px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--muted-foreground);
-}
-
-.font-hand {
-  font-family: var(--font-hand);
-}
-
-.font-serif-cn {
-  font-family: var(--font-serif);
-}
-
-/* Tear-corner paper card (DESIGN.md special radius) */
-.paper-card {
-  background: var(--paper);
-  color: var(--paper-foreground);
-  border: 1px solid #e35342;
-  border-radius: 20px 20px 4px 4px;
 }
 
 .surface-card {
   background: var(--surface);
   color: var(--foreground);
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: 12px;
 }
 
-/* No box-shadow; depth via surface only */
-.no-shadow {
-  box-shadow: none !important;
-}
-
-/* Subtle grain for paper zones */
-.paper-grain {
-  position: relative;
-}
-.paper-grain::after {
-  content: "";
-  pointer-events: none;
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  opacity: 0.06;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-/* Blur-reveal entrance (prefer over pure opacity fade) */
 @keyframes design-rise {
   from {
     opacity: 0;
-    transform: translateY(13px);
-    filter: blur(8px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
-    filter: blur(0);
   }
 }
 

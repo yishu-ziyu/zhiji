@@ -150,6 +150,13 @@ export function hasPersistedUnderstanding(memory: {
   return Boolean(memory.candidate?.body || memory.accepted?.body);
 }
 
+export {
+  humanizeUserFacingText as humanizeUnderstandingText,
+  isEmptyEventUnderstandingBody as isEmptyEventUnderstanding,
+  countPdfPaths,
+  looksLikeEnglishOnly,
+} from "@/shared/project-memory/user-facing-zh";
+
 /**
  * Initial analysis runs only when there is no accepted/candidate yet.
  * Continue with existing understanding must not force analysis.

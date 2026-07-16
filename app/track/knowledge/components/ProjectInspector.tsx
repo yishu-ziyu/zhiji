@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   Bot,
@@ -31,6 +31,12 @@ import {
   STATUS_LABELS,
 } from "@/shared/types/knowledge";
 import { actorLabel } from "./actor-label";
+import { MarkdownBody } from "./MarkdownBody";
+import {
+  AgentPresenceRail,
+  type AgentSession,
+} from "./AgentPresenceRail";
+import type { UnderstandingBody } from "../lib/folder-connection-api";
 import styles from "../project-canvas.module.css";
 
 type InspectorTab = "overview" | "context" | "tasks" | "activity";
@@ -67,6 +73,14 @@ type Props = {
     unresolved: string[];
     nextStep: string;
   }) => Promise<void>;
+  /** Folder-backed Agent presence (process + confirm). */
+  agentSession?: AgentSession | null;
+  agentResolutionMessage?: string | null;
+  onResolveUnderstanding?: (
+    decision: "accept" | "edit_accept" | "reject",
+    editedBody?: UnderstandingBody,
+  ) => Promise<void>;
+  onRerunAgent?: () => Promise<void>;
 };
 
 const tabLabels: Array<{ id: InspectorTab; label: string }> = [
@@ -108,8 +122,33 @@ export function ProjectInspector({
   onProposeMaterialRelations,
   onRunAgent,
   onCheckpoint,
+  agentSession = null,
+  agentResolutionMessage = null,
+  onResolveUnderstanding,
+  onRerunAgent,
 }: Props) {
   const [tab, setTab] = useState<InspectorTab>("overview");
+
+  // E7: when project has Agent activity, open 动态 so process + feed are visible.
+  useEffect(() => {
+    if (!snapshot) return;
+    if (
+      snapshot.focus.kind === "project" &&
+      snapshot.agentActivity?.hasAgentEvents
+    ) {
+      setTab("activity");
+      return;
+    }
+    if (snapshot.focus.kind === "agent") {
+      setTab("activity");
+      return;
+    }
+    setTab("overview");
+  }, [
+    snapshot?.focus.kind,
+    snapshot?.focus.id,
+    snapshot?.agentActivity?.hasAgentEvents,
+  ]);
   const [editingNextStep, setEditingNextStep] = useState(false);
   const [nextStep, setNextStep] = useState("");
   const [editingCheckpoint, setEditingCheckpoint] = useState(checkpointOpen);
@@ -210,6 +249,19 @@ export function ProjectInspector({
     setRelationEvidence("");
   }
 
+  const focusKindLabel =
+    snapshot.focus.kind === "project"
+      ? "当前项目"
+      : snapshot.focus.kind === "work_item"
+        ? "工作项"
+        : snapshot.focus.kind === "card"
+          ? "材料依据"
+          : snapshot.focus.kind === "event"
+            ? "时间记录"
+            : snapshot.focus.kind === "agent"
+              ? "Agent"
+              : "当前焦点";
+
   return (
     <aside className={styles.inspector} data-testid="project-inspector">
       <header className={styles.inspectorHeader}>
@@ -221,11 +273,28 @@ export function ProjectInspector({
           className={styles.inspectorLogo}
         />
         <div>
-          <h2>{snapshot.project.name}</h2>
-          <p>进行中的项目 <Star size={14} fill="currentColor" /></p>
+          <h2 data-testid="inspector-focus-title">{snapshot.inspector.title}</h2>
+          <p data-testid="inspector-focus-kind">
+            {focusKindLabel}
+            {snapshot.focus.kind === "project" ? (
+              <>
+                {" "}
+                <Star size={14} fill="currentColor" />
+              </>
+            ) : (
+              <span className={styles.inspectorProjectHint}>
+                {" "}
+                · {snapshot.project.name}
+              </span>
+            )}
+          </p>
         </div>
       </header>
-      <p className={styles.inspectorSummary}>{snapshot.project.summary}</p>
+      <p className={styles.inspectorSummary} data-testid="inspector-lead">
+        {snapshot.focus.kind === "project"
+          ? snapshot.project.summary || snapshot.inspector.summary
+          : snapshot.inspector.whyImportant}
+      </p>
 
       <nav className={styles.inspectorTabs} aria-label="详情分类">
         {tabLabels.map((item) => (
@@ -244,17 +313,25 @@ export function ProjectInspector({
       </nav>
 
       <div className={styles.inspectorBody}>
+        {agentSession && agentSession.projectId === snapshot.project.id ? (
+          <AgentPresenceRail
+            session={agentSession}
+            resolutionMessage={agentResolutionMessage}
+            onResolve={onResolveUnderstanding}
+            onRerun={onRerunAgent}
+            busy={busy}
+          />
+        ) : null}
         {tab === "overview" ? (
           <>
             <section className={styles.focusSummary}>
               <span className={styles.sectionEyebrow}>当前关注</span>
               <h3>{snapshot.inspector.title}</h3>
-              <p
+              <MarkdownBody
+                source={snapshot.inspector.summary}
+                hintName={snapshot.inspector.title}
                 data-testid="inspector-overview-summary"
-                style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-              >
-                {snapshot.inspector.summary}
-              </p>
+              />
               <div className={styles.whyImportant}>
                 <CircleAlert size={16} />
                 <span>{snapshot.inspector.whyImportant}</span>
@@ -577,26 +654,104 @@ export function ProjectInspector({
         ) : null}
 
         {tab === "activity" ? (
-          <section className={styles.activityFeed}>
-            <div className={styles.listHeading}><h3>执行记录</h3><span>{activity.length}</span></div>
-            {activity.map((event) => (
-              <button type="button" key={event.id} onClick={() => onFocus(event.ref)}>
-                <Circle data-type={event.type} fill="currentColor" />
-                <span>
-                  <strong>{actorLabel(event.actor)}</strong>
-                  <small>{event.body}</small>
-                  {event.review ? (
-                    <em className={styles.reviewSummary}>
-                      {event.review.mode === "model" ? "真实模型" : "确定性模式"}
-                      {` · 判断：${event.review.judgment}`}
-                      {event.review.gaps.length > 0 ? ` · 缺口：${event.review.gaps.join("；")}` : ""}
-                      {` · 下一步：${event.review.nextStep} · 引用 ${event.review.evidenceIds.length} 条依据`}
-                    </em>
-                  ) : null}
-                </span>
-                <time>{shortTime(event.createdAt)}</time>
-              </button>
-            ))}
+          <section className={styles.activityFeed} data-testid="inspector-activity">
+            {/* E7: eight-step process (data-backed, not decorative). */}
+            <div
+              className={styles.agentProcessBlock}
+              data-testid="inspector-agent-process"
+              data-has-agent={snapshot.agentActivity?.hasAgentEvents ? "true" : "false"}
+            >
+              <div className={styles.listHeading}>
+                <h3>Agent 在做什么</h3>
+                <span>{snapshot.agentActivity?.steps.length ?? 8}</span>
+              </div>
+              <p className={styles.agentProcessCaption} data-testid="inspector-agent-caption">
+                {snapshot.agentActivity?.caption ??
+                  "还没有 Agent 执行记录；授权或跑 Agent 后，步骤会跟着推进。"}
+              </p>
+              <ol className={styles.agentProcessSteps}>
+                {(snapshot.agentActivity?.steps ?? []).map((step) => (
+                  <li
+                    key={step.id}
+                    data-step={step.id}
+                    data-status={step.status}
+                    data-active={step.status === "active" ? "true" : "false"}
+                  >
+                    <span className={styles.agentProcessDot} aria-hidden="true" />
+                    <span>
+                      <strong>{step.title}</strong>
+                      <small>
+                        {step.status === "done"
+                          ? "已完成"
+                          : step.status === "active"
+                            ? "进行中"
+                            : "未开始"}
+                      </small>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div
+              className={styles.agentFeedBlock}
+              data-testid="inspector-agent-feed"
+            >
+              <div className={styles.listHeading}>
+                <h3>Agent 动态</h3>
+                <span>{snapshot.agentActivity?.feed.length ?? 0}</span>
+              </div>
+              {(snapshot.agentActivity?.feed.length ?? 0) === 0 ? (
+                <p className={styles.emptyCopy} data-testid="inspector-agent-feed-empty">
+                  还没有 Agent 执行记录。对工作项点「交给 Agent」后会出现在这里。
+                </p>
+              ) : (
+                snapshot.agentActivity!.feed.map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    data-testid={`agent-feed-${item.id}`}
+                    onClick={() => onFocus(item.ref)}
+                  >
+                    <Bot size={14} aria-hidden="true" />
+                    <span>
+                      <strong>{item.actorLabel}</strong>
+                      <small>{item.body}</small>
+                    </span>
+                    <time>{shortTime(item.createdAt)}</time>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <div className={styles.listHeading}>
+              <h3>全部执行记录</h3>
+              <span>{activity.length}</span>
+            </div>
+            {activity.length === 0 ? (
+              <p className={styles.emptyCopy}>当前焦点下没有时间记录。</p>
+            ) : (
+              activity.map((event) => (
+                <button type="button" key={event.id} onClick={() => onFocus(event.ref)}>
+                  <Circle data-type={event.type} fill="currentColor" />
+                  <span>
+                    <strong>{actorLabel(event.actor)}</strong>
+                    <small>{event.body}</small>
+                    {event.review ? (
+                      <em className={styles.reviewSummary}>
+                        {event.review.mode === "model" ? "真实模型" : "确定性模式"}
+                        {` · 判断：${event.review.judgment}`}
+                        {event.review.gaps.length > 0
+                          ? ` · 缺口：${event.review.gaps.join("；")}`
+                          : ""}
+                        {` · 下一步：${event.review.nextStep} · 引用 ${event.review.evidenceIds.length} 条依据`}
+                      </em>
+                    ) : null}
+                  </span>
+                  <time>{shortTime(event.createdAt)}</time>
+                </button>
+              ))
+            )}
           </section>
         ) : null}
       </div>

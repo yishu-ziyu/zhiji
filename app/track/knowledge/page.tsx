@@ -36,8 +36,18 @@ import type {
 import { SOURCE_CLUSTER_LABELS } from "@/shared/types/knowledge";
 import { ProjectCanvas } from "./components/ProjectCanvas";
 import { ProjectInspector } from "./components/ProjectInspector";
-import { ProjectNavigator } from "./components/ProjectNavigator";
+import {
+  ProjectNavigator,
+  readNavCollapsedPreference,
+} from "./components/ProjectNavigator";
 import { ProjectTimeline } from "./components/ProjectTimeline";
+import {
+  LocalFolderEntry,
+  type FolderAuthorizeSession,
+} from "./components/LocalFolderEntry";
+import type { AgentSession } from "./components/AgentPresenceRail";
+import { createMvpApi } from "./lib/folder-connection-api";
+import type { UnderstandingBody } from "./lib/folder-connection-api";
 import {
   mergeProjectsForA6Enter,
   pickA6EnterProjectId,
@@ -74,7 +84,7 @@ function focusFromUrl(projectId: string): CanvasNodeRef {
   const kind = value.slice(0, separator);
   const id = value.slice(separator + 1);
   if (
-    !["project", "card", "work_item", "event"].includes(kind) ||
+    !["project", "card", "work_item", "event", "agent"].includes(kind) ||
     !id
   ) {
     return { kind: "project", id: projectId };
@@ -93,6 +103,7 @@ export default function KnowledgePage() {
   const [footprintRevision, setFootprintRevision] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(false);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<ProjectSearchHit[]>([]);
   const [searching, setSearching] = useState(false);
@@ -140,6 +151,17 @@ export default function KnowledgePage() {
   const [dragOver, setDragOver] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Folder-connect Agent session (matter + receipts + candidate). */
+  const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
+  const [agentResolutionMessage, setAgentResolutionMessage] = useState<
+    string | null
+  >(null);
+  const folderApiRef = useRef(
+    typeof window !== "undefined" &&
+      new URL(window.location.href).searchParams.get("fixture") === "1"
+      ? createMvpApi("contract-fixture")
+      : createMvpApi("http"),
+  );
   const searchRef = useRef<HTMLInputElement>(null);
   const workspaceUploadRef = useRef<HTMLInputElement>(null);
   const workspaceFolderUploadRef = useRef<HTMLInputElement>(null);
@@ -219,10 +241,14 @@ export default function KnowledgePage() {
     mode?: FootprintViewMode;
     querySessionId?: string;
     workItemId?: string;
+    projectId?: string;
   }) => {
+    // API requires projectId; never rely on React state alone (stale after select).
+    const scope = (options?.projectId ?? activeProjectIdRef.current).trim();
+    if (!scope) return;
     const requestId = ++footprintRequestRef.current;
     const mode = options?.mode ?? "window";
-    const params = new URLSearchParams({ mode });
+    const params = new URLSearchParams({ mode, projectId: scope });
     if (options?.querySessionId) params.set("querySessionId", options.querySessionId);
     if (options?.workItemId) params.set("workItemId", options.workItemId);
     if (mode === "window") params.set("sinceDays", "7");
@@ -234,6 +260,10 @@ export default function KnowledgePage() {
       setFootprintMode(mode);
       setFootprintRevision((value) => value + 1);
     }
+  }, []);
+
+  useEffect(() => {
+    setNavCollapsed(readNavCollapsedPreference());
   }, []);
 
   useEffect(() => {
@@ -268,7 +298,7 @@ export default function KnowledgePage() {
             loadProjectCards(selected.id),
             loadProjectMaterials(selected.id),
             loadMyOpenWork(selected.id),
-            loadFootprint(),
+            loadFootprint({ projectId: selected.id }),
           ]);
         } else {
           // Honest empty: no seed project masquerading as user work.
@@ -277,7 +307,7 @@ export default function KnowledgePage() {
           setSnapshot(null);
           setMaterials([]);
           setLoading(false);
-          setCreateProjectOpen(true);
+          // Unified entry: authorize folder / drag — do not force create-project modal.
         }
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "读取项目失败");
@@ -318,7 +348,7 @@ export default function KnowledgePage() {
         loadProjectCards(selected.id),
         loadProjectMaterials(selected.id),
         loadMyOpenWork(selected.id),
-        loadFootprint(),
+        loadFootprint({ projectId: selected.id }),
       ]);
     }
     window.addEventListener("popstate", handlePopState);
@@ -470,6 +500,7 @@ export default function KnowledgePage() {
     setProjectId(id);
     setSnapshot(null);
     setProjectCards([]);
+    setMaterials([]);
     setMyOpenWork([]);
     setFootprint([]);
     setQuery("");
@@ -483,11 +514,14 @@ export default function KnowledgePage() {
       () => undefined,
     );
 
+    // Must load materials: otherwise isEmptyProjectMaterials stays true and
+    // the real project canvas is replaced by the "放进资料" guide after ingest.
     await Promise.all([
       loadSnapshot(id, focus),
       loadProjectCards(id),
+      loadProjectMaterials(id),
       loadMyOpenWork(id),
-      loadFootprint(),
+      loadFootprint({ projectId: id }),
     ]);
     if (
       navToken !== navigationRequestRef.current ||
@@ -910,14 +944,54 @@ export default function KnowledgePage() {
       void apiJson("/api/knowledge/footprint", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cardId: ref.id }),
+        body: JSON.stringify({ cardId: ref.id, projectId: requestedProjectId }),
       }).then(() => {
         if (navigationId === navigationRequestRef.current) {
-          return loadFootprint();
+          return loadFootprint({ projectId: requestedProjectId });
         }
       }).catch(() => undefined);
     }
     await snapshotPromise;
+  }
+
+  /**
+   * Sidebar / topbar "AI Copilot · 查看当前重点".
+   * Never silent no-op: ranked attention first, else material evidence / card / project center.
+   */
+  function focusCurrentAttention() {
+    if (!projectId) {
+      setError("先选一个项目，再看当前重点。");
+      return;
+    }
+    setError(null);
+    const first = snapshot?.attention[0];
+    if (first) {
+      void handleFocus(first.target);
+      setNotice(first.reason || "已聚焦当前重点。");
+      return;
+    }
+    const evidenceCard = snapshot?.projectNow?.evidence?.[0];
+    if (evidenceCard?.id) {
+      void handleFocus({ kind: "card", id: evidenceCard.id });
+      setNotice(
+        `还没有工作项重点，已打开材料「${evidenceCard.label || "依据"}」。`,
+      );
+      return;
+    }
+    const cardNode = snapshot?.nodes.find((node) => node.ref.kind === "card");
+    if (cardNode) {
+      void handleFocus(cardNode.ref);
+      setNotice("还没有工作项重点，已打开项目材料节点。");
+      return;
+    }
+    if (snapshot?.project?.id) {
+      void handleFocus({ kind: "project", id: snapshot.project.id });
+      setNotice(
+        "当前没有可标成重点的工作变化或材料。先放进材料，或建一个工作项。",
+      );
+      return;
+    }
+    setNotice("当前没有可聚焦的重点。");
   }
 
   async function handleSelectProject(id: string) {
@@ -945,7 +1019,7 @@ export default function KnowledgePage() {
       loadProjectCards(id),
       loadProjectMaterials(id),
       loadMyOpenWork(id),
-      loadFootprint(),
+      loadFootprint({ projectId: id }),
     ]);
   }
 
@@ -980,6 +1054,7 @@ export default function KnowledgePage() {
           await loadFootprint({
             mode: "current_query",
             querySessionId: data.querySessionId,
+            projectId: requestedProjectId,
           });
         }
       }
@@ -1029,7 +1104,11 @@ export default function KnowledgePage() {
       await Promise.all([
         loadSnapshot(mutation.projectId, snapshot.focus),
         loadMyOpenWork(mutation.projectId),
-        loadFootprint({ mode: "work_item", workItemId: snapshot.focus.id }),
+        loadFootprint({
+          mode: "work_item",
+          workItemId: snapshot.focus.id,
+          projectId: mutation.projectId,
+        }),
       ]);
       if (!mutationIsCurrent(mutation)) return;
       setBusy(false);
@@ -1334,14 +1413,22 @@ export default function KnowledgePage() {
   }
 
   const isEmptyWorkspace = !loading && projects.length === 0;
-  /** P1/E1: empty project materials → show place-materials guide (de-escalate when any file). */
+  /**
+   * Empty project → place-materials guide.
+   * De-escalate when materials OR citation cards exist (cards alone can light the canvas).
+   */
   const isEmptyProjectMaterials =
-    Boolean(projectId) && !loading && !isEmptyWorkspace && materials.length === 0;
+    Boolean(projectId) &&
+    !loading &&
+    !isEmptyWorkspace &&
+    materials.length === 0 &&
+    projectCards.length === 0;
 
   return (
     <main
       className={styles.workspace}
       data-testid="project-canvas-shell"
+      data-nav-collapsed={navCollapsed ? "true" : "false"}
       data-drag-over={dragOver ? "true" : "false"}
       onDragEnter={handleWorkspaceDragEnter}
       onDragOver={handleWorkspaceDragOver}
@@ -1393,14 +1480,16 @@ export default function KnowledgePage() {
         footprint={footprint}
         footprintMode={footprintMode}
         onSelectProject={handleSelectProject}
-        onOpenSearch={() => searchRef.current?.focus()}
-        onFocusAttention={() => {
-          const first = snapshot?.attention[0];
-          if (first) void handleFocus(first.target);
+        onOpenSearch={() => {
+          searchRef.current?.focus();
+          searchRef.current?.select();
         }}
+        onFocusAttention={focusCurrentAttention}
         onCreateWork={() => setCreateWorkOpen(true)}
         onOpenMaterials={() => void openMaterialsPanel()}
         onFocus={(ref) => void handleFocus(ref)}
+        collapsed={navCollapsed}
+        onCollapsedChange={setNavCollapsed}
       />
 
       <header className={styles.topbar}>
@@ -1474,10 +1563,7 @@ export default function KnowledgePage() {
           <button
             type="button"
             className={styles.copilotButton}
-            onClick={() => {
-              const first = snapshot?.attention[0];
-              if (first) void handleFocus(first.target);
-            }}
+            onClick={focusCurrentAttention}
             disabled={!projectId}
           >
             <Sparkles size={17} />AI Copilot
@@ -1532,24 +1618,61 @@ export default function KnowledgePage() {
         <section
           className={styles.ingestGuide}
           data-testid="empty-workspace"
-          aria-label="空工作台：投放区"
+          aria-label="空工作台：授权与投放"
+          style={{ display: "flex", flexDirection: "column", gap: 16, overflow: "auto" }}
         >
-          <header className={styles.ingestGuideHeader}>
-            <span>首用户接入</span>
-            <h2>还没有项目</h2>
-          </header>
-          <p className={styles.ingestGuideLead}>
-            这里是知识工作台，不是任务看板。把本地文件或文件夹放进来，才能开始跟进。
-          </p>
+          <LocalFolderEntry
+            onAuthorized={async (project, session?: FolderAuthorizeSession) => {
+              try {
+                if (session) {
+                  setAgentSession({
+                    projectId: project.id,
+                    matterId: session.matterId,
+                    grantId: session.grantId,
+                    folderName: session.folderName,
+                    memory: session.memory,
+                    toolReceipts: session.toolReceipts,
+                    run: session.run,
+                  });
+                  setAgentResolutionMessage(null);
+                }
+                const data = await apiJson<{ projects: Project[] }>(
+                  "/api/knowledge/projects",
+                );
+                const list = data.projects;
+                const found = list.find((p) => p.id === project.id);
+                if (found) {
+                  setProjects(list);
+                  await enterProjectAfterImport(found);
+                } else {
+                  // Server ensure may race; still enter with bootstrap identity.
+                  setProjects([project, ...list]);
+                  await enterProjectAfterImport(project);
+                }
+                setNotice(
+                  session?.memory?.candidate
+                    ? `已进入「${project.name}」· 有一段理解待你确认`
+                    : `已进入「${project.name}」`,
+                );
+              } catch (nextError) {
+                setError(
+                  nextError instanceof Error
+                    ? nextError.message
+                    : "进入项目失败",
+                );
+              }
+            }}
+            onError={(message) => setError(message)}
+          />
           <div
             className={styles.ingestDropZone}
             data-testid="empty-drop-zone"
             data-affordance="drop-upload"
           >
             <Upload size={28} aria-hidden="true" />
-            <strong>拖入文件或文件夹到此处</strong>
+            <strong>也可以拖入文件或文件夹</strong>
             <small>
-              单文件会先请你命名项目；每个顶层文件夹 = 一个项目。也可点下方按钮。
+              单文件会先请你命名项目；每个顶层文件夹 = 一个项目。与上方「授权本地夹」是同一工作台。
             </small>
             <div className={styles.ingestGuideActions}>
               <button
@@ -1651,6 +1774,96 @@ export default function KnowledgePage() {
             onProposeMaterialRelations={handleProposeMaterialRelations}
             onRunAgent={handleRunAgent}
             onCheckpoint={handleCheckpoint}
+            agentSession={
+              agentSession?.projectId === projectId ? agentSession : null
+            }
+            agentResolutionMessage={agentResolutionMessage}
+            onResolveUnderstanding={async (decision, editedBody) => {
+              if (!agentSession?.memory?.candidate) return;
+              setBusy(true);
+              try {
+                const result = await folderApiRef.current.resolveCandidate(
+                  agentSession.projectId,
+                  agentSession.matterId,
+                  agentSession.memory.candidate.id,
+                  decision,
+                  editedBody as UnderstandingBody | undefined,
+                );
+                const nextMemory = await folderApiRef.current.getMemory(
+                  agentSession.projectId,
+                  agentSession.matterId,
+                );
+                setAgentSession((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        memory: {
+                          ...nextMemory,
+                          watchSet: nextMemory.watchSet ?? prev.memory?.watchSet,
+                        } as AgentSession["memory"],
+                      }
+                    : prev,
+                );
+                setAgentResolutionMessage(
+                  decision === "reject"
+                    ? "已拒绝这段理解"
+                    : "已确认并记住",
+                );
+                setNotice(
+                  decision === "reject" ? "已拒绝候选理解" : "理解已确认",
+                );
+                void result;
+              } catch (nextError) {
+                setError(
+                  nextError instanceof Error
+                    ? nextError.message
+                    : "确认失败",
+                );
+              } finally {
+                setBusy(false);
+              }
+            }}
+            onRerunAgent={async () => {
+              if (!agentSession) return;
+              setBusy(true);
+              try {
+                const eventIds =
+                  agentSession.memory?.events?.map((e) => e.id) ?? [];
+                const analysis = await folderApiRef.current.runAnalysis(
+                  agentSession.projectId,
+                  agentSession.matterId,
+                  eventIds,
+                );
+                const nextMemory = await folderApiRef.current.getMemory(
+                  agentSession.projectId,
+                  agentSession.matterId,
+                );
+                setAgentSession((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        memory: {
+                          ...nextMemory,
+                          watchSet:
+                            nextMemory.watchSet ?? prev.memory?.watchSet,
+                        } as AgentSession["memory"],
+                        toolReceipts: analysis.toolReceipts ?? [],
+                        run: analysis.run ?? null,
+                      }
+                    : prev,
+                );
+                setAgentResolutionMessage(null);
+                setNotice("已重新阅读授权夹");
+              } catch (nextError) {
+                setError(
+                  nextError instanceof Error
+                    ? nextError.message
+                    : "再读失败",
+                );
+              } finally {
+                setBusy(false);
+              }
+            }}
           />
           <ProjectTimeline snapshot={snapshot} onFocus={handleFocus} />
         </>

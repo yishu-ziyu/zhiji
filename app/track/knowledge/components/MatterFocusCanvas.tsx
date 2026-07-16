@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import type { ChangeEventView, MemoryResponse } from "../lib/api";
 import { revisionIdToOpenForEvent } from "../lib/event-revision-open";
-import styles from "../mvp-workbench.module.css";
+import styles from "../workbench-entry.module.css";
 
 type FocusKind = "matter" | "change" | "evidence" | "action";
 type FocusNode = { id: string; kind: FocusKind; label: string; detail: string; revisionId?: string };

@@ -17,6 +17,16 @@ import type {
 } from "@/shared/types/knowledge";
 import { RELATION_TYPE_LABELS, STATUS_LABELS } from "@/shared/types/knowledge";
 import { edgeDirection } from "@/shared/knowledge/relations";
+import {
+  agentDisplayName,
+  buildAgentActivityView,
+  isAgentActor,
+  listAgentActors,
+} from "@/shared/knowledge/agent-activity";
+import {
+  isUsefulCanvasCard,
+  sortCardsForCanvas,
+} from "@/shared/knowledge/canvas-material-rank";
 import { materialCardSummary } from "@/shared/knowledge/materials";
 import { reviewProjectNow } from "@/shared/knowledge/project-review-agent";
 import type { ProjectNowView } from "@/shared/types/knowledge";
@@ -165,6 +175,28 @@ export function rankAttention(
         reason: `“${next.title}”是最近仍需继续的工作`,
         evidenceEventIds: [event.id],
         score: 100,
+      });
+    }
+  }
+
+  // Material-only projects: still surface a focus so attention is never a dead control.
+  // Prefer readable materials; never promote lockfiles / media / tooling scripts.
+  if (candidates.length === 0 && input.cards.length > 0) {
+    const topCards = sortCardsForCanvas(
+      input.cards.filter((card) => isUsefulCanvasCard(card)),
+    ).slice(0, 2);
+    for (const card of topCards) {
+      const label =
+        card.title?.trim() ||
+        card.sourceFileId?.split("/").pop() ||
+        card.content.slice(0, 24) ||
+        "项目材料";
+      candidates.push({
+        target: { kind: "card", id: card.id },
+        reasonCode: "recent_change",
+        reason: `材料「${label}」可作为当前阅读重点`,
+        evidenceEventIds: [],
+        score: 80 + Math.max(0, Date.parse(card.timestamp) / 1e13),
       });
     }
   }
@@ -365,15 +397,124 @@ function makeNode(
   return { ref, label, subtitle, depth, state, evidence };
 }
 
+/** Higher = keep when two edges share the same endpoint pair. */
+const EDGE_LABEL_RANK: Record<string, number> = {
+  当前重点: 100,
+  阻塞: 95,
+  在跟工作: 90,
+  理解依据: 80,
+  工作依据: 75,
+  依据: 70,
+  所属项目: 65,
+  关联材料: 55,
+  处理过: 50,
+  执行记录: 48,
+  项目材料: 40,
+  最近打开: 10,
+  Agent: 85,
+};
+
+export function classifyEdgeLabel(label: string): {
+  kind: NonNullable<CanvasEdge["kind"]>;
+  strength: NonNullable<CanvasEdge["strength"]>;
+  why: string;
+  rank: number;
+} {
+  const rank = EDGE_LABEL_RANK[label] ?? 30;
+  switch (label) {
+    case "当前重点":
+      return {
+        kind: "attention",
+        strength: "strong",
+        why: "系统根据工作状态或材料信号标成当前重点。",
+        rank,
+      };
+    case "在跟工作":
+      return {
+        kind: "work",
+        strength: "strong",
+        why: "未结束的工作项，和项目中心直接相关。",
+        rank,
+      };
+    case "阻塞":
+      return {
+        kind: "blocked",
+        strength: "strong",
+        why: "工作被阻塞，需要优先处理。",
+        rank,
+      };
+    case "理解依据":
+    case "工作依据":
+    case "依据":
+      return {
+        kind: "evidence",
+        strength: "strong",
+        why: "这条材料被用作理解或工作的依据。",
+        rank,
+      };
+    case "关联材料":
+      return {
+        kind: "relation",
+        strength: "medium",
+        why: "材料已进入关系结构（被其它材料或工作引用）。",
+        rank,
+      };
+    case "所属项目":
+      return {
+        kind: "project",
+        strength: "medium",
+        why: "从当前焦点回到项目中心。",
+        rank,
+      };
+    case "执行记录":
+    case "处理过":
+      return {
+        kind: "activity",
+        strength: "medium",
+        why: "执行或 Agent 活动产生的记录。",
+        rank,
+      };
+    case "最近打开":
+      return {
+        kind: "recent",
+        strength: "weak",
+        why: "最近打开过；弱关联，默认不抢主视觉。",
+        rank,
+      };
+    case "Agent":
+      return {
+        kind: "activity",
+        strength: "strong",
+        why: "Agent 在本项目留下过执行记录。",
+        rank,
+      };
+    case "项目材料":
+      return {
+        kind: "material",
+        strength: "medium",
+        why: "项目内可读材料，用于填充结构。",
+        rank,
+      };
+    default:
+      return {
+        kind: "other",
+        strength: rank >= 70 ? "strong" : rank >= 40 ? "medium" : "weak",
+        why: `关系类型：${label}`,
+        rank,
+      };
+  }
+}
+
 function makeEdge(
   source: CanvasNodeRef,
   target: CanvasNodeRef,
   label: string,
   options?: Pick<
     CanvasEdge,
-    "evidenceSentence" | "status" | "relationId" | "direction"
+    "evidenceSentence" | "status" | "relationId" | "direction" | "why"
   >,
 ): CanvasEdge {
+  const meta = classifyEdgeLabel(label);
   return {
     id: options?.relationId
       ? `relation:${options.relationId}`
@@ -385,7 +526,25 @@ function makeEdge(
     evidenceSentence: options?.evidenceSentence,
     status: options?.status ?? "confirmed",
     direction: options?.direction ?? "out",
+    kind: meta.kind,
+    strength: meta.strength,
+    why: options?.why ?? meta.why,
   };
+}
+
+/** Collapse duplicate material cards (same basename / path) to one graph identity. */
+export function cardDedupeKey(card: {
+  id: string;
+  title?: string;
+  sourceFileId?: string;
+  content?: string;
+}): string {
+  const raw = (card.sourceFileId || card.title || "").replace(/\\/g, "/").trim();
+  const base = (raw.split("/").pop() || raw).toLowerCase();
+  if (base) return `file:${base}`;
+  const title = (card.title || "").trim().toLowerCase();
+  if (title) return `title:${title}`;
+  return `id:${card.id}`;
 }
 
 function focusEvents(
@@ -397,6 +556,9 @@ function focusEvents(
   if (focus.kind === "project") return events;
   if (focus.kind === "work_item") {
     return events.filter((event) => event.workItemId === focus.id);
+  }
+  if (focus.kind === "agent") {
+    return events.filter((event) => event.actor === focus.id);
   }
   if (focus.kind === "event") {
     const selected = events.find((event) => event.id === focus.id);
@@ -414,39 +576,311 @@ function focusEvents(
   return events.filter((event) => workIds.has(event.workItemId));
 }
 
-function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
+type GraphTarget = {
+  ref: CanvasNodeRef;
+  edgeLabel: string;
+};
+
+/**
+ * Project-center neighbor policy (Canvasight-style):
+ * show Agent understanding / work / cited evidence first.
+ * Raw files only fill remaining slots — never dump the whole folder.
+ */
+function projectNeighborTargets(
+  input: ProjectCanvasInput,
+  attention: AttentionItem[],
+  understandingEvidenceIds: string[],
+): GraphTarget[] {
+  const cards = new Map(input.cards.map((card) => [card.id, card]));
+  const items = new Map(input.workItems.map((item) => [item.id, item]));
+  const ordered: GraphTarget[] = [];
+  const seen = new Set<string>();
+  const seenCardIdentity = new Set<string>();
+  const cardEdgeLabel = new Map<string, string>();
+
+  const push = (ref: CanvasNodeRef, edgeLabel: string) => {
+    if (ref.kind === "project" && ref.id === input.project.id) return;
+    if (ref.kind === "event") return;
+    if (ref.kind === "agent") {
+      if (!isAgentActor(ref.id)) return;
+      const key = refKey(ref);
+      if (seen.has(key)) return;
+      seen.add(key);
+      ordered.push({ ref, edgeLabel });
+      return;
+    }
+    if (ref.kind === "work_item") {
+      if (!items.has(ref.id)) return;
+      const key = refKey(ref);
+      if (seen.has(key)) return;
+      seen.add(key);
+      ordered.push({ ref, edgeLabel });
+      return;
+    }
+    if (ref.kind === "card") {
+      const card = cards.get(ref.id);
+      if (!card) return;
+      const identity = cardDedupeKey(card);
+      const existingLabel = cardEdgeLabel.get(identity);
+      const nextRank = classifyEdgeLabel(edgeLabel).rank;
+      if (existingLabel) {
+        if (nextRank > classifyEdgeLabel(existingLabel).rank) {
+          cardEdgeLabel.set(identity, edgeLabel);
+          const idx = ordered.findIndex(
+            (entry) =>
+              entry.ref.kind === "card" &&
+              cards.has(entry.ref.id) &&
+              cardDedupeKey(cards.get(entry.ref.id)!) === identity,
+          );
+          if (idx >= 0) ordered[idx] = { ref: ordered[idx]!.ref, edgeLabel };
+        }
+        return;
+      }
+      if (seenCardIdentity.has(identity)) return;
+      seenCardIdentity.add(identity);
+      cardEdgeLabel.set(identity, edgeLabel);
+      const key = refKey(ref);
+      if (seen.has(key)) return;
+      seen.add(key);
+      ordered.push({ ref, edgeLabel });
+    }
+  };
+
+  // 0) E8: Agent actors that have written into this project.
+  for (const actor of listAgentActors(input.events)) {
+    push({ kind: "agent", id: actor }, "Agent");
+  }
+
+  // 1) Work attention / open work first (task understanding).
+  for (const entry of attention) {
+    if (entry.target.kind === "work_item") {
+      push(entry.target, "当前重点");
+    }
+  }
+
+  const openWork = input.workItems
+    .filter((item) => item.status !== "done" && item.status !== "cancelled")
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  for (const item of openWork) {
+    push(
+      { kind: "work_item", id: item.id },
+      item.status === "blocked" ? "阻塞" : "在跟工作",
+    );
+  }
+
+  const recentOrder = new Map(
+    (input.recentCardIds ?? []).map((cardId, index) => [cardId, index]),
+  );
+
+  // 2) Understanding evidence first (stronger than recent-open).
+  const rankedEvidence = [...understandingEvidenceIds].sort((a, b) => {
+    const aIndex = recentOrder.get(a);
+    const bIndex = recentOrder.get(b);
+    if (aIndex !== undefined || bIndex !== undefined) {
+      if (aIndex === undefined) return 1;
+      if (bIndex === undefined) return -1;
+      return aIndex - bIndex;
+    }
+    return 0;
+  });
+  for (const id of rankedEvidence) {
+    const card = cards.get(id);
+    if (card && !isUsefulCanvasCard(card)) continue;
+    push({ kind: "card", id }, "理解依据");
+  }
+
+  // 3) Recently opened — weak, max 2, only if not already stronger-linked.
+  let recentAdded = 0;
+  for (const id of input.recentCardIds ?? []) {
+    if (recentAdded >= 2) break;
+    const card = cards.get(id);
+    if (!card || !isUsefulCanvasCard(card)) continue;
+    const identity = cardDedupeKey(card);
+    if (seenCardIdentity.has(identity)) continue;
+    const before = ordered.length;
+    push({ kind: "card", id }, "最近打开");
+    if (ordered.length > before) recentAdded += 1;
+  }
+
+  // 4) Remaining material attention (after recency / understanding).
+  for (const entry of attention) {
+    if (entry.target.kind === "card") {
+      const card = cards.get(entry.target.id);
+      if (card && !isUsefulCanvasCard(card)) continue;
+      push(entry.target, "当前重点");
+    }
+  }
+
+  // Cards that already participate in relations = structure, not raw dump.
+  const degree = new Map<string, number>();
+  for (const relation of input.relations) {
+    degree.set(relation.fromCardId, (degree.get(relation.fromCardId) ?? 0) + 1);
+    degree.set(relation.toCardId, (degree.get(relation.toCardId) ?? 0) + 1);
+  }
+  const hubs = [...degree.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([id]) => id)
+    .filter((id) => {
+      const card = cards.get(id);
+      return card ? isUsefulCanvasCard(card) : false;
+    });
+  for (const id of hubs) {
+    push({ kind: "card", id }, "关联材料");
+  }
+
+  // Work-linked evidence cards (skip noise filenames).
+  for (const item of openWork) {
+    for (const id of item.evidenceIds ?? []) {
+      const card = cards.get(id);
+      if (card && !isUsefulCanvasCard(card)) continue;
+      push({ kind: "card", id }, "工作依据");
+    }
+  }
+
+  // Residual: useful materials only, ranked by canvas score then recent use.
+  const residual = sortCardsForCanvas(
+    input.cards.filter((card) => isUsefulCanvasCard(card)),
+  ).sort((a, b) => {
+    const aIndex = recentOrder.get(a.id);
+    const bIndex = recentOrder.get(b.id);
+    if (aIndex !== undefined || bIndex !== undefined) {
+      if (aIndex === undefined) return 1;
+      if (bIndex === undefined) return -1;
+      return aIndex - bIndex;
+    }
+    // sortCardsForCanvas already by score; keep relative order when no footprint.
+    return 0;
+  });
+  const hasUnderstanding =
+    openWork.length > 0 ||
+    attention.length > 0 ||
+    understandingEvidenceIds.some((id) => {
+      const card = cards.get(id);
+      return card ? isUsefulCanvasCard(card) : false;
+    }) ||
+    hubs.length > 0;
+  // Prefer structure; fill with readable materials so center stays ≥3 when possible.
+  const materialBudget = hasUnderstanding ? 4 : 8;
+  let materialAdded = 0;
+  for (const card of residual) {
+    if (materialAdded >= materialBudget) break;
+    const before = ordered.length;
+    push({ kind: "card", id: card.id }, "项目材料");
+    if (ordered.length > before) materialAdded += 1;
+  }
+
+  return ordered;
+}
+
+function buildGraph(
+  input: ProjectCanvasInput,
+  attention: AttentionItem[],
+  understandingEvidenceIds: string[] = [],
+) {
   const nodes = new Map<string, CanvasNode>();
   const edges: CanvasEdge[] = [];
   const cards = new Map(input.cards.map((card) => [card.id, card]));
   const items = new Map(input.workItems.map((item) => [item.id, item]));
   const events = new Map(input.events.map((event) => [event.id, event]));
   const add = (node: CanvasNode) => nodes.set(refKey(node.ref), node);
+  const projectRef = {
+    kind: "project" as const,
+    id: input.project.id,
+  };
 
   if (input.focus.kind === "project") {
-    const center = { kind: "project", id: input.project.id } as const;
+    const center = projectRef;
     add(makeNode(center, input.project.name, "当前项目", 0, "active"));
-    const attentionIds = new Set(attention.map((entry) => entry.target.id));
-    const targets = [
-      ...attention.map((entry) => ({
-        ref: entry.target,
-        edgeLabel: "当前重点",
-      })),
-      ...input.workItems
-        .filter(
-          (item) =>
-            item.status !== "done" &&
-            item.status !== "cancelled" &&
-            !attentionIds.has(item.id),
-        )
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-        .map((item) => ({
-          ref: { kind: "work_item" as const, id: item.id },
-          edgeLabel: "最近工作",
-        })),
-    ];
-    for (const { ref: target, edgeLabel } of targets) {
-      const item = items.get(target.id);
+    const nodeIdentity = new Map<string, string>();
+    for (const { ref: target, edgeLabel } of projectNeighborTargets(
+      input,
+      attention,
+      understandingEvidenceIds,
+    )) {
+      if (target.kind === "work_item") {
+        const item = items.get(target.id);
+        if (!item) continue;
+        add(
+          makeNode(
+            target,
+            item.title,
+            STATUS_LABELS[item.status],
+            1,
+            itemState(item),
+            item.evidenceIds
+              .filter((id) => cards.has(id))
+              .map((id) => ({ kind: "card", id })),
+          ),
+        );
+        edges.push(makeEdge(center, target, edgeLabel));
+        continue;
+      }
+      if (target.kind === "card") {
+        const card = cards.get(target.id);
+        if (!card) continue;
+        const identity = cardDedupeKey(card);
+        if (nodeIdentity.has(identity)) continue;
+        nodeIdentity.set(identity, refKey(target));
+        const strong =
+          edgeLabel === "理解依据" ||
+          edgeLabel === "当前重点" ||
+          edgeLabel === "工作依据" ||
+          edgeLabel === "阻塞";
+        add(
+          makeNode(
+            target,
+            card.title || card.content.slice(0, 24),
+            edgeLabel === "理解依据"
+              ? "理解依据"
+              : edgeLabel === "最近打开"
+                ? "最近打开"
+                : card.source,
+            1,
+            strong ? "active" : "neutral",
+          ),
+        );
+        edges.push(makeEdge(center, target, edgeLabel));
+        continue;
+      }
+      if (target.kind === "agent") {
+        const actorEvents = input.events.filter((e) => e.actor === target.id);
+        add(
+          makeNode(
+            target,
+            agentDisplayName(target.id),
+            `Agent · ${actorEvents.length} 条记录`,
+            1,
+            "active",
+          ),
+        );
+        edges.push(makeEdge(center, target, edgeLabel));
+      }
+    }
+  }
+
+  if (input.focus.kind === "agent") {
+    const actor = input.focus.id;
+    if (!isAgentActor(actor)) throw new Error("Agent 不属于当前项目");
+    const actorEvents = input.events
+      .filter((e) => e.actor === actor)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    if (actorEvents.length === 0) throw new Error("Agent 不属于当前项目");
+    add(
+      makeNode(
+        input.focus,
+        agentDisplayName(actor),
+        `Agent · ${actorEvents.length} 条记录`,
+        0,
+        "active",
+      ),
+    );
+    add(makeNode(projectRef, input.project.name, "项目中心", 1, "active"));
+    edges.push(makeEdge(input.focus, projectRef, "所属项目"));
+    const workIds = new Set(actorEvents.map((e) => e.workItemId));
+    for (const workId of workIds) {
+      const item = items.get(workId);
       if (!item) continue;
+      const target = { kind: "work_item" as const, id: item.id };
       add(
         makeNode(
           target,
@@ -454,29 +888,22 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
           STATUS_LABELS[item.status],
           1,
           itemState(item),
-          item.evidenceIds
-            .filter((id) => cards.has(id))
-            .map((id) => ({ kind: "card", id })),
         ),
       );
-      edges.push(makeEdge(center, target, edgeLabel));
+      edges.push(makeEdge(input.focus, target, "处理过"));
     }
-    const recentOrder = new Map(
-      (input.recentCardIds ?? []).map((cardId, index) => [cardId, index]),
-    );
-    for (const card of [...input.cards].sort((a, b) => {
-      const aIndex = recentOrder.get(a.id);
-      const bIndex = recentOrder.get(b.id);
-      if (aIndex !== undefined || bIndex !== undefined) {
-        if (aIndex === undefined) return 1;
-        if (bIndex === undefined) return -1;
-        return aIndex - bIndex;
-      }
-      return b.timestamp.localeCompare(a.timestamp);
-    })) {
-      const target = { kind: "card", id: card.id } as const;
-      add(makeNode(target, card.title || card.content.slice(0, 24), card.source, 1));
-      edges.push(makeEdge(center, target, "项目材料"));
+    for (const event of actorEvents.slice(0, 4)) {
+      const target = { kind: "event" as const, id: event.id };
+      add(
+        makeNode(
+          target,
+          event.body || event.type,
+          event.type,
+          1,
+          event.type === "result" ? "changed" : "neutral",
+        ),
+      );
+      edges.push(makeEdge(input.focus, target, "执行记录"));
     }
   }
 
@@ -492,6 +919,9 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
         itemState(item),
       ),
     );
+    // Focus hub: always allow returning to the project center.
+    add(makeNode(projectRef, input.project.name, "项目中心", 1, "active"));
+    edges.push(makeEdge(input.focus, projectRef, "所属项目"));
     for (const cardId of item.evidenceIds) {
       const card = cards.get(cardId);
       if (!card) continue;
@@ -528,6 +958,9 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
         "active",
       ),
     );
+    // Focus hub: project is always one hop away.
+    add(makeNode(projectRef, input.project.name, "项目中心", 1, "active"));
+    edges.push(makeEdge(input.focus, projectRef, "所属项目"));
     for (const relation of input.relations.filter(
       (entry) => entry.fromCardId === card.id || entry.toCardId === card.id,
     )) {
@@ -570,6 +1003,24 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
       add(makeNode(target, item.title, STATUS_LABELS[item.status], 1, itemState(item)));
       edges.push(makeEdge(input.focus, target, "被工作项使用"));
     }
+    // Other understanding evidence as peer anchors (focus migration surface).
+    for (const id of understandingEvidenceIds) {
+      if (id === card.id) continue;
+      const peer = cards.get(id);
+      if (!peer) continue;
+      const target = { kind: "card", id: peer.id } as const;
+      if (nodes.has(refKey(target))) continue;
+      add(
+        makeNode(
+          target,
+          peer.title || peer.content.slice(0, 24),
+          "理解依据",
+          1,
+          "active",
+        ),
+      );
+      edges.push(makeEdge(input.focus, target, "同层依据"));
+    }
   }
 
   if (input.focus.kind === "event") {
@@ -584,6 +1035,8 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
         event.type === "block" ? "blocked" : "active",
       ),
     );
+    add(makeNode(projectRef, input.project.name, "项目中心", 1, "active"));
+    edges.push(makeEdge(input.focus, projectRef, "所属项目"));
     const item = items.get(event.workItemId);
     if (item) {
       const target = { kind: "work_item", id: item.id } as const;
@@ -634,9 +1087,26 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
 
   const allNodes = [...nodes.values()];
   const centerNodes = allNodes.filter((node) => node.depth === 0);
-  const neighbors = allNodes.filter((node) => node.depth === 1);
-  const visibleNodes = [...centerNodes, ...neighbors.slice(0, 6)];
-  const foldedNodes = neighbors.slice(6);
+  // Project hub (when focus is not the project) always stays visible for focus migration.
+  const hubNeighbors = allNodes.filter(
+    (node) =>
+      node.depth === 1 &&
+      node.ref.kind === "project" &&
+      input.focus.kind !== "project",
+  );
+  const otherNeighbors = allNodes.filter(
+    (node) =>
+      node.depth === 1 &&
+      !(
+        node.ref.kind === "project" &&
+        input.focus.kind !== "project" &&
+        node.ref.id === input.project.id
+      ),
+  );
+  const neighborSlots = Math.max(0, 6 - hubNeighbors.length);
+  const visibleOthers = otherNeighbors.slice(0, neighborSlots);
+  const foldedNodes = otherNeighbors.slice(neighborSlots);
+  const visibleNodes = [...centerNodes, ...hubNeighbors, ...visibleOthers];
   const visibleKeys = new Set(visibleNodes.map((node) => refKey(node.ref)));
   const foldedKeys = new Set(foldedNodes.map((node) => refKey(node.ref)));
   return {
@@ -659,9 +1129,13 @@ function buildGraph(input: ProjectCanvasInput, attention: AttentionItem[]) {
 function buildInspector(
   input: ProjectCanvasInput,
   attention: AttentionItem[],
+  understandingEvidenceIds: string[] = [],
 ): CanvasInspector {
   if (input.focus.kind === "project") {
     const checkpoint = input.checkpoint;
+    const evidence = understandingEvidenceIds
+      .filter((id) => input.cards.some((card) => card.id === id))
+      .map((id) => ({ kind: "card" as const, id }));
     return {
       title: input.project.name,
       summary: checkpoint
@@ -670,7 +1144,7 @@ function buildInspector(
       whyImportant: checkpoint
         ? `原下一步：${checkpoint.nextStep}`
         : "先确认当前目标，系统才能在下次准确说明变化。",
-      evidence: [],
+      evidence,
       impacts: attention.map((item) => item.target),
       availableActions: ["confirm_checkpoint"],
     };
@@ -715,6 +1189,26 @@ function buildInspector(
       availableActions: ["open_evidence", "create_relation"],
     };
   }
+  if (input.focus.kind === "agent") {
+    const actor = input.focus.id;
+    const actorEvents = input.events
+      .filter((e) => e.actor === actor)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const latest = actorEvents[0];
+    const workIds = [...new Set(actorEvents.map((e) => e.workItemId))];
+    return {
+      title: agentDisplayName(actor),
+      summary: latest
+        ? `最近：${latest.body || latest.type}`
+        : "该 Agent 尚无写入记录。",
+      whyImportant: `共 ${actorEvents.length} 条记录，涉及 ${workIds.length} 个工作项。`,
+      evidence: actorEvents
+        .slice(0, 5)
+        .map((e) => ({ kind: "event" as const, id: e.id })),
+      impacts: workIds.map((id) => ({ kind: "work_item" as const, id })),
+      availableActions: [],
+    };
+  }
   const event = input.events.find((entry) => entry.id === input.focus.id);
   if (!event) throw new Error("事件不属于当前项目");
   return {
@@ -731,7 +1225,15 @@ export function buildProjectCanvasSnapshot(
   input: ProjectCanvasInput,
 ): ProjectCanvasSnapshot {
   const attention = rankAttention(input, input.now);
-  const graph = buildGraph(input, attention);
+  // Understanding first — graph neighbors use the same evidence ranking as「现在怎样」.
+  const nowReview = reviewProjectNow({
+    projectName: input.project.name,
+    cards: input.cards,
+    workItems: input.workItems,
+    events: input.events,
+    relations: input.relations,
+  });
+  const graph = buildGraph(input, attention, nowReview.evidenceIds);
   const relevantEvents = focusEvents(
     input.focus,
     input.cards,
@@ -749,13 +1251,6 @@ export function buildProjectCanvasSnapshot(
       )
     : [...timeline.now, ...timeline.history];
 
-  const nowReview = reviewProjectNow({
-    projectName: input.project.name,
-    cards: input.cards,
-    workItems: input.workItems,
-    events: input.events,
-    relations: input.relations,
-  });
   const cardById = new Map(input.cards.map((card) => [card.id, card]));
   const projectNow: ProjectNowView = {
     status: nowReview.status,
@@ -781,6 +1276,13 @@ export function buildProjectCanvasSnapshot(
       ),
   };
 
+  const agentActivity = buildAgentActivityView({
+    cards: input.cards,
+    workItems: input.workItems,
+    events: input.events,
+    hasCheckpoint: Boolean(input.checkpoint),
+  });
+
   return {
     project: input.project,
     focus: input.focus,
@@ -789,13 +1291,14 @@ export function buildProjectCanvasSnapshot(
     changesSinceCheckpoint,
     planAssessment: assessPlan(input.checkpoint, input.events, input.cards),
     projectNow,
+    agentActivity,
     attention,
     nodes: graph.nodes,
     edges: graph.edges,
     foldedNodes: graph.foldedNodes,
     foldedEdges: graph.foldedEdges,
     hiddenNeighborCount: graph.hiddenNeighborCount,
-    inspector: buildInspector(input, attention),
+    inspector: buildInspector(input, attention, nowReview.evidenceIds),
     timeline,
   };
 }

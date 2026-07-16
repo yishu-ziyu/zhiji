@@ -1,8 +1,26 @@
+"use client";
+
 import Image from "next/image";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  Handle,
+  Position,
+  ReactFlow,
+  ReactFlowProvider,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
+  type Edge,
+  type Node,
+  type NodeProps,
+  type NodeTypes,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import {
   Bot,
-  CircleDashed,
   FileText,
   ListChecks,
   MessageSquareText,
@@ -23,24 +41,53 @@ type Props = {
   onFocus: (ref: CanvasNodeRef) => void;
 };
 
-type RelationSide = "left" | "right";
-
-type CanvasLink = {
-  id: string;
-  d: string;
-  direction: CanvasEdge["direction"];
-  status: CanvasEdge["status"];
+type GraphNodeData = {
+  ref: CanvasNodeRef;
+  label: string;
+  subtitle?: string;
+  state: CanvasNode["state"];
+  relationLabel?: string;
+  relationStatus?: CanvasEdge["status"];
+  relationStrength?: CanvasEdge["strength"];
+  isCenter: boolean;
 };
+
+type GraphEdgeData = {
+  canvasEdge: CanvasEdge;
+};
+
+type GraphNode = Node<GraphNodeData, "graph">;
+
+const MAX_VISIBLE_NEIGHBORS = 10;
+const RADIUS_X = 280;
+const RADIUS_Y = 200;
 
 function refKey(ref: CanvasNodeRef) {
   return `${ref.kind}:${ref.id}`;
 }
 
-function sideFor(node: CanvasNode): RelationSide {
-  return node.ref.kind === "card" ? "left" : "right";
+/** Human-facing short title: basename, strip hashtag noise. */
+function displayLabel(label: string): string {
+  const base = (label.split(/[/\\]/).pop() ?? label).trim();
+  const cleaned = base
+    .replace(/#[^\s#]+/g, " ")
+    .replace(/[_\-.]{2,}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const text = cleaned || base;
+  if (text.length <= 28) return text;
+  return `${text.slice(0, 26)}…`;
 }
 
-function edgesFor(
+function NodeIcon({ kind }: { kind: CanvasNodeKind }) {
+  if (kind === "card") return <FileText size={16} />;
+  if (kind === "work_item") return <ListChecks size={16} />;
+  if (kind === "event") return <MessageSquareText size={16} />;
+  if (kind === "agent") return <Bot size={16} />;
+  return <Bot size={16} />;
+}
+
+function edgesTouching(
   snapshot: ProjectCanvasSnapshot,
   node: CanvasNode,
   includeFolded = false,
@@ -55,201 +102,405 @@ function edgesFor(
   );
 }
 
-function directionCopy(direction: CanvasEdge["direction"]) {
-  if (direction === "out") return "指向";
-  if (direction === "in") return "来自";
-  return "相互关联";
+function edgeVisual(edge: CanvasEdge, opts: {
+  emphasized: boolean;
+  dimmed: boolean;
+  showLabel: boolean;
+}): Partial<Edge> {
+  const strength = edge.strength ?? "medium";
+  const kind = edge.kind ?? "other";
+  let stroke = "#c5c9cf";
+  let strokeWidth = 1.4;
+  let dash: string | undefined;
+  if (strength === "strong") {
+    if (kind === "blocked") stroke = "#c45c4a";
+    else if (kind === "evidence" || kind === "attention") stroke = "#3d6fd8";
+    else if (kind === "work") stroke = "#2f6a3a";
+    else stroke = "#3d6fd8";
+    strokeWidth = 2.4;
+  } else if (strength === "medium") {
+    stroke = "#9aa3ad";
+    strokeWidth = 1.5;
+  } else {
+    stroke = "#d5d8dd";
+    strokeWidth = 1.1;
+    dash = "5 5";
+  }
+  if (edge.status === "suggested") {
+    stroke = "#dfc48d";
+    dash = dash ?? "4 4";
+  }
+  if (opts.emphasized) {
+    strokeWidth += 1.1;
+    stroke = strength === "weak" ? "#7a8490" : stroke;
+  }
+  if (opts.dimmed) {
+    stroke = "#e6e8eb";
+    strokeWidth = Math.max(1, strokeWidth - 0.4);
+  }
+  return {
+    label: opts.showLabel ? edge.label : undefined,
+    animated: edge.status === "suggested" || opts.emphasized,
+    style: {
+      stroke,
+      strokeWidth,
+      strokeDasharray: dash,
+      opacity: opts.dimmed ? 0.35 : 1,
+    },
+    labelStyle: {
+      fill: "#5a5e66",
+      fontSize: 10,
+      fontWeight: 650,
+    },
+    labelBgStyle: {
+      fill: "rgba(255,255,255,0.94)",
+      fillOpacity: 1,
+    },
+    labelBgPadding: [4, 6] as [number, number],
+    labelBgBorderRadius: 6,
+  };
 }
 
-function NodeIcon({ kind }: { kind: CanvasNodeKind }) {
-  if (kind === "card") return <FileText size={18} />;
-  if (kind === "work_item") return <ListChecks size={18} />;
-  if (kind === "event") return <MessageSquareText size={18} />;
-  return <Bot size={18} />;
-}
-
-function EdgeTags({ edges }: { edges: CanvasEdge[] }) {
-  return (
-    <div className={styles.edgeTags}>
-      {edges.map((edge) => (
-        <span
-          key={edge.id}
-          className={styles.edgeLabel}
-          data-status={edge.status}
-          data-edge-id={edge.id}
-          title={
-            edge.evidenceSentence
-              ? `来源：${edge.evidenceSentence}`
-              : undefined
-          }
-          aria-label={`${directionCopy(edge.direction)}：${edge.label}。${
-            edge.evidenceSentence
-              ? `来源：${edge.evidenceSentence}`
-              : "无补充来源句"
-          }`}
-        >
-          <span className={styles.edgeLabelMain}>
-            <span>{directionCopy(edge.direction)}</span>
-            <span>{edge.label}</span>
-            {edge.status === "suggested" ? (
-              <CircleDashed size={11} aria-hidden="true" />
-            ) : null}
-          </span>
-          {edge.evidenceSentence ? (
-            <span className={styles.edgeEvidence}>来源：{edge.evidenceSentence}</span>
-          ) : null}
-        </span>
-      ))}
-    </div>
+/** Radial layout: center at origin, neighbors on ellipse. Prefer strong edges first. */
+function layoutFromSnapshot(snapshot: ProjectCanvasSnapshot): {
+  nodes: GraphNode[];
+  edges: Edge[];
+  overflow: CanvasNode[];
+  canvasEdges: CanvasEdge[];
+} {
+  const center = snapshot.nodes.find((n) => n.depth === 0);
+  const neighbors = snapshot.nodes.filter((n) => n.depth === 1);
+  // Prefer neighbors that have a strong edge to the center.
+  const strengthRank = (node: CanvasNode) => {
+    const edge = edgesTouching(snapshot, node)[0];
+    if (!edge) return 0;
+    if (edge.strength === "strong") return 3;
+    if (edge.strength === "medium") return 2;
+    return 1;
+  };
+  const sortedNeighbors = [...neighbors].sort(
+    (a, b) => strengthRank(b) - strengthRank(a),
   );
+  const visible = sortedNeighbors.slice(0, MAX_VISIBLE_NEIGHBORS);
+  const overflow = [
+    ...sortedNeighbors.slice(MAX_VISIBLE_NEIGHBORS),
+    ...snapshot.foldedNodes,
+  ];
+
+  const nodes: GraphNode[] = [];
+  if (center) {
+    nodes.push({
+      id: refKey(center.ref),
+      type: "graph",
+      position: { x: 0, y: 0 },
+      data: {
+        ref: center.ref,
+        label: center.label,
+        subtitle: center.subtitle ?? "当前关注",
+        state: center.state,
+        isCenter: true,
+      },
+      draggable: true,
+      selectable: true,
+    });
+  }
+
+  const n = Math.max(visible.length, 1);
+  visible.forEach((node, index) => {
+    const angle = -Math.PI / 2 + (index * 2 * Math.PI) / n;
+    const relation = edgesTouching(snapshot, node)[0];
+    nodes.push({
+      id: refKey(node.ref),
+      type: "graph",
+      position: {
+        x: Math.cos(angle) * RADIUS_X - 90,
+        y: Math.sin(angle) * RADIUS_Y - 36,
+      },
+      data: {
+        ref: node.ref,
+        label: node.label,
+        subtitle: node.subtitle ?? "直接相关",
+        state: node.state,
+        relationLabel: relation?.label,
+        relationStatus: relation?.status,
+        relationStrength: relation?.strength,
+        isCenter: false,
+      },
+      draggable: true,
+      selectable: true,
+    });
+  });
+
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const canvasEdges = snapshot.edges.filter(
+    (edge) =>
+      nodeIds.has(refKey(edge.source)) && nodeIds.has(refKey(edge.target)),
+  );
+  const edges: Edge[] = canvasEdges.map((edge) => {
+    const strength = edge.strength ?? "medium";
+    // Weak edges: no permanent labels (industrial: reduce clutter).
+    const showLabel = strength === "strong";
+    return {
+      id: edge.id,
+      source: refKey(edge.source),
+      target: refKey(edge.target),
+      type: "default",
+      data: { canvasEdge: edge } satisfies GraphEdgeData,
+      interactionWidth: 18,
+      ...edgeVisual(edge, {
+        emphasized: false,
+        dimmed: false,
+        showLabel,
+      }),
+    };
+  });
+
+  return { nodes, edges, overflow, canvasEdges };
 }
 
-function RelationNode({
-  node,
-  edges,
-  onFocus,
-}: {
-  node: CanvasNode;
-  edges: CanvasEdge[];
-  onFocus: (ref: CanvasNodeRef) => void;
-}) {
+function GraphNodeView({ data, selected }: NodeProps) {
+  const node = data as GraphNodeData;
+  if (node.isCenter) {
+    return (
+      <div
+        className={`${styles.rfCenter} ${selected ? styles.rfSelected : ""}`}
+        data-state={node.state}
+        data-testid={
+          node.ref.kind === "project"
+            ? "focus-state"
+            : `canvas-node-${node.ref.kind}-${node.ref.id}`
+        }
+      >
+        <Handle type="target" position={Position.Top} className={styles.rfHandle} />
+        <Handle type="source" position={Position.Bottom} className={styles.rfHandle} />
+        <Handle type="source" position={Position.Left} className={styles.rfHandle} />
+        <Handle type="source" position={Position.Right} className={styles.rfHandle} />
+        {node.ref.kind === "project" ? (
+          <Image
+            src="/project-canvas/logo-source.png"
+            alt=""
+            width={52}
+            height={52}
+            className={styles.centerLogo}
+            priority
+          />
+        ) : (
+          <span className={styles.centerIcon} aria-hidden="true">
+            <NodeIcon kind={node.ref.kind} />
+          </span>
+        )}
+        <strong title={node.label}>{displayLabel(node.label)}</strong>
+        <span>{node.subtitle ?? "当前关注"}</span>
+      </div>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      className={styles.relationNode}
+    <div
+      className={`${styles.rfNode} ${selected ? styles.rfSelected : ""} ${
+        node.ref.kind === "agent" ? styles.rfNodeAgent : ""
+      }`}
       data-state={node.state}
+      data-kind={node.ref.kind}
       data-testid={`canvas-node-${node.ref.kind}-${node.ref.id}`}
-      data-edge-id={edges[0]?.id}
-      data-edge-ids={edges.map((edge) => edge.id).join(" ")}
-      data-direction={edges[0]?.direction ?? "out"}
-      data-canvas-ref={refKey(node.ref)}
-      onClick={() => onFocus(node.ref)}
     >
+      <Handle type="target" position={Position.Left} className={styles.rfHandle} />
+      <Handle type="target" position={Position.Top} className={styles.rfHandle} />
+      <Handle type="source" position={Position.Right} className={styles.rfHandle} />
+      <Handle type="source" position={Position.Bottom} className={styles.rfHandle} />
       <span className={styles.relationNodeIcon} aria-hidden="true">
         <NodeIcon kind={node.ref.kind} />
       </span>
       <span className={styles.relationNodeCopy}>
-        <strong>{node.label}</strong>
+        <strong title={node.label}>{displayLabel(node.label)}</strong>
         <small>{node.subtitle ?? "直接相关"}</small>
       </span>
-      <EdgeTags edges={edges} />
-    </button>
+      {node.relationLabel && node.relationStrength !== "weak" ? (
+        <span
+          className={styles.relationChip}
+          data-status={node.relationStatus}
+          data-strength={node.relationStrength ?? "medium"}
+          title={node.relationLabel}
+        >
+          {node.relationLabel}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+const nodeTypes: NodeTypes = {
+  graph: GraphNodeView,
+};
+
+function CanvasFlow({
+  snapshot,
+  onFocus,
+  selectedEdgeId,
+  onSelectEdge,
+}: {
+  snapshot: ProjectCanvasSnapshot;
+  onFocus: (ref: CanvasNodeRef) => void;
+  selectedEdgeId: string | null;
+  onSelectEdge: (edge: CanvasEdge | null) => void;
+}) {
+  const layout = useMemo(() => layoutFromSnapshot(snapshot), [snapshot]);
+  const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
+  const [foldOpen, setFoldOpen] = useState(false);
+  const [hoverNodeId, setHoverNodeId] = useState<string | null>(null);
+  const { fitView } = useReactFlow();
+  const focusKey = refKey(snapshot.focus);
+
+  useEffect(() => {
+    setNodes(layout.nodes);
+    setEdges(layout.edges);
+    setFoldOpen(false);
+    setHoverNodeId(null);
+    const t = requestAnimationFrame(() => {
+      void fitView({ padding: 0.22, duration: 220, maxZoom: 1.05 });
+    });
+    return () => cancelAnimationFrame(t);
+  }, [focusKey, layout.edges, layout.nodes, setEdges, setNodes, fitView]);
+
+  // Hover / selection: emphasize 1-hop edges, show labels on demand.
+  useEffect(() => {
+    setEdges((current) =>
+      current.map((edge) => {
+        const data = edge.data as GraphEdgeData | undefined;
+        const canvasEdge = data?.canvasEdge;
+        if (!canvasEdge) return edge;
+        const touchesHover =
+          hoverNodeId != null &&
+          (edge.source === hoverNodeId || edge.target === hoverNodeId);
+        const selected = selectedEdgeId === edge.id;
+        const strength = canvasEdge.strength ?? "medium";
+        const showLabel =
+          selected ||
+          touchesHover ||
+          strength === "strong";
+        const anyFocus = hoverNodeId != null || selectedEdgeId != null;
+        const visual = edgeVisual(canvasEdge, {
+          emphasized: selected || touchesHover,
+          dimmed: anyFocus && !selected && !touchesHover,
+          showLabel,
+        });
+        return {
+          ...edge,
+          ...visual,
+          selected,
+        };
+      }),
+    );
+  }, [hoverNodeId, selectedEdgeId, setEdges]);
+
+  const onNodeClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      const data = node.data as GraphNodeData;
+      onSelectEdge(null);
+      onFocus(data.ref);
+    },
+    [onFocus, onSelectEdge],
+  );
+
+  const onEdgeClick = useCallback(
+    (_: React.MouseEvent, edge: Edge) => {
+      const data = edge.data as GraphEdgeData | undefined;
+      if (data?.canvasEdge) onSelectEdge(data.canvasEdge);
+    },
+    [onSelectEdge],
+  );
+
+  const overflow = layout.overflow;
+  const hiddenCount =
+    snapshot.hiddenNeighborCount +
+    Math.max(
+      0,
+      snapshot.nodes.filter((n) => n.depth === 1).length - MAX_VISIBLE_NEIGHBORS,
+    );
+
+  return (
+    <>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeClick={onNodeClick}
+        onEdgeClick={onEdgeClick}
+        onNodeMouseEnter={(_, node) => setHoverNodeId(node.id)}
+        onNodeMouseLeave={() => setHoverNodeId(null)}
+        onPaneClick={() => onSelectEdge(null)}
+        nodeTypes={nodeTypes}
+        nodesConnectable={false}
+        nodesDraggable
+        elementsSelectable
+        edgesFocusable
+        panOnDrag
+        panOnScroll={false}
+        zoomOnScroll
+        zoomOnPinch
+        minZoom={0.35}
+        maxZoom={1.6}
+        proOptions={{ hideAttribution: true }}
+        defaultEdgeOptions={{
+          type: "default",
+        }}
+        className={styles.rfRoot}
+        data-testid="project-canvas-flow"
+      >
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={22}
+          size={1.1}
+          color="rgba(180, 184, 190, 0.45)"
+        />
+        <Controls
+          showInteractive={false}
+          className={styles.rfControls}
+          position="bottom-right"
+        />
+      </ReactFlow>
+
+      {hiddenCount > 0 || overflow.length > 0 ? (
+        <div className={styles.foldedNeighbors} data-no-pan>
+          <button type="button" onClick={() => setFoldOpen((v) => !v)}>
+            另有 {Math.max(hiddenCount, overflow.length)} 项
+            {foldOpen ? "，收起" : "，展开"}
+          </button>
+          {foldOpen ? (
+            <div className={styles.foldedList}>
+              {overflow.map((node) => {
+                const edge = edgesTouching(snapshot, node, true)[0];
+                return (
+                  <button
+                    key={refKey(node.ref)}
+                    type="button"
+                    data-testid={`canvas-node-${node.ref.kind}-${node.ref.id}`}
+                    onClick={() => onFocus(node.ref)}
+                  >
+                    <NodeIcon kind={node.ref.kind} />
+                    <span>{displayLabel(node.label)}</span>
+                    <small>{edge?.label ?? "相关"}</small>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </>
   );
 }
 
 export function ProjectCanvas({ snapshot, loading, onFocus }: Props) {
-  const [foldState, setFoldState] = useState({ focusKey: "", open: false });
   const [showAllAttention, setShowAllAttention] = useState(false);
-  const stageRef = useRef<HTMLDivElement>(null);
-  const [canvasLinks, setCanvasLinks] = useState<{
-    width: number;
-    height: number;
-    links: CanvasLink[];
-  }>({ width: 0, height: 0, links: [] });
+  const [selectedEdge, setSelectedEdge] = useState<CanvasEdge | null>(null);
 
-  const currentFocusKey = snapshot ? refKey(snapshot.focus) : "";
-
-  useLayoutEffect(() => {
-    if (!snapshot) return;
-
-    const stage = stageRef.current;
-    if (!stage) return;
-
-    let frame = 0;
-    const updateLinks = () => {
-      const stageRect = stage.getBoundingClientRect();
-      const center = stage.querySelector<HTMLElement>("[data-canvas-center]");
-      if (!center || stageRect.width === 0 || stageRect.height === 0) return;
-
-      const centerRect = center.getBoundingClientRect();
-      const centerPoint = {
-        x: centerRect.left - stageRect.left + centerRect.width / 2,
-        y: centerRect.top - stageRect.top + centerRect.height / 2,
-      };
-      const nodes = new Map(
-        Array.from(stage.querySelectorAll<HTMLElement>("[data-canvas-ref]")).map(
-          (element) => [element.dataset.canvasRef, element],
-        ),
-      );
-      const edgesByEndpoint = new Map<string, CanvasEdge[]>();
-
-      for (const edge of snapshot.edges) {
-        const sourceKey = refKey(edge.source);
-        const targetKey = refKey(edge.target);
-        const endpointKey =
-          sourceKey === currentFocusKey ? targetKey :
-            targetKey === currentFocusKey ? sourceKey : null;
-        if (!endpointKey || !nodes.has(endpointKey)) continue;
-        const group = edgesByEndpoint.get(endpointKey) ?? [];
-        group.push(edge);
-        edgesByEndpoint.set(endpointKey, group);
-      }
-
-      const links: CanvasLink[] = [];
-      for (const [endpointKey, edges] of edgesByEndpoint) {
-        const node = nodes.get(endpointKey);
-        if (!node) continue;
-        const nodeRect = node.getBoundingClientRect();
-        const nodePoint = {
-          x: nodeRect.left - stageRect.left + nodeRect.width / 2,
-          y: nodeRect.top - stageRect.top + nodeRect.height / 2,
-        };
-        const isLeft = nodePoint.x < centerPoint.x;
-        const startX =
-          centerPoint.x + (isLeft ? -centerRect.width / 2 : centerRect.width / 2);
-        const endX =
-          nodePoint.x + (isLeft ? nodeRect.width / 2 : -nodeRect.width / 2);
-        const controlDistance = Math.max(28, Math.abs(endX - startX) * 0.44);
-
-        edges.forEach((edge, index) => {
-          const offset = (index - (edges.length - 1) / 2) * 5;
-          const startY = centerPoint.y + offset;
-          const endY = nodePoint.y + offset;
-          const firstControlX = startX + (isLeft ? -controlDistance : controlDistance);
-          const secondControlX = endX + (isLeft ? controlDistance : -controlDistance);
-          links.push({
-            id: edge.id,
-            direction: edge.direction,
-            status: edge.status,
-            d: `M ${startX} ${startY} C ${firstControlX} ${startY}, ${secondControlX} ${endY}, ${endX} ${endY}`,
-          });
-        });
-      }
-
-      setCanvasLinks((previous) => {
-        const same =
-          previous.width === Math.round(stageRect.width) &&
-          previous.height === Math.round(stageRect.height) &&
-          previous.links.length === links.length &&
-          previous.links.every((link, index) =>
-            link.id === links[index]?.id && link.d === links[index]?.d,
-          );
-        return same
-          ? previous
-          : {
-              width: Math.round(stageRect.width),
-              height: Math.round(stageRect.height),
-              links,
-            };
-      });
-    };
-    const scheduleUpdate = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(updateLinks);
-    };
-    const observer = new ResizeObserver(scheduleUpdate);
-    observer.observe(stage);
-    for (const element of stage.querySelectorAll<HTMLElement>(
-      "[data-canvas-center], [data-canvas-ref]",
-    )) {
-      observer.observe(element);
-    }
-    scheduleUpdate();
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [currentFocusKey, snapshot]);
+  useEffect(() => {
+    setSelectedEdge(null);
+    setShowAllAttention(false);
+  }, [snapshot?.focus.kind, snapshot?.focus.id, snapshot?.project.id]);
 
   if (!snapshot) {
     return (
@@ -261,232 +512,180 @@ export function ProjectCanvas({ snapshot, loading, onFocus }: Props) {
     );
   }
 
-  const center = snapshot.nodes.find((node) => node.depth === 0);
-  const neighbors = snapshot.nodes.filter((node) => node.depth === 1);
-  const leftNeighbors = neighbors.filter((node) => sideFor(node) === "left");
-  const rightNeighbors = neighbors.filter((node) => sideFor(node) === "right");
-  const showFolded = foldState.focusKey === currentFocusKey && foldState.open;
   const primaryAttention = snapshot.attention[0];
   const attentionItems = showAllAttention
     ? snapshot.attention.slice(0, 5)
     : primaryAttention
       ? [primaryAttention]
       : [];
+  const evidenceItems = (snapshot.projectNow?.evidence ?? []).slice(0, 3);
 
   return (
     <section className={styles.canvasArea} data-testid="project-canvas">
-      <aside className={styles.agentAttention} data-testid="agent-attention">
-        {/* B-2: 打开项目优先「现在怎样」+ 可点依据；空材料诚实 */}
+      <aside
+        className={styles.agentAttention}
+        data-testid="agent-attention"
+        data-no-pan
+      >
         <div
           className={styles.projectNow}
           data-testid="project-now"
           data-status={snapshot.projectNow?.status ?? "empty"}
         >
           <div className={styles.agentAttentionHeader}>
-            <Sparkles size={16} aria-hidden="true" />
+            <Sparkles size={14} aria-hidden="true" />
             <strong data-testid="project-now-label">现在怎样</strong>
           </div>
-          <p data-testid="project-now-judgment" className={styles.projectNowJudgment}>
-            {snapshot.projectNow?.judgment ?? "还没材料，还谈不上理解项目局面。"}
+          <p
+            data-testid="project-now-judgment"
+            className={styles.projectNowJudgment}
+          >
+            {snapshot.projectNow?.judgment ??
+              "还没材料，还谈不上理解项目局面。"}
           </p>
           {snapshot.projectNow?.nextStep ? (
             <p data-testid="project-now-next" className={styles.projectNowNext}>
               建议：{snapshot.projectNow.nextStep}
             </p>
           ) : null}
-          {snapshot.projectNow?.gaps && snapshot.projectNow.gaps.length > 0 ? (
-            <ul data-testid="project-now-gaps" className={styles.projectNowGaps}>
-              {snapshot.projectNow.gaps.map((gap) => (
-                <li key={gap}>{gap}</li>
-              ))}
-            </ul>
-          ) : null}
-          {snapshot.projectNow?.evidence && snapshot.projectNow.evidence.length > 0 ? (
+          {evidenceItems.length > 0 ? (
             <ul
               data-testid="project-now-evidence"
               className={styles.agentAttentionList}
             >
-              {snapshot.projectNow.evidence.map((item) => (
+              {evidenceItems.map((item) => (
                 <li key={item.id}>
                   <button
                     type="button"
                     data-testid={`project-now-evidence-${item.id}`}
                     onClick={() => onFocus({ kind: "card", id: item.id })}
+                    title={item.label}
                   >
-                    <FileText size={13} aria-hidden="true" />
-                    <span>依据：{item.label}</span>
+                    <FileText size={12} aria-hidden="true" />
+                    <span>依据：{displayLabel(item.label)}</span>
                   </button>
                 </li>
               ))}
             </ul>
           ) : snapshot.projectNow?.status === "empty" ? (
-            <p className={styles.agentAttentionEmpty} data-testid="project-now-empty">
+            <p
+              className={styles.agentAttentionEmpty}
+              data-testid="project-now-empty"
+            >
               没有可点开的材料依据。
             </p>
           ) : null}
         </div>
 
-        <div className={styles.agentAttentionHeader}>
-          <ListChecks size={16} aria-hidden="true" />
-          <strong data-testid="agent-attention-primary-label">
-            {snapshot.attention.length > 0
-              ? "当前请先看这一条"
-              : "暂无重点提示"}
-          </strong>
-        </div>
         {attentionItems.length > 0 ? (
-          <ul className={styles.agentAttentionList}>
-            {attentionItems.map((item, index) => (
-              <li key={`${item.target.kind}:${item.target.id}`}>
-                <button
-                  type="button"
-                  data-testid={
-                    index === 0
-                      ? "canvas-attention-primary"
-                      : `canvas-attention-${item.target.kind}-${item.target.id}`
-                  }
-                  data-primary={index === 0 ? "true" : "false"}
-                  onClick={() => onFocus(item.target)}
-                >
-                  <span>{item.reason}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <>
+            <div className={styles.agentAttentionHeader}>
+              <ListChecks size={14} aria-hidden="true" />
+              <strong data-testid="agent-attention-primary-label">
+                当前请先看
+              </strong>
+            </div>
+            <ul className={styles.agentAttentionList}>
+              {attentionItems.map((item, index) => (
+                <li key={`${item.target.kind}:${item.target.id}`}>
+                  <button
+                    type="button"
+                    data-testid={
+                      index === 0
+                        ? "canvas-attention-primary"
+                        : `canvas-attention-${item.target.kind}-${item.target.id}`
+                    }
+                    data-primary={index === 0 ? "true" : "false"}
+                    onClick={() => onFocus(item.target)}
+                  >
+                    <span>{item.reason}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {snapshot.attention.length > 1 ? (
+              <button
+                type="button"
+                className={styles.agentAttentionMore}
+                data-testid="agent-attention-more"
+                onClick={() => setShowAllAttention((value) => !value)}
+              >
+                {showAllAttention
+                  ? "只保留一条"
+                  : `还有 ${snapshot.attention.length - 1} 条`}
+              </button>
+            ) : null}
+          </>
         ) : (
           <p className={styles.agentAttentionEmpty}>
-            点击对象，查看它的直接关系和执行记录。
+            点节点会把焦点移到那里（以前端文件为中心时，周围是它的关系与依据）。空白拖平移 · 滚轮缩放。
           </p>
         )}
-        {snapshot.attention.length > 1 ? (
+        {selectedEdge ? (
+          <div
+            className={styles.edgeDetail}
+            data-testid="canvas-edge-detail"
+          >
+            <div className={styles.agentAttentionHeader}>
+              <strong>这条关系</strong>
+            </div>
+            <p className={styles.edgeDetailLabel}>
+              <span data-strength={selectedEdge.strength ?? "medium"}>
+                {selectedEdge.label}
+              </span>
+            </p>
+            <p className={styles.edgeDetailWhy}>
+              {selectedEdge.why ||
+                selectedEdge.evidenceSentence ||
+                "已连接两个节点。"}
+            </p>
+            <div className={styles.edgeDetailActions}>
+              <button
+                type="button"
+                onClick={() => onFocus(selectedEdge.source)}
+              >
+                打开起点
+              </button>
+              <button
+                type="button"
+                onClick={() => onFocus(selectedEdge.target)}
+              >
+                打开终点
+              </button>
+              <button type="button" onClick={() => setSelectedEdge(null)}>
+                关闭
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {snapshot.focus.kind !== "project" ? (
           <button
             type="button"
             className={styles.agentAttentionMore}
-            data-testid="agent-attention-more"
-            onClick={() => setShowAllAttention((value) => !value)}
-          >
-            {showAllAttention
-              ? "只保留一条"
-              : `还有 ${snapshot.attention.length - 1} 条`}
-          </button>
-        ) : null}
-      </aside>
-
-      <div className={styles.focusCanvas} ref={stageRef}>
-        {canvasLinks.links.length > 0 ? (
-          <svg
-            className={styles.graphLinks}
-            data-testid="canvas-graph-links"
-            aria-hidden="true"
-            viewBox={`0 0 ${canvasLinks.width} ${canvasLinks.height}`}
-          >
-            {canvasLinks.links.map((link) => (
-              <path
-                key={link.id}
-                className={styles.graphLink}
-                data-edge-id={link.id}
-                data-direction={link.direction}
-                data-status={link.status}
-                d={link.d}
-              />
-            ))}
-          </svg>
-        ) : null}
-        <div className={styles.relationColumn} data-side="left">
-          {leftNeighbors.map((node) => {
-            const edges = edgesFor(snapshot, node);
-            return (
-              <div
-                key={`${node.ref.kind}:${node.ref.id}`}
-                data-testid="one-hop-relation"
-              >
-                <RelationNode node={node} edges={edges} onFocus={onFocus} />
-              </div>
-            );
-          })}
-        </div>
-
-        {center ? (
-          <button
-            type="button"
-            className={styles.focusState}
-            data-testid="focus-state"
-            data-canvas-center
-            data-canvas-ref={refKey(center.ref)}
-            onClick={() => onFocus(center.ref)}
-          >
-            {center.ref.kind === "project" ? (
-              <Image
-                src="/project-canvas/logo-source.png"
-                alt=""
-                width={56}
-                height={56}
-                className={styles.centerLogo}
-                priority
-              />
-            ) : (
-              <span className={styles.centerIcon} aria-hidden="true">
-                <NodeIcon kind={center.ref.kind} />
-              </span>
-            )}
-            <strong>{center.label}</strong>
-            <span>{center.subtitle ?? "当前关注"}</span>
-            {snapshot.inspector.whyImportant ? (
-              <span className={styles.focusWhy}>
-                {snapshot.inspector.whyImportant}
-              </span>
-            ) : null}
-          </button>
-        ) : null}
-
-        <div className={styles.relationColumn} data-side="right">
-          {rightNeighbors.map((node) => {
-            const edges = edgesFor(snapshot, node);
-            return (
-              <div
-                key={`${node.ref.kind}:${node.ref.id}`}
-                data-testid="one-hop-relation"
-              >
-                <RelationNode node={node} edges={edges} onFocus={onFocus} />
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {snapshot.hiddenNeighborCount > 0 ? (
-        <div className={styles.foldedNeighbors}>
-          <button
-            type="button"
+            data-testid="canvas-return-project"
             onClick={() =>
-              setFoldState({ focusKey: currentFocusKey, open: !showFolded })
+              onFocus({ kind: "project", id: snapshot.project.id })
             }
           >
-            另有 {snapshot.hiddenNeighborCount} 项
-            {showFolded ? "，收起" : "，展开"}
+            回到项目中心
           </button>
-          {showFolded ? (
-            <div className={styles.foldedList}>
-              {snapshot.foldedNodes.map((node) => {
-                const edges = edgesFor(snapshot, node, true);
-                if (edges.length === 0) return null;
-                return (
-                  <button
-                    key={`${node.ref.kind}:${node.ref.id}`}
-                    type="button"
-                    data-testid={`canvas-node-${node.ref.kind}-${node.ref.id}`}
-                    onClick={() => onFocus(node.ref)}
-                  >
-                    <NodeIcon kind={node.ref.kind} />
-                    <span>{node.label}</span>
-                    <small>{edges[0]?.label}</small>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+        ) : null}
+        <p className={styles.canvasHint}>
+          悬停高亮邻边 · 点边看原因 · 点节点进摘要 · 弱边（如最近打开）默认淡显
+        </p>
+      </aside>
+
+      <div className={styles.rfStage}>
+        <ReactFlowProvider>
+          <CanvasFlow
+            snapshot={snapshot}
+            onFocus={onFocus}
+            selectedEdgeId={selectedEdge?.id ?? null}
+            onSelectEdge={setSelectedEdge}
+          />
+        </ReactFlowProvider>
+      </div>
 
       {loading ? (
         <div className={styles.canvasRefresh}>正在更新关系…</div>

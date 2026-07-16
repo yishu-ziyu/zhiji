@@ -779,6 +779,54 @@ export function addProject(input: {
   return copyProject(project);
 }
 
+/**
+ * Merge glue: ensure a knowledge Project exists with a stable id
+ * (folder-connect uses projectIdFromCanonicalFolder). Idempotent.
+ */
+export function ensureProject(input: {
+  id: string;
+  name: string;
+  summary?: string;
+  sensitive?: boolean;
+}): Project {
+  const id = input.id?.trim();
+  const name = input.name?.trim();
+  if (!id) throw new Error("项目 id 不能为空");
+  if (!name) throw new Error("项目名称不能为空");
+  const projects = workingProjects();
+  const existing = projects.get(id);
+  if (existing) {
+    let changed = false;
+    if (!existing.name?.trim() && name) {
+      existing.name = name;
+      changed = true;
+    }
+    if (input.summary?.trim() && !existing.summary?.trim()) {
+      existing.summary = input.summary.trim();
+      changed = true;
+    }
+    if (changed) {
+      existing.updatedAt = new Date().toISOString();
+      projects.set(id, existing);
+      saveProjects(projects);
+    }
+    return copyProject(existing);
+  }
+  const now = new Date().toISOString();
+  const project: Project = {
+    id,
+    name,
+    summary: input.summary?.trim() || "",
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    sensitive: input.sensitive === true ? true : undefined,
+  };
+  projects.set(project.id, project);
+  saveProjects(projects);
+  return copyProject(project);
+}
+
 /** T-19: mark project sensitive (Owner isolation). */
 export function setProjectSensitive(
   projectId: string,
@@ -859,11 +907,17 @@ export function getProjectCanvasSnapshot(
       cardIds.has(relation.fromCardId) && cardIds.has(relation.toCardId),
   );
 
+  const agentActors = new Set(
+    events
+      .map((event) => event.actor)
+      .filter((actor) => actor.startsWith("agent:") || actor === "agent"),
+  );
   const focusBelongs =
     (focus.kind === "project" && focus.id === projectId) ||
     (focus.kind === "card" && cardIds.has(focus.id)) ||
     (focus.kind === "work_item" && workItemIds.has(focus.id)) ||
-    (focus.kind === "event" && eventIds.has(focus.id));
+    (focus.kind === "event" && eventIds.has(focus.id)) ||
+    (focus.kind === "agent" && agentActors.has(focus.id));
   if (!focusBelongs) throw new Error("关注对象不属于当前项目");
 
   const recentCardIds = [...loadFootprintEvents().values()]

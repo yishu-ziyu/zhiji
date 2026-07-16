@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   eventIdsForMatterAnalysis,
   revisionIdToOpenForEvent,
-} from "@/app/track/knowledge/mvp/lib/event-revision-open";
+} from "@/app/track/knowledge/lib/event-revision-open";
 
 describe("revisionIdToOpenForEvent", () => {
   it("opens beforeRevisionId for deleted (not tombstone after)", () => {

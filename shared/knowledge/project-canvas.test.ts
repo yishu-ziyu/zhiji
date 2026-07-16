@@ -423,6 +423,173 @@ describe("project canvas domain", () => {
     ).toBe(true);
   });
 
+  it("Phase 2: project focus yields center + ≥3 real neighbors and card inspector summary", () => {
+    const materialCards: KnowledgeCard[] = [
+      {
+        ...cards[0],
+        id: "mat-a",
+        title: "README.md",
+        content: "项目说明",
+        sourceFileId: "README.md",
+      },
+      {
+        ...cards[0],
+        id: "mat-b",
+        title: "TODO.md",
+        content: "待办清单",
+        sourceFileId: "TODO.md",
+      },
+      {
+        ...cards[0],
+        id: "mat-c",
+        title: "NOTES.md",
+        content: "会议笔记",
+        sourceFileId: "NOTES.md",
+      },
+    ];
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: materialCards,
+      workItems: [],
+      events: [],
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+    const center = snapshot.nodes.find((node) => node.depth === 0);
+    const neighbors = snapshot.nodes.filter((node) => node.depth === 1);
+    expect(center?.ref).toEqual({ kind: "project", id: "p1" });
+    expect(neighbors.length).toBeGreaterThanOrEqual(3);
+    expect(neighbors.every((node) => node.ref.kind === "card")).toBe(true);
+    expect(snapshot.inspector.evidence.length).toBeGreaterThan(0);
+
+    const cardFocus = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: materialCards,
+      workItems: [],
+      events: [],
+      focus: { kind: "card", id: "mat-a" },
+      now: NOW,
+    });
+    expect(cardFocus.inspector.title).toMatch(/README/);
+    expect(cardFocus.inspector.summary.length).toBeGreaterThan(0);
+    expect(cardFocus.inspector.evidence).toEqual([
+      { kind: "card", id: "mat-a" },
+    ]);
+  });
+
+  it("E7/E8: project focus exposes agentActivity and agent nodes when agent results exist", () => {
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+    expect(snapshot.agentActivity.steps).toHaveLength(8);
+    expect(snapshot.agentActivity.hasAgentEvents).toBe(true);
+    expect(snapshot.agentActivity.feed.length).toBeGreaterThan(0);
+    const agents = snapshot.nodes.filter((n) => n.ref.kind === "agent");
+    expect(agents.length).toBeGreaterThanOrEqual(1);
+    expect(agents[0].label).toMatch(/Agent/);
+
+    const agentFocus = buildProjectCanvasSnapshot({
+      ...fixture,
+      focus: { kind: "agent", id: "agent:project-reviewer" },
+      now: NOW,
+    });
+    expect(agentFocus.inspector.title).toMatch(/Agent|复核/);
+    expect(agentFocus.nodes.some((n) => n.depth === 0 && n.ref.kind === "agent")).toBe(
+      true,
+    );
+    expect(
+      agentFocus.nodes.some(
+        (n) => n.depth === 1 && (n.ref.kind === "work_item" || n.ref.kind === "event"),
+      ),
+    ).toBe(true);
+  });
+
+  it("E8: no agent nodes when project has no agent events", () => {
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      events: [],
+      workItems: [],
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+    expect(snapshot.nodes.some((n) => n.ref.kind === "agent")).toBe(false);
+    expect(snapshot.agentActivity.hasAgentEvents).toBe(false);
+    expect(snapshot.agentActivity.feed).toEqual([]);
+  });
+
+  it("E1: project center prefers readable materials over lockfiles/media noise", () => {
+    const materialCards: KnowledgeCard[] = [
+      {
+        ...cards[0],
+        id: "noise-lock",
+        title: "package-lock.json",
+        content: "{}",
+        sourceFileId: "package-lock.json",
+        timestamp: "2026-07-15T12:00:00.000Z",
+      },
+      {
+        ...cards[0],
+        id: "noise-mp3",
+        title: "clip.mp3",
+        content: "binary",
+        sourceFileId: "clip.mp3",
+        timestamp: "2026-07-15T12:01:00.000Z",
+      },
+      {
+        ...cards[0],
+        id: "noise-run",
+        title: "run-form.mjs",
+        content: "console.log(1)",
+        sourceFileId: "run-form.mjs",
+        timestamp: "2026-07-15T12:02:00.000Z",
+      },
+      {
+        ...cards[0],
+        id: "good-a",
+        title: "CONTEXT.md",
+        content: "north star and product job ".repeat(10),
+        sourceFileId: "CONTEXT.md",
+        timestamp: "2026-07-14T08:00:00.000Z",
+      },
+      {
+        ...cards[0],
+        id: "good-b",
+        title: "NOTES.md",
+        content: "meeting notes body",
+        sourceFileId: "NOTES.md",
+        timestamp: "2026-07-14T09:00:00.000Z",
+      },
+      {
+        ...cards[0],
+        id: "good-c",
+        title: "TODO.md",
+        content: "ship canvas",
+        sourceFileId: "TODO.md",
+        timestamp: "2026-07-14T10:00:00.000Z",
+      },
+    ];
+    const snapshot = buildProjectCanvasSnapshot({
+      ...fixture,
+      cards: materialCards,
+      workItems: [],
+      events: [],
+      focus: { kind: "project", id: "p1" },
+      now: NOW,
+    });
+    const neighborIds = snapshot.nodes
+      .filter((node) => node.depth === 1)
+      .map((node) => node.ref.id);
+    expect(neighborIds).not.toContain("noise-lock");
+    expect(neighborIds).not.toContain("noise-mp3");
+    expect(neighborIds).not.toContain("noise-run");
+    expect(neighborIds.filter((id) => id.startsWith("good-")).length).toBeGreaterThanOrEqual(3);
+    expect(snapshot.projectNow.evidence.every((e) => e.id.startsWith("good-"))).toBe(
+      true,
+    );
+  });
+
   it("B-2: projectNow is honest empty without materials", () => {
     const snapshot = buildProjectCanvasSnapshot({
       ...fixture,
@@ -594,9 +761,16 @@ describe("project canvas domain", () => {
       focus: { kind: "work_item", id: "blocked" },
       now: NOW,
     });
+    // 1 project hub (always visible) + up to 5 other neighbors = 6 depth-1.
     expect(snapshot.nodes.filter((node) => node.depth === 1)).toHaveLength(6);
-    expect(snapshot.hiddenNeighborCount).toBe(6);
-    expect(snapshot.foldedNodes).toHaveLength(6);
+    expect(
+      snapshot.nodes.some(
+        (node) => node.depth === 1 && node.ref.kind === "project",
+      ),
+    ).toBe(true);
+    // 8 cards + 4 events = 12 non-hub; 5 visible → 7 folded.
+    expect(snapshot.hiddenNeighborCount).toBe(7);
+    expect(snapshot.foldedNodes).toHaveLength(7);
   });
 
   it.each([

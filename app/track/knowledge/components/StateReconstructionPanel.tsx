@@ -10,7 +10,12 @@ import {
   History,
 } from "lucide-react";
 import type { MemoryResponse, StateClaim, WhyClaim } from "../lib/api";
-import styles from "../mvp-workbench.module.css";
+import {
+  countPdfPaths,
+  humanizeUnderstandingText,
+  isEmptyEventUnderstanding,
+} from "../lib/onboarding-folder-choice";
+import styles from "../workbench-entry.module.css";
 
 type Props = {
   memory: MemoryResponse;
@@ -41,10 +46,12 @@ function Claim({
   return (
     <div className={styles.claimBlock}>
       <span className={styles.questionLabel}>{title}</span>
-      <p>{claim.text}</p>
+      <p>{humanizeUnderstandingText(claim.text)}</p>
       {(claim.gaps.length > 0 || claim.conflicts.length > 0) && (
         <div className={styles.claimNote}>
-          {[...claim.gaps, ...claim.conflicts].join(" · ")}
+          {[...claim.gaps, ...claim.conflicts]
+            .map((item) => humanizeUnderstandingText(item))
+            .join(" · ")}
         </div>
       )}
       {claim.evidence.map((anchor) => (
@@ -56,7 +63,7 @@ function Claim({
         >
           <FileText size={12} />
           <span>{anchor.relativePath}</span>
-          <em>“{anchor.quote}”</em>
+          {anchor.quote?.trim() ? <em>“{anchor.quote}”</em> : null}
           <ChevronRight size={12} />
         </button>
       ))}
@@ -66,6 +73,9 @@ function Claim({
 
 export function StateReconstructionPanel({ memory, onOpenRevision }: Props) {
   const body = memory.candidate?.body || memory.accepted?.body;
+  const pdfCount = countPdfPaths(memory.events.map((e) => e.relativePath));
+  const zh = (t: string) => humanizeUnderstandingText(t, { pdfCount });
+
   if (!body) {
     return (
       <section className={styles.emptyPanel}>
@@ -73,6 +83,41 @@ export function StateReconstructionPanel({ memory, onOpenRevision }: Props) {
       </section>
     );
   }
+
+  if (isEmptyEventUnderstanding(body)) {
+    return (
+      <section className={styles.statePanel} aria-labelledby="six-questions-heading">
+        <div className={styles.sectionHeading}>
+          <div>
+            <span className={styles.kicker}>项目现在怎样</span>
+            <h2 id="six-questions-heading">
+              {pdfCount > 0 ? "PDF 已发现，正文尚未读出" : "还没有可展示的材料变化"}
+            </h2>
+          </div>
+          <span className={styles.statusTag}>暂无内容</span>
+        </div>
+        <div className={styles.claimBlock}>
+          <p>{zh(body.now.text)}</p>
+          <div className={styles.claimNote}>
+            {pdfCount > 0
+              ? "不必对空结果做确认；有可复制文字的文件会更容易形成理解。"
+              : "放入或修改文件后再读。不必对空结果做确认。"}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const nowClaim = {
+    ...body.now,
+    text: zh(body.now.text),
+    gaps: body.now.gaps.map(zh),
+  };
+  const thenClaim = {
+    ...body.then,
+    text: zh(body.then.text),
+    gaps: body.then.gaps.map(zh),
+  };
 
   return (
     <section className={styles.statePanel} aria-labelledby="six-questions-heading">
@@ -88,8 +133,8 @@ export function StateReconstructionPanel({ memory, onOpenRevision }: Props) {
         </span>
       </div>
       <div className={styles.sixGrid}>
-        <Claim title="现在怎样" claim={body.now} onOpenRevision={onOpenRevision} />
-        <Claim title="之前怎样" claim={body.then} onOpenRevision={onOpenRevision} />
+        <Claim title="现在怎样" claim={nowClaim} onOpenRevision={onOpenRevision} />
+        <Claim title="之前怎样" claim={thenClaim} onOpenRevision={onOpenRevision} />
         <div className={styles.claimBlock}>
           <span className={styles.questionLabel}>
             <GitCompareArrows size={12} />
@@ -100,9 +145,9 @@ export function StateReconstructionPanel({ memory, onOpenRevision }: Props) {
               key={`${change.before}-${index}`}
               className={styles.changeClaim}
             >
-              <span>{change.before || "—"}</span>
+              <span>{zh(change.before || "—")}</span>
               <ChevronRight size={13} />
-              <strong>{change.after}</strong>
+              <strong>{zh(change.after)}</strong>
               {change.evidence.map((anchor) => (
                 <button
                   key={anchor.revisionId}
@@ -130,7 +175,7 @@ export function StateReconstructionPanel({ memory, onOpenRevision }: Props) {
                   <Icon size={14} />
                   <div>
                     <strong>{statusText(why.status)}</strong>
-                    <p>{why.text}</p>
+                    <p>{zh(why.text)}</p>
                     {why.evidence.map((anchor) => (
                       <button
                         key={anchor.revisionId}
@@ -140,7 +185,7 @@ export function StateReconstructionPanel({ memory, onOpenRevision }: Props) {
                       >
                         <FileText size={11} />
                         <span>{anchor.relativePath}</span>
-                        <em>“{anchor.quote}”</em>
+                        {anchor.quote?.trim() ? <em>“{anchor.quote}”</em> : null}
                         <ChevronRight size={11} />
                       </button>
                     ))}
@@ -169,7 +214,7 @@ export function StateReconstructionPanel({ memory, onOpenRevision }: Props) {
             <History size={12} />
             建议你下一步
           </span>
-          <p>{body.nextDecision}</p>
+          <p>{humanizeUnderstandingText(body.nextDecision)}</p>
         </div>
       </div>
     </section>

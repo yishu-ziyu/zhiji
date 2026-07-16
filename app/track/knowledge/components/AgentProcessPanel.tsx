@@ -6,7 +6,8 @@ import {
   type AgentProcessStepId,
   type AgentProcessStepStatus,
 } from "../lib/agent-process";
-import styles from "../mvp-workbench.module.css";
+import type { AgentToolReceiptSummary } from "../lib/api";
+import styles from "../workbench-entry.module.css";
 
 type Props = {
   statuses: Record<AgentProcessStepId, AgentProcessStepStatus>;
@@ -14,7 +15,30 @@ type Props = {
   caption: string;
   folderName?: string;
   compact?: boolean;
+  /** Real tool receipts from analysis-runs (not decorative). */
+  toolReceipts?: AgentToolReceiptSummary[];
 };
+
+function labelTool(tool: string): string {
+  switch (tool) {
+    case "project_map":
+      return "地图";
+    case "search_text":
+      return "搜索";
+    case "read_revision":
+      return "精读";
+    case "query_project_memory":
+      return "记忆";
+    case "git_status":
+    case "git_log":
+    case "git_diff":
+    case "git_show":
+    case "git_blame":
+      return "git";
+    default:
+      return tool;
+  }
+}
 
 export function AgentProcessPanel({
   statuses,
@@ -22,7 +46,13 @@ export function AgentProcessPanel({
   caption,
   folderName,
   compact = false,
+  toolReceipts = [],
 }: Props) {
+  const receiptLines = toolReceipts
+    .slice()
+    .sort((a, b) => a.sequence - b.sequence)
+    .slice(0, 12);
+
   return (
     <section
       className={compact ? styles.agentProcessCompact : styles.agentProcessPanel}
@@ -82,6 +112,22 @@ export function AgentProcessPanel({
           );
         })}
       </ol>
+      {receiptLines.length > 0 ? (
+        <div
+          className={styles.agentToolReceipts}
+          data-testid="agent-tool-receipts"
+        >
+          <span className={styles.kicker}>实际读码步骤</span>
+          <ul>
+            {receiptLines.map((r) => (
+              <li key={`${r.sequence}-${r.tool}`}>
+                <span className={styles.agentToolTag}>{labelTool(r.tool)}</span>
+                <span>{r.summary}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   );
 }

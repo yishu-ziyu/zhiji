@@ -1,3 +1,7 @@
+import {
+  isUsefulCanvasCard,
+  sortCardsForCanvas,
+} from "@/shared/knowledge/canvas-material-rank";
 import { complete, extractJson } from "@/shared/llm/adapter";
 import type {
   ActionItem,
@@ -101,6 +105,7 @@ export async function reviewWorkItem(
 /** Cards that count as real project materials (not fake seed narrative). */
 export function materialCardsForReview(cards: KnowledgeCard[]): KnowledgeCard[] {
   return cards.filter((card) => {
+    if (!isUsefulCanvasCard(card)) return false;
     if (card.sourceFileId?.trim()) return true;
     if (card.source === "doc" || card.source === "meeting" || card.source === "email" || card.source === "chat") {
       return Boolean(card.content?.trim() || card.title?.trim());
@@ -122,7 +127,7 @@ function pickEvidenceIds(
     ordered.push(id);
   };
 
-  // Prefer evidence linked from open/blocked work, then recent materials.
+  // Prefer evidence linked from open/blocked work, then ranked useful materials.
   const openWork = workItems
     .filter((w) => w.status !== "done" && w.status !== "cancelled")
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -130,10 +135,7 @@ function pickEvidenceIds(
     for (const id of item.evidenceIds ?? []) push(id);
     push(item.cardId);
   }
-  const byTime = [...materials].sort((a, b) =>
-    b.timestamp.localeCompare(a.timestamp),
-  );
-  for (const card of byTime) push(card.id);
+  for (const card of sortCardsForCanvas(materials)) push(card.id);
   return ordered.slice(0, max);
 }
 
@@ -166,9 +168,7 @@ export function reviewProjectNow(input: ProjectNowInput): ProjectNowResult {
   const open = input.workItems.filter(
     (w) => w.status !== "done" && w.status !== "cancelled",
   );
-  const recent = [...materials].sort((a, b) =>
-    b.timestamp.localeCompare(a.timestamp),
-  )[0];
+  const recent = sortCardsForCanvas(materials)[0];
   const recentLabel = recent.title?.trim() || recent.sourceFileId || "最近材料";
   const gaps: string[] = [];
   let judgment: string;

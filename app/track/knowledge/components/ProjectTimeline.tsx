@@ -62,6 +62,38 @@ function eventLabel(event: CanvasTimelineEvent) {
   return "项目记录";
 }
 
+type ActorLane = {
+  actorKey: string;
+  actorName: string;
+  isAgent: boolean;
+  events: CanvasTimelineEvent[];
+};
+
+function buildLanes(events: CanvasTimelineEvent[]): ActorLane[] {
+  const map = new Map<string, ActorLane>();
+  for (const event of events) {
+    const actorKey = event.actor || "自己";
+    const existing = map.get(actorKey);
+    if (existing) {
+      existing.events.push(event);
+      continue;
+    }
+    map.set(actorKey, {
+      actorKey,
+      actorName: actorLabel(actorKey),
+      isAgent: actorKey.startsWith("agent:"),
+      events: [event],
+    });
+  }
+  return [...map.values()].sort((a, b) => {
+    // Agents first (Canvasight-style multi-agent lanes), then humans, then by latest activity.
+    if (a.isAgent !== b.isAgent) return a.isAgent ? -1 : 1;
+    const aLatest = Math.max(...a.events.map((e) => timeValue(e.createdAt)), 0);
+    const bLatest = Math.max(...b.events.map((e) => timeValue(e.createdAt)), 0);
+    return bLatest - aLatest;
+  });
+}
+
 export function ProjectTimeline({ snapshot, onFocus }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [scale, setScale] = useState(100);
@@ -78,6 +110,9 @@ export function ProjectTimeline({ snapshot, onFocus }: Props) {
     }
     return all;
   }, [filter, snapshot]);
+
+  const lanes = useMemo(() => buildLanes(events), [events]);
+
   const timeAxis = useMemo(() => {
     const values = events.map((event) => timeValue(event.createdAt)).filter(Boolean);
     const latest = values.length
@@ -126,46 +161,66 @@ export function ProjectTimeline({ snapshot, onFocus }: Props) {
         {timeAxis.labels.map((entry) => <time key={entry.value}>{entry.label}</time>)}
       </div>
 
-      <div className={styles.timelineRows} style={{ width: `${scale}%` }}>
-        {events.length === 0 ? (
+      <div
+        className={styles.timelineRows}
+        style={{ width: `${scale}%` }}
+        data-testid="timeline-lanes"
+        data-lane-count={lanes.length}
+      >
+        {lanes.length === 0 ? (
           <div className={styles.timelineEmpty}>当前筛选下没有记录</div>
         ) : (
-          events.map((event) => {
-            const color = eventColor(event);
-            const at = timeValue(event.createdAt);
-            const ratio = Math.max(0, Math.min(1, (at - timeAxis.start) / (timeAxis.end - timeAxis.start)));
-            const left = 12 + ratio * 84;
-            return (
-              <button
-                type="button"
-                key={event.id}
-                className={styles.timelineRow}
-                onClick={() => onFocus(event.ref)}
-              >
-                <span className={styles.timelineActor}>
-                  {event.type === "block" ? (
-                    <CircleAlert size={14} />
-                  ) : event.actor.startsWith("agent:") ? (
-                    <Bot size={14} />
-                  ) : event.phase === "now" ? (
-                    <CheckCircle2 size={14} />
-                  ) : (
-                    <History size={14} />
-                  )}
-                  <span>{actorLabel(event.actor)}</span>
-                </span>
-                <span
-                  className={styles.timelineBar}
-                  data-color={color}
-                  style={{ left: `${left}%` }}
-                  title={new Date(event.createdAt).toLocaleString("zh-CN")}
-                >
-                  <span>{eventLabel(event)} · {shortTime(at, true)}</span>
-                  <Circle fill="currentColor" />
-                </span>
-              </button>
-            );
-          })
+          lanes.map((lane) => (
+            <div
+              key={lane.actorKey}
+              className={styles.timelineLane}
+              data-testid="timeline-lane"
+              data-actor={lane.actorKey}
+              data-agent={lane.isAgent ? "true" : "false"}
+            >
+              <span className={styles.timelineActor}>
+                {lane.isAgent ? (
+                  <Bot size={14} />
+                ) : lane.events.some((e) => e.phase === "now") ? (
+                  <CheckCircle2 size={14} />
+                ) : (
+                  <History size={14} />
+                )}
+                <span>{lane.actorName}</span>
+                <small>{lane.events.length}</small>
+              </span>
+              <span className={styles.timelineLaneTrack} aria-hidden="false">
+                {lane.events.map((event) => {
+                  const color = eventColor(event);
+                  const at = timeValue(event.createdAt);
+                  const ratio = Math.max(
+                    0,
+                    Math.min(1, (at - timeAxis.start) / (timeAxis.end - timeAxis.start)),
+                  );
+                  const left = 4 + ratio * 92;
+                  return (
+                    <button
+                      type="button"
+                      key={event.id}
+                      className={styles.timelineLaneEvent}
+                      data-color={color}
+                      data-testid={`timeline-event-${event.id}`}
+                      style={{ left: `${left}%` }}
+                      title={`${eventLabel(event)} · ${shortTime(at, true)}\n${event.body}`}
+                      onClick={() => onFocus(event.ref)}
+                    >
+                      {event.type === "block" ? (
+                        <CircleAlert size={12} />
+                      ) : (
+                        <Circle size={10} fill="currentColor" />
+                      )}
+                      <span>{eventLabel(event)}</span>
+                    </button>
+                  );
+                })}
+              </span>
+            </div>
+          ))
         )}
       </div>
       <div

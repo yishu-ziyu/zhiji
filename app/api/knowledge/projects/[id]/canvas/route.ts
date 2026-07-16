@@ -8,6 +8,7 @@ const KINDS = new Set<CanvasNodeKind>([
   "card",
   "work_item",
   "event",
+  "agent",
 ]);
 
 function parseFocus(value: string | null, projectId: string): CanvasNodeRef {

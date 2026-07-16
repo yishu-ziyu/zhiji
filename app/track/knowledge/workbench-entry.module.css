@@ -19,9 +19,7 @@
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-    system-ui, sans-serif;
+  font-family: inherit;
   font-size: 13px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
@@ -165,6 +163,23 @@
 .watchHint, .pausedNote { display: flex; align-items: center; gap: 5px; margin-top: 11px; color: #979b9f; font-size: 10px; }
 .pausedNote { color: var(--amber); }
 
+/* Agent presence rail inside workbench (post-connect) */
+.agentPresenceRail {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 0;
+  min-width: 0;
+}
+.agentPresenceActions {
+  display: flex;
+  gap: 8px;
+  padding: 0 2px 4px;
+}
+.agentPresenceActions button {
+  flex: 1;
+}
+
 .inspector { grid-column: 3; grid-row: 1; min-width: 0; overflow: hidden; border-left: 1px solid rgba(220, 221, 216, .9); background: rgba(250,250,248,.76); }
 .inspectorScroll { height: 100%; overflow: auto; padding: 18px 16px 20px; }
 .statePanel, .reviewCard { margin-bottom: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: 0 8px 24px rgba(29,31,35,.035); }
@@ -218,30 +233,29 @@
 
 .onboarding { grid-column: 2 / 4; grid-row: 1 / 3; min-width: 0; display: flex; flex-direction: column; overflow: auto; }
 .onboardingBody {
-  width: min(520px, calc(100% - 48px));
+  width: min(480px, calc(100% - 48px));
   margin: auto;
-  padding: 64px 0 80px;
+  padding: 72px 0 96px;
   text-align: center;
-  animation: design-rise 0.35s ease-out both;
+  animation: design-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .onboardingIcon {
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
   display: grid;
   place-items: center;
-  margin: 0 auto 28px;
-  border-radius: 16px;
+  margin: 0 auto 24px;
+  border-radius: 14px;
   background: var(--blue-soft);
   color: var(--blue);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .onboardingBody h1 {
-  max-width: 20ch;
+  max-width: 14ch;
   margin: 0 auto;
-  font-size: clamp(28px, 4.2vw, 40px);
-  line-height: 1.12;
+  font-size: clamp(32px, 4.5vw, 44px);
+  line-height: 1.08;
   font-weight: 650;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.035em;
   color: var(--text);
 }
 .onboardingBody > p {
@@ -290,11 +304,22 @@
   border: 0;
   border-radius: 980px;
   background: var(--blue);
-  color: white !important;
+  color: #ffffff !important;
   font-size: 15px;
   font-weight: 560;
   letter-spacing: -0.01em;
-  box-shadow: 0 1px 2px rgba(0, 122, 255, 0.25);
+  box-shadow: 0 1px 2px rgba(0, 122, 255, 0.18);
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.2s ease;
+}
+.primaryButtonLarge:hover {
+  background: var(--blue-hover);
+  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.22);
+}
+.primaryButtonLarge:active {
+  transform: scale(0.98);
+  box-shadow: 0 1px 2px rgba(0, 122, 255, 0.12);
 }
 .primaryButtonLarge svg:last-child { margin-left: 2px; }
 .fixtureNote { display: block; margin-top: 18px; color: var(--muted); font-size: 12px; text-align: center; }
@@ -310,27 +335,466 @@
   text-align: left;
 }
 
-/* Entry shell: full-bleed quiet canvas (no eng chrome) */
+/* Entry: screenshot-like card home (taste + Apple) */
+.shellEntryEmbedded {
+  display: block;
+  min-height: 0;
+  background: transparent;
+}
+.shellEntryEmbedded .entryStage {
+  margin: 0 auto;
+}
 .shellEntry {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
-}
-.shellEntry .onboarding {
-  grid-column: 1;
-  grid-row: 1;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #f2f3f5;
+  font-feature-settings: "ss01" on, "cv11" on;
 }
 
-.firstUseProgress { max-width: 620px; margin: 0 0 18px; padding: 18px; border: 1px solid #d5e2f6; border-radius: 12px; background: #f7faff; }
-.firstUseProgress strong { display: block; margin-top: 6px; font-size: 18px; letter-spacing: -.02em; }
-.firstUseProgress > p { margin: 8px 0 14px; color: #5e6a7a; font-size: 12px; line-height: 1.55; }
-.firstUseSteps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.firstUseSteps li { display: flex; align-items: center; gap: 8px; min-height: 28px; color: #6a727c; font-size: 13px; font-weight: 600; }
-.firstUseStepActive { color: var(--blue) !important; }
-.firstUseStepDone { color: #2f6a3a !important; }
-.firstUseStepPending { opacity: .62; }
-.firstUseStepDot { width: 8px; height: 8px; border-radius: 99px; background: #c5ccd6; }
-.spin { animation: mvpSpin 0.9s linear infinite; }
-@keyframes mvpSpin { to { transform: rotate(360deg); } }
+.shellEntry .onboarding {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: 24px 16px 48px;
+}
+
+.entryTopbar {
+  grid-column: 1;
+  grid-row: 1;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 22px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
+.entryBrandMark {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: #1d1d1f;
+  background: transparent;
+}
+
+.entryBrandName {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: #1d1d1f;
+}
+
+.entryStage {
+  width: min(560px, 100%);
+  margin: 0 auto;
+  animation: design-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.entryCard {
+  overflow: hidden;
+  border-radius: 20px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 18px 48px rgba(15, 23, 42, 0.08);
+}
+
+/* Value-first entry: slightly wider, left-aligned preview */
+.entryCardValue .entryCardBody {
+  padding: 32px 32px 28px;
+  text-align: left;
+}
+
+.entryCardValue .entryTitle {
+  text-align: left;
+  font-size: clamp(26px, 3.6vw, 32px);
+}
+
+.entryCardValue .entryLead {
+  margin: 10px 0 0;
+  max-width: 42ch;
+  text-align: left;
+}
+
+.entryCardBody {
+  padding: 36px 36px 28px;
+  text-align: center;
+}
+
+.entryFolderGlyph {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  color: #ffffff;
+  background: linear-gradient(160deg, #5ab0ff 0%, #007aff 55%, #0062d1 100%);
+  box-shadow: 0 10px 24px rgba(0, 122, 255, 0.28);
+}
+
+.entryEyebrow {
+  margin: 0 0 8px;
+  color: #86868b;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.entryTitle {
+  margin: 0;
+  color: #1d1d1f;
+  font-size: clamp(28px, 4vw, 34px);
+  font-weight: 650;
+  letter-spacing: -0.028em;
+  line-height: 1.15;
+}
+
+.entryLead {
+  max-width: 36ch;
+  margin: 14px auto 0;
+  color: #6e6e73;
+  font-size: 15px;
+  font-weight: 450;
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+}
+
+.entryPromiseList {
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 6px 14px;
+  text-align: left;
+  border-radius: 14px;
+  background: #f5f5f7;
+}
+
+.entryPromiseList li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 6px;
+  color: #3a3a3c;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.entryPromiseList li:last-child {
+  border-bottom: 0;
+}
+
+.entryPromiseList li svg {
+  flex: 0 0 auto;
+  color: #8e8e93;
+}
+
+.entryCardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  background: #fafafa;
+}
+
+.entryFooterActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.entryFooterHint {
+  color: #8e8e93;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.entryTextLink {
+  border: 0;
+  background: transparent;
+  color: #007aff;
+  font-size: 14px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  padding: 8px 4px;
+}
+
+.entryTextLink:hover {
+  color: #0071e3;
+}
+
+.entryTextLink:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.entryGhostButton {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1d1d1f !important;
+  font-size: 14px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+
+.entryGhostButton:hover {
+  background: #f5f5f7;
+  border-color: rgba(0, 0, 0, 0.14);
+}
+
+.entryGhostButton:active {
+  transform: scale(0.98);
+}
+
+.entryGhostButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.entryPrimaryButton {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 10px;
+  background: #007aff;
+  color: #ffffff !important;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 122, 255, 0.2);
+  transition: background 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.12s ease, box-shadow 0.15s ease;
+}
+
+.entryPrimaryButton:hover {
+  background: #0071e3;
+  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.22);
+}
+
+.entryPrimaryButton:active {
+  transform: scale(0.98);
+}
+
+.entryPrimaryButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.entryRecent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 14px 16px;
+  text-align: left;
+  border-radius: 14px;
+  background: #f5f5f7;
+}
+
+.entryRecent strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #1d1d1f;
+}
+
+/* Result preview (static demo on cold start) */
+.entryPreview {
+  margin-top: 22px;
+  padding: 14px 14px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: #f7f8fa;
+  text-align: left;
+}
+
+.entryPreviewHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.entryPreviewLabel {
+  color: #6e6e73;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.entryPreviewBadge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+  color: #8e8e93;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.entryPreviewBlock {
+  padding: 12px 12px 10px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.entryPreviewBlockTitle {
+  margin: 0 0 6px;
+  color: #1d1d1f;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.entryPreviewSummary {
+  margin: 0;
+  color: #6e6e73;
+  font-size: 13px;
+  font-weight: 450;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+}
+
+.entryPreviewSummaryMuted {
+  margin: 6px 0 0;
+  color: #a1a1a6;
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+}
+
+.entryPreviewJudgments {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.entryPreviewJudgments li {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.entryPreviewJudgmentText {
+  display: block;
+  color: #3a3a3c;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+}
+
+.entryPreviewSource {
+  display: block;
+  margin-top: 4px;
+  color: #a1a1a6;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+.entryActions {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.entryPrimaryWide {
+  width: 100%;
+  min-height: 44px;
+  font-size: 15px;
+}
+
+.entryTrustLine {
+  margin: 0;
+  text-align: center;
+  color: #8e8e93;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  line-height: 1.4;
+}
+
+.shellEntry .errorBanner {
+  margin: 16px auto 0;
+  max-width: 100%;
+}
+
+.shellEntry .agentProcessCompact {
+  margin: 22px auto 0;
+  max-width: 100%;
+  text-align: left;
+}
+
+@media (max-width: 560px) {
+  .entryCardBody {
+    padding: 28px 20px 22px;
+  }
+  .entryCardValue .entryCardBody {
+    padding: 24px 18px 22px;
+  }
+  .entryCardFooter {
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+  .entryFooterActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .entryPrimaryButton {
+    flex: 1;
+  }
+  .entryTitle {
+    font-size: 28px;
+  }
+  .entryCardValue .entryTitle {
+    font-size: 26px;
+  }
+  .entryTrustLine {
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entryStage {
+    animation: none !important;
+  }
+}
 
 .agentProcessPanel,
 .agentProcessCompact {
@@ -426,6 +890,48 @@
 }
 .agentProcessStepActive .agentProcessStatusLabel { color: var(--blue, #245fcf); }
 .agentProcessStepDone .agentProcessStatusLabel { color: #2f6a3a; }
+.agentToolReceipts {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(210, 210, 215, 0.9);
+  background: rgba(248, 249, 251, 0.95);
+}
+.agentToolReceipts .kicker {
+  display: inline-block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--muted, #6e6e73);
+}
+.agentToolReceipts ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agentToolReceipts li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text, #1d1d1f);
+}
+.agentToolTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--blue-soft, #e8f2ff);
+  color: var(--blue, #007aff);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 .agentProcessBody p {
   margin: 4px 0 0;
   color: #5e6a7a;
@@ -514,4 +1020,22 @@
   .primaryButtonLarge { width: 100%; }
   .folderChoiceActions, .folderChoiceCard { max-width: none; }
   .revisionViewer { width: 100%; padding: 18px; }
+}
+
+
+/* taste-skill + apple-design: motion restraint */
+@media (prefers-reduced-motion: reduce) {
+  .onboardingBody,
+  .primaryButtonLarge,
+  .primaryButton,
+  .secondaryButton {
+    animation: none !important;
+    transition: none !important;
+  }
+  .spin { animation: none !important; }
+}
+
+@keyframes design-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }

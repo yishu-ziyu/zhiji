@@ -78,11 +78,47 @@ export type RedactedCrossProjectHint = {
 export const REDACTED_CROSS_PROJECT_HINT_MESSAGE =
   "一项已授权来源可能相关；如需使用，请先由 Owner 明确引用。";
 
-export type CanvasNodeKind = "project" | "card" | "work_item" | "event";
+export type CanvasNodeKind =
+  | "project"
+  | "card"
+  | "work_item"
+  | "event"
+  /** Synthetic focus node for an agent actor (id = full actor string, e.g. agent:project-reviewer). */
+  | "agent";
 
 export type CanvasNodeRef = {
   kind: CanvasNodeKind;
   id: string;
+};
+
+/** E7: right-panel process + live-ish feed derived from project facts (no fake animation). */
+export type AgentProcessStepStatus = "pending" | "active" | "done";
+
+export type AgentProcessStepView = {
+  id: string;
+  title: string;
+  status: AgentProcessStepStatus;
+};
+
+export type AgentFeedItem = {
+  id: string;
+  actor: string;
+  actorLabel: string;
+  kind: "result" | "decision" | "status" | "comment" | "other";
+  body: string;
+  createdAt: string;
+  ref: CanvasNodeRef;
+};
+
+export type AgentActivityView = {
+  /** True when at least one agent:* work event exists. */
+  hasAgentEvents: boolean;
+  activeStepId: string | null;
+  caption: string;
+  steps: AgentProcessStepView[];
+  feed: AgentFeedItem[];
+  /** Distinct agent actor ids present in this project. */
+  agentIds: string[];
 };
 
 export type ProjectCheckpoint = {
@@ -140,6 +176,21 @@ export type CanvasNode = {
 
 export type CanvasEdgeDirection = "out" | "in" | "both";
 
+/** Product edge dictionary for industrial canvas (presentation + filter). */
+export type CanvasEdgeKind =
+  | "attention"
+  | "work"
+  | "evidence"
+  | "relation"
+  | "material"
+  | "recent"
+  | "project"
+  | "blocked"
+  | "activity"
+  | "other";
+
+export type CanvasEdgeStrength = "strong" | "medium" | "weak";
+
 export type CanvasEdge = {
   id: string;
   relationId?: string;
@@ -150,6 +201,12 @@ export type CanvasEdge = {
   status: "confirmed" | "suggested";
   /** 相对本次 snapshot.focus 的方向；不是持久化关系字段。 */
   direction: CanvasEdgeDirection;
+  /** Typed edge for styling / filter (additive). */
+  kind?: CanvasEdgeKind;
+  /** Visual priority: strong = solid bold; weak = dashed, labels off by default. */
+  strength?: CanvasEdgeStrength;
+  /** One-line why this edge exists (edge click / inspector). */
+  why?: string;
 };
 
 export type CanvasAction =
@@ -204,6 +261,8 @@ export type ProjectCanvasSnapshot = {
   planAssessment: PlanAssessment;
   /** B-2: 打开项目优先看到的「现在怎样」+ 可点依据 */
   projectNow: ProjectNowView;
+  /** E7: Agent 八步过程 + 动态 feed（来自真实事件，可空） */
+  agentActivity: AgentActivityView;
   attention: AttentionItem[];
   nodes: CanvasNode[];
   edges: CanvasEdge[];

@@ -16,13 +16,14 @@ import {
   phaseAfterPickerCancel,
   phaseAfterPickerSelected,
   shouldRunInitialAnalysis,
-} from "@/app/track/knowledge/mvp/lib/onboarding-folder-choice";
-import { createMvpApi } from "@/app/track/knowledge/mvp/lib/api";
+} from "@/app/track/knowledge/lib/onboarding-folder-choice";
+import { createMvpApi } from "@/app/track/knowledge/lib/folder-connection-api";
 import fs from "node:fs";
 import path from "node:path";
 
+// Product merge: business entry lives on the knowledge workbench, not /mvp.
 const pageSource = fs.readFileSync(
-  path.join(process.cwd(), "app/track/knowledge/mvp/page.tsx"),
+  path.join(process.cwd(), "app/track/knowledge/components/LocalFolderEntry.tsx"),
   "utf8",
 );
 
@@ -77,7 +78,7 @@ describe("D-50 onboarding folder choice contract", () => {
     expect(folderNameFromPath("/Users/owner/projects/product-exploration")).toBe(
       "product-exploration",
     );
-    expect(DEFAULT_PERMISSION_COPY).toMatch(/仅授权/);
+    expect(DEFAULT_PERMISSION_COPY).toMatch(/文件夹/);
     expect(pageSource).toContain("DEFAULT_PERMISSION_COPY");
     expect(pageSource).toContain("folder-selection-review");
     expect(pageSource).toContain("recent-connection");
@@ -113,17 +114,14 @@ describe("D-50 first-use progress and understanding", () => {
       "reconcile",
       "reconstruct",
     ]);
-    expect(FIRST_USE_PROGRESS_LABELS.authorize).toMatch(/授权/);
-    expect(FIRST_USE_PROGRESS_LABELS.reconcile).toMatch(/对账/);
-    expect(FIRST_USE_PROGRESS_LABELS.reconstruct).toMatch(/重建/);
+    expect(FIRST_USE_PROGRESS_LABELS.authorize).toMatch(/文件夹/);
+    expect(FIRST_USE_PROGRESS_LABELS.reconcile).toMatch(/浏览|内容/);
+    expect(FIRST_USE_PROGRESS_LABELS.reconstruct).toMatch(/理解/);
     expect(isProgressStepDone("reconcile", "authorize")).toBe(true);
     expect(isProgressStepDone("reconcile", "reconcile")).toBe(false);
-    expect(pageSource).toContain("runFirstUsePipeline");
-    expect(pageSource).toContain("setProgressStep(\"authorize\")");
-    expect(pageSource).toContain("setProgressStep(\"reconcile\")");
-    expect(pageSource).toContain("setProgressStep(\"reconstruct\")");
-    expect(pageSource).toContain("FirstUseProgress");
-    expect(pageSource).toContain("InitialUnderstandingLead");
+    expect(pageSource).toContain("runPipeline");
+    expect(pageSource).toContain("setPipelinePhase");
+    expect(pageSource).toContain("AgentProcessPanel");
   });
 
   it("feeds only matched reconciled event ids into analysis helpers", () => {
@@ -203,11 +201,10 @@ describe("D-50 first-use progress and understanding", () => {
         "范围描述冲突",
       ]),
     );
-    expect(pageSource).toContain("InitialUnderstandingLead");
     const leadSource = fs.readFileSync(
       path.join(
         process.cwd(),
-        "app/track/knowledge/mvp/components/InitialUnderstandingLead.tsx",
+        "app/track/knowledge/components/InitialUnderstandingLead.tsx",
       ),
       "utf8",
     );
@@ -230,7 +227,7 @@ describe("D-50 first-use progress and understanding", () => {
     expect(before.accepted).toBeUndefined();
 
     const analysisSpy = vi.spyOn(api, "runAnalysis");
-    const candidate = await api.runAnalysis(
+    const analysis = await api.runAnalysis(
       bootstrap.projectId,
       bootstrap.matter.id,
       matchedIds,
@@ -240,6 +237,7 @@ describe("D-50 first-use progress and understanding", () => {
       bootstrap.matter.id,
       matchedIds,
     );
+    const candidate = analysis.candidate;
     expect(candidate.kind).toBe("candidate");
     expect(candidate.body.now.evidence.length).toBeGreaterThan(0);
     expect(
@@ -247,6 +245,10 @@ describe("D-50 first-use progress and understanding", () => {
         (item) => item.status === "unknown" || item.status === "conflicted",
       ),
     ).toBe(true);
+    expect(analysis.toolReceipts.length).toBeGreaterThanOrEqual(3);
+    expect(analysis.toolReceipts.map((r) => r.tool)).toEqual(
+      expect.arrayContaining(["project_map", "search_text", "read_revision"]),
+    );
 
     const memory = await api.getMemory(bootstrap.projectId, bootstrap.matter.id);
     expect(shouldRunInitialAnalysis(memory)).toBe(false);

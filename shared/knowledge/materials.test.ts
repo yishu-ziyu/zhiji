@@ -55,6 +55,16 @@ describe("materials", () => {
     expect(html).not.toContain("<script>");
   });
 
+  it("renders gfm-ish tables and inline code", () => {
+    const html = renderMarkdownLite(
+      "| Layer | Name |\n| --- | --- |\n| Product | **持节** |\n\nUse `scion` here.",
+    );
+    expect(html).toContain("<table>");
+    expect(html).toContain("<th>Layer</th>");
+    expect(html).toContain("<strong>持节</strong>");
+    expect(html).toContain("<code>scion</code>");
+  });
+
   it("writes a file under the project id and reads it back", () => {
     const projectId = "proj-user-1";
     const meta = writeProjectMaterial(projectId, "note.md", "hello material");

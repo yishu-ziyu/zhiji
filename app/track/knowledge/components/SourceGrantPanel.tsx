@@ -3,7 +3,7 @@
 import { Eye, PauseCircle, Save } from "lucide-react";
 import { useState } from "react";
 import type { MatterWatchSet, SourceGrant, WatchSetUpdate } from "../lib/api";
-import styles from "../mvp-workbench.module.css";
+import styles from "../workbench-entry.module.css";
 
 type Props = {
   grant: SourceGrant;

@@ -209,6 +209,37 @@ export type ReconcileResult = {
   events?: Array<{ id: string; matched?: boolean }>;
 };
 
+/** Real tool-loop receipts from analysis-runs (map / search / read). */
+export type AgentToolReceiptSummary = {
+  sequence: number;
+  tool: string;
+  outcome: string;
+  summary: string;
+};
+
+export type AnalysisRunResult = {
+  /** Null when run ended without a candidate (interrupt / confirm / tools-only). */
+  candidate: UnderstandingRevision | null;
+  run?: {
+    id?: string;
+    progressSummary?: string;
+    status?: string;
+  };
+  toolReceipts: AgentToolReceiptSummary[];
+};
+
+export type AgentRunViewResult = {
+  run: {
+    id: string;
+    status: string;
+    progressSummary?: string;
+    stopReason?: string;
+    candidateRevisionId?: string;
+  };
+  toolReceipts: AgentToolReceiptSummary[];
+  candidate: UnderstandingRevision | null;
+};
+
 export type ContractApi = {
   /** Minimal recent active connection for Continue (not auto-connect). */
   getRecentConnection(): Promise<RecentConnectionResponse["connection"]>;
@@ -228,7 +259,17 @@ export type ContractApi = {
     matterId: string,
     input: WatchSetUpdate,
   ): Promise<MatterWatchSet>;
-  runAnalysis(projectId: string, matterId: string, eventIds: string[]): Promise<UnderstandingRevision>;
+  runAnalysis(
+    projectId: string,
+    matterId: string,
+    eventIds: string[],
+  ): Promise<AnalysisRunResult>;
+  /** Poll a durable analysis run (tool receipts + status). */
+  getAnalysisRun(
+    projectId: string,
+    runId: string,
+  ): Promise<AgentRunViewResult>;
+  interruptAnalysis(projectId: string, runId: string): Promise<{ run: { id: string; status: string } }>;
   resolveCandidate(
     projectId: string,
     matterId: string,
@@ -626,7 +667,68 @@ function createFixtureApi(): ContractApi {
     },
     async runAnalysis() {
       fixtureUnderstandingReady = true;
-      return clone(fixtureCandidate);
+      return {
+        candidate: clone(fixtureCandidate),
+        run: {
+          id: "run-fixture-1",
+          progressSummary: "候选已生成（工具 3 次 · 模型 1 轮）",
+          status: "awaiting_owner",
+        },
+        toolReceipts: [
+          {
+            sequence: 1,
+            tool: "project_map",
+            outcome: "ok",
+            summary: "项目地图 depth≤3：若干项",
+          },
+          {
+            sequence: 2,
+            tool: "search_text",
+            outcome: "ok",
+            summary: "搜索「TODO」命中若干处",
+          },
+          {
+            sequence: 3,
+            tool: "read_revision",
+            outcome: "ok",
+            summary: "已读 NOTES.md L1-60",
+          },
+        ],
+      };
+    },
+    async getAnalysisRun(_projectId, runId) {
+      return {
+        run: {
+          id: runId || "run-fixture-1",
+          status: "awaiting_owner",
+          progressSummary: "候选已生成（工具 3 次 · 模型 1 轮）",
+          candidateRevisionId: fixtureCandidate.id,
+        },
+        toolReceipts: [
+          {
+            sequence: 1,
+            tool: "project_map",
+            outcome: "ok",
+            summary: "项目地图 depth≤3：若干项",
+          },
+          {
+            sequence: 2,
+            tool: "search_text",
+            outcome: "ok",
+            summary: "搜索「TODO」命中若干处",
+          },
+          {
+            sequence: 3,
+            tool: "read_revision",
+            outcome: "ok",
+            summary: "已读 NOTES.md L1-60",
+          },
+        ],
+        candidate: clone(fixtureCandidate),
+      };
+    },
+    async interruptAnalysis(_projectId, runId) {
+      return { run: { id: runId || "run-fixture-1", status: "interrupted" } };
     },
     async resolveCandidate(_projectId, _matterId, candidateId, decision, editedBody) {
       const resolution: OwnerResolution = {
@@ -840,14 +942,25 @@ function createHttpApi(): ContractApi {
         httpJson<BackendMemoryResponse>(
           `/api/knowledge/projects/${encodedProjectId}/memory?matterId=${encodedMatterId}`,
         ),
-        httpJson<{ watchSet: MatterWatchSet }>(
+        httpJson<{ watchSet: MatterWatchSet | null }>(
           `/api/knowledge/projects/${encodedProjectId}/matters/${encodedMatterId}/watch-set`,
-        ),
+        ).catch(() => ({ watchSet: null as MatterWatchSet | null })),
       ]);
-      const projected = projectBackendEvents(memory.events, watch.watchSet);
+      const fallbackWatch: MatterWatchSet = watch.watchSet ?? {
+        id: "watch-missing",
+        projectId: nextProjectId,
+        matterId: nextMatterId,
+        grantId: "unknown",
+        includePathPrefixes: [""],
+        excludePathPrefixes: [],
+        status: "active",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const projected = projectBackendEvents(memory.events, fallbackWatch);
       return {
         matter: memory.matter,
-        watchSet: watch.watchSet,
+        watchSet: fallbackWatch,
         head: memory.head,
         accepted: memory.accepted ?? undefined,
         candidate: memory.candidate ?? undefined,
@@ -863,8 +976,18 @@ function createHttpApi(): ContractApi {
     },
     async runAnalysis(nextProjectId, nextMatterId, eventIds) {
       const data = await httpJson<{
-        candidate?: UnderstandingRevision;
-        run?: { id?: string };
+        candidate?: UnderstandingRevision | null;
+        run?: {
+          id?: string;
+          progressSummary?: string;
+          status?: string;
+        };
+        toolReceipts?: Array<{
+          sequence: number;
+          tool: string;
+          outcome: string;
+          summary: string;
+        }>;
       }>(
         `/api/knowledge/projects/${encodeURIComponent(nextProjectId)}/analysis-runs`,
         {
@@ -877,8 +1000,27 @@ function createHttpApi(): ContractApi {
           }),
         },
       );
-      if (!data.candidate) throw new Error("analysis-runs 未返回 candidate");
-      return data.candidate;
+      return {
+        candidate: data.candidate ?? null,
+        run: data.run,
+        toolReceipts: data.toolReceipts ?? [],
+      };
+    },
+    async getAnalysisRun(nextProjectId, runId) {
+      const data = await httpJson<AgentRunViewResult>(
+        `/api/knowledge/projects/${encodeURIComponent(nextProjectId)}/analysis-runs?runId=${encodeURIComponent(runId)}`,
+      );
+      return {
+        run: data.run,
+        toolReceipts: data.toolReceipts ?? [],
+        candidate: data.candidate ?? null,
+      };
+    },
+    async interruptAnalysis(nextProjectId, runId) {
+      return httpJson(
+        `/api/knowledge/projects/${encodeURIComponent(nextProjectId)}/analysis-runs/${encodeURIComponent(runId)}/interrupt`,
+        { method: "POST" },
+      );
     },
     async resolveCandidate(nextProjectId, nextMatterId, candidateId, decision, editedBody) {
       return httpJson<ResolutionResponse>(

@@ -27,6 +27,8 @@ import type {
   SourceGrant,
   UnderstandingRevision,
 } from "./types";
+import { materializeGrantSignalsToProject } from "@/shared/knowledge/materialize-grant-signals";
+import { ensureProject } from "@/shared/knowledge/repository";
 
 const execFileAsync = promisify(execFile);
 
@@ -458,6 +460,13 @@ async function finalizeConnectionForAnalysis(
   // Default matter/watch from connectLocalRoot bootstrap (persisted on Continue).
   const defaultWatchSet = connection.watchSet;
 
+  // Single product surface: folder-connect id must appear in knowledge workbench list.
+  ensureProject({
+    id: projectId,
+    name: meta.folderName || "本地项目",
+    summary: "已授权本地文件夹（只读边界内）",
+  });
+
   // Load persisted matter/head/understanding before reconcile projects new disk state.
   let matterState = await reader.getMatterState(projectId, matterId);
 
@@ -469,6 +478,11 @@ async function finalizeConnectionForAnalysis(
   }
   const result = await manager.reconcile(projectId, grantId);
   matterState = await reader.getMatterState(projectId, matterId);
+
+  // Phase 2: surface readable grant files on the knowledge canvas (materials + cards).
+  // Drag-upload already writes materials; authorize-folder must do the same bridge.
+  // Connect always; continue refreshes from signals (idempotent by sourceFileId).
+  materializeGrantSignalsToProject(projectId, result.signals);
 
   // Project only this grant's events through the default matter/watch set.
   // Never hand raw reconcile signal list to analysis.

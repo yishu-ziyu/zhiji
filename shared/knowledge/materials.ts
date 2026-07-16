@@ -583,72 +583,7 @@ export function writeProjectMaterial(
   );
 }
 
-/** Very small markdown → safe HTML (headings, lists, code, paragraphs). */
-export function renderMarkdownLite(source: string): string {
-  const escaped = source
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  const lines = escaped.split(/\r?\n/);
-  const out: string[] = [];
-  let inList = false;
-  let inCode = false;
-
-  const closeList = () => {
-    if (inList) {
-      out.push("</ul>");
-      inList = false;
-    }
-  };
-
-  for (const line of lines) {
-    if (line.startsWith("```")) {
-      if (inCode) {
-        out.push("</code></pre>");
-        inCode = false;
-      } else {
-        closeList();
-        out.push("<pre><code>");
-        inCode = true;
-      }
-      continue;
-    }
-    if (inCode) {
-      out.push(`${line}\n`);
-      continue;
-    }
-    if (/^### /.test(line)) {
-      closeList();
-      out.push(`<h3>${line.slice(4)}</h3>`);
-      continue;
-    }
-    if (/^## /.test(line)) {
-      closeList();
-      out.push(`<h2>${line.slice(3)}</h2>`);
-      continue;
-    }
-    if (/^# /.test(line)) {
-      closeList();
-      out.push(`<h1>${line.slice(2)}</h1>`);
-      continue;
-    }
-    if (/^[-*] /.test(line)) {
-      if (!inList) {
-        out.push("<ul>");
-        inList = true;
-      }
-      out.push(`<li>${line.slice(2)}</li>`);
-      continue;
-    }
-    closeList();
-    if (line.trim() === "") {
-      out.push("");
-      continue;
-    }
-    const withBold = line.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-    out.push(`<p>${withBold}</p>`);
-  }
-  closeList();
-  if (inCode) out.push("</code></pre>");
-  return out.join("\n");
-}
+export {
+  looksLikeMarkdown,
+  renderMarkdownLite,
+} from "./markdown-lite";

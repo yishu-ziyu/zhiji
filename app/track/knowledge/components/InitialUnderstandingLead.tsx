@@ -2,8 +2,13 @@
 
 import { CircleHelp, FileText, Sparkles } from "lucide-react";
 import type { MemoryResponse } from "../lib/api";
-import { extractUnderstandingLead } from "../lib/onboarding-folder-choice";
-import styles from "../mvp-workbench.module.css";
+import {
+  extractUnderstandingLead,
+  humanizeUnderstandingText,
+  isEmptyEventUnderstanding,
+  countPdfPaths,
+} from "../lib/onboarding-folder-choice";
+import styles from "../workbench-entry.module.css";
 
 type Props = {
   memory: MemoryResponse;
@@ -12,6 +17,9 @@ type Props = {
 
 export function InitialUnderstandingLead({ memory, onOpenRevision }: Props) {
   const body = memory.candidate?.body || memory.accepted?.body;
+  const pdfCount = countPdfPaths(memory.events.map((e) => e.relativePath));
+  const zh = (t: string) => humanizeUnderstandingText(t, { pdfCount });
+
   if (!body) {
     return (
       <section
@@ -23,7 +31,34 @@ export function InitialUnderstandingLead({ memory, onOpenRevision }: Props) {
           当前理解
         </span>
         <h2>还没有读出内容</h2>
-        <p>文件夹里有可读材料后，这里会出现简短、有来源的现状。</p>
+        <p>
+          {pdfCount > 0
+            ? zh("")
+            : "文件夹里有可读材料后，这里会出现简短、有来源的现状。"}
+        </p>
+      </section>
+    );
+  }
+
+  if (isEmptyEventUnderstanding(body)) {
+    return (
+      <section
+        className={styles.understandingLead}
+        data-testid="understanding-lead-empty-events"
+      >
+        <span className={styles.kicker}>
+          <Sparkles size={13} />
+          当前理解
+        </span>
+        <h2>
+          {pdfCount > 0 ? "PDF 已发现，正文尚未读出" : "还没有可核对的变化"}
+        </h2>
+        <p className={styles.understandingNow}>{zh(body.now.text)}</p>
+        <p>
+          {pdfCount > 0
+            ? "你可以点「再读一遍变化」重试；有可复制文字的文件会更容易形成理解。"
+            : "在文件夹里放入或修改文件后，再点「再读一遍变化」。"}
+        </p>
       </section>
     );
   }
@@ -49,7 +84,7 @@ export function InitialUnderstandingLead({ memory, onOpenRevision }: Props) {
           {memory.candidate ? "待你确认" : "已确认"}
         </span>
       </div>
-      <p className={styles.understandingNow}>{lead.nowText}</p>
+      <p className={styles.understandingNow}>{zh(lead.nowText)}</p>
       {body.now.evidence.length > 0 && (
         <div className={styles.understandingEvidence}>
           {body.now.evidence.slice(0, 3).map((anchor) => (
@@ -61,7 +96,7 @@ export function InitialUnderstandingLead({ memory, onOpenRevision }: Props) {
             >
               <FileText size={12} />
               <span>{anchor.relativePath}</span>
-              <em>“{anchor.quote}”</em>
+              {anchor.quote?.trim() ? <em>“{anchor.quote}”</em> : null}
             </button>
           ))}
         </div>
@@ -76,7 +111,7 @@ export function InitialUnderstandingLead({ memory, onOpenRevision }: Props) {
         ) : (
           <ul>
             {lead.unknowns.map((item) => (
-              <li key={item}>{item}</li>
+              <li key={item}>{zh(item)}</li>
             ))}
           </ul>
         )}

@@ -7,7 +7,7 @@ import {
   isProgressStepDone,
   type FirstUseProgressStep,
 } from "../lib/onboarding-folder-choice";
-import styles from "../mvp-workbench.module.css";
+import styles from "../workbench-entry.module.css";
 
 type Props = {
   step: FirstUseProgressStep;

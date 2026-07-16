@@ -2,7 +2,7 @@
 
 import { History, X } from "lucide-react";
 import type { RevisionResponse } from "../lib/api";
-import styles from "../mvp-workbench.module.css";
+import styles from "../workbench-entry.module.css";
 
 type Props = {
   revision: RevisionResponse | null;

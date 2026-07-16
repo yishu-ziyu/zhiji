@@ -3,7 +3,11 @@
 import { Check, Edit3, X } from "lucide-react";
 import { useState } from "react";
 import type { UnderstandingBody, UnderstandingRevision } from "../lib/api";
-import styles from "../mvp-workbench.module.css";
+import {
+  humanizeUnderstandingText,
+  isEmptyEventUnderstanding,
+} from "../lib/onboarding-folder-choice";
+import styles from "../workbench-entry.module.css";
 
 type Props = {
   candidate?: UnderstandingRevision;
@@ -49,6 +53,28 @@ export function UnderstandingReviewCard({
     );
   }
 
+  // 空事件 / 英文空话：不当决议，只说明现状
+  if (isEmptyEventUnderstanding(candidate.body)) {
+    return (
+      <section className={styles.reviewCard} aria-labelledby="review-heading">
+        <div className={styles.reviewHeading}>
+          <span>下一步</span>
+          <span className={styles.statusTag}>暂无待办</span>
+        </div>
+        <h2 id="review-heading">还没有可确认的理解</h2>
+        <p className={styles.reviewPreview}>
+          {humanizeUnderstandingText(candidate.body.now.text)}
+        </p>
+        <p>
+          授权夹里放入或修改文件后，再点「再读一遍变化」。空文件夹或未读到的内容不会记成变化。
+        </p>
+        {resolutionMessage && (
+          <div className={styles.resolutionMessage}>{resolutionMessage}</div>
+        )}
+      </section>
+    );
+  }
+
   async function resolve(
     decision: "accept" | "edit_accept" | "reject",
     editedBody?: UnderstandingBody,
@@ -70,6 +96,8 @@ export function UnderstandingReviewCard({
     },
   };
 
+  const preview = humanizeUnderstandingText(candidate.body.now.text);
+
   return (
     <section className={styles.reviewCard} aria-labelledby="review-heading">
       <div className={styles.reviewHeading}>
@@ -79,7 +107,7 @@ export function UnderstandingReviewCard({
         </span>
       </div>
       <h2 id="review-heading">这段理解对吗？</h2>
-      <p className={styles.reviewPreview}>{candidate.body.now.text}</p>
+      <p className={styles.reviewPreview}>{preview}</p>
       {editing ? (
         <div className={styles.editForm}>
           <label>

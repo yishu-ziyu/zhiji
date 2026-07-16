@@ -103,6 +103,43 @@ export function deriveProcessFromMemory(memory: {
   return "observe";
 }
 
+/**
+ * Map durable AnalysisRun + tool receipts → 8-step cursor.
+ * Used so UI follows real agent work, not hand-written phase jumps.
+ */
+export function deriveProcessFromRun(input: {
+  runStatus?: string | null;
+  progressSummary?: string | null;
+  toolNames?: string[];
+  hasCandidate?: boolean;
+  hasAccepted?: boolean;
+}): AgentProcessStepId {
+  if (input.hasAccepted) return "persist";
+  if (
+    input.hasCandidate ||
+    input.runStatus === "awaiting_owner" ||
+    input.runStatus === "confirmation_required"
+  ) {
+    return "owner";
+  }
+  if (input.runStatus === "interrupted" || input.runStatus === "failed") {
+    return "tools";
+  }
+  const tools = input.toolNames ?? [];
+  if (tools.includes("read_revision")) {
+    return input.runStatus === "running" ? "reason" : "evidence";
+  }
+  if (tools.includes("search_text") || tools.includes("search_symbols")) {
+    return "tools";
+  }
+  if (tools.includes("project_map")) return "map";
+  if (input.runStatus === "running" || input.runStatus === "queued") {
+    return "observe";
+  }
+  if (input.progressSummary?.includes("候选")) return "candidate";
+  return "observe";
+}
+
 export function statusesForActive(
   active: AgentProcessStepId,
 ): Record<AgentProcessStepId, AgentProcessStepStatus> {
@@ -135,14 +172,35 @@ export function resolveProcessStatuses(input: {
     head?: { reviewState?: string; acceptedRevisionId?: string | null };
   } | null;
   connected: boolean;
+  /** Live analysis run (preferred over coarse pipelinePhase when present). */
+  run?: {
+    status?: string | null;
+    progressSummary?: string | null;
+  } | null;
+  toolNames?: string[];
 }): {
   active: AgentProcessStepId | null;
   statuses: Record<AgentProcessStepId, AgentProcessStepStatus>;
   caption: string;
 } {
-  const { pipelinePhase, memory, connected } = input;
+  const { pipelinePhase, memory, connected, run, toolNames } = input;
 
   if (pipelinePhase && pipelinePhase !== "idle") {
+    // Prefer real tool progress when receipts already exist mid-pipeline.
+    if (toolNames && toolNames.length > 0 && pipelinePhase === "tools") {
+      const fromRun = deriveProcessFromRun({
+        runStatus: run?.status ?? "running",
+        progressSummary: run?.progressSummary,
+        toolNames,
+        hasCandidate: Boolean(memory?.candidate?.body),
+        hasAccepted: Boolean(memory?.accepted?.body),
+      });
+      return {
+        active: fromRun,
+        statuses: statusesForActive(fromRun),
+        caption: run?.progressSummary?.trim() || "正在打开相关文件…",
+      };
+    }
     if (pipelinePhase === "persist") {
       return {
         active: "persist",
@@ -153,7 +211,7 @@ export function resolveProcessStatuses(input: {
     return {
       active: pipelinePhase,
       statuses: statusesForActive(pipelinePhase),
-      caption: "正在按步骤阅读你的项目",
+      caption: run?.progressSummary?.trim() || "正在按步骤阅读你的项目",
     };
   }
 
@@ -170,6 +228,25 @@ export function resolveProcessStatuses(input: {
       active: "persist",
       statuses: statusesAllDone(),
       caption: "理解已确认；有新变化会再提醒你。",
+    };
+  }
+
+  if (run?.status || (toolNames && toolNames.length > 0)) {
+    const active = deriveProcessFromRun({
+      runStatus: run?.status,
+      progressSummary: run?.progressSummary,
+      toolNames,
+      hasCandidate: Boolean(memory.candidate?.body),
+      hasAccepted: Boolean(memory.accepted?.body),
+    });
+    let caption = run?.progressSummary?.trim() || "进度在这里。";
+    if (active === "owner") {
+      caption = run?.progressSummary?.trim() || "有一段理解等你确认。";
+    }
+    return {
+      active,
+      statuses: statusesForActive(active),
+      caption,
     };
   }
 
