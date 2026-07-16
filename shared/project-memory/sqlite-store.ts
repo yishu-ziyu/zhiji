@@ -384,6 +384,37 @@ export class SqliteProjectMemoryStore
   }
 
   /**
+   * D-50 minimal recent: active local_folder grants, newest first.
+   * Used by connections GET for Continue; does not invent UI project lists.
+   */
+  listActiveLocalFolderGrants(): SourceGrant[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM source_grants
+         WHERE status = 'active' AND kind = 'local_folder'
+         ORDER BY updated_at DESC`,
+      )
+      .all() as Array<{
+      id: string;
+      project_id: string;
+      kind: string;
+      root_path: string;
+      status: string;
+      created_at: string;
+      updated_at: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      projectId: row.project_id,
+      kind: row.kind as SourceGrant["kind"],
+      rootPath: row.root_path,
+      status: row.status as SourceGrant["status"],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  /**
    * Write boundary: grant must exist under projectId and be active.
    * Missing, foreign (other project), disabled, or revoked → reject.
    */

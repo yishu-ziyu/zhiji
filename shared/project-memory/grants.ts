@@ -162,6 +162,12 @@ function latestGrantPaths(events: ChangeEvent[], grantId: string): Set<string> {
 
 export function normalizeWatchPathPrefix(value: string): string {
   const prefix = value.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  // D-50 root sentinel: entire authorized folder (with excludes).
+  if (prefix === "." || prefix === "") {
+    if (value.trim() === "." || value.trim() === "./") {
+      return ".";
+    }
+  }
   const normalized = prefix.replace(/\/+$/, "");
   if (
     !normalized ||
@@ -186,6 +192,10 @@ function normalizeWatchPrefixes(values: string[] | undefined, required: boolean)
 }
 
 function pathMatchesPrefix(relativePath: string, prefix: string): boolean {
+  // Root sentinel matches every relative path under the grant root.
+  if (prefix === ".") {
+    return relativePath.length > 0 && !relativePath.startsWith("/");
+  }
   return relativePath === prefix || relativePath.startsWith(`${prefix}/`);
 }
 
