@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addCard, listCards } from "@/shared/knowledge/repository";
 import type { KnowledgeSource } from "@/shared/types/knowledge";
+import {
+  ProjectScopeError,
+  requireProjectId,
+} from "@/shared/knowledge/project-scope";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,13 +17,14 @@ export async function POST(req: NextRequest) {
       projectId?: string;
     };
 
+    const projectId = requireProjectId(body.projectId);
     const card = addCard({
       content: body.content ?? "",
       source: body.source,
       tags: body.tags,
       title: body.title,
       links: body.links,
-      projectId: body.projectId,
+      projectId,
     });
 
     return NextResponse.json({ card }, { status: 201 });
@@ -28,12 +33,26 @@ export async function POST(req: NextRequest) {
       {
         error: error instanceof Error ? error.message : "保存失败",
       },
-      { status: 400 },
+      { status: error instanceof ProjectScopeError ? 400 : 400 },
     );
   }
 }
 
 export async function GET(req: NextRequest) {
-  const projectId = req.nextUrl.searchParams.get("projectId") ?? undefined;
-  return NextResponse.json({ cards: listCards({ projectId }) });
+  try {
+    const projectId = requireProjectId(
+      req.nextUrl.searchParams.get("projectId"),
+    );
+    return NextResponse.json({
+      cards: listCards({ projectId }),
+      projectId,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "读取失败",
+      },
+      { status: 400 },
+    );
+  }
 }

@@ -7,6 +7,7 @@ import {
 import { addActions } from "@/shared/knowledge/repository";
 import { invokeKnowledgeMcpTool } from "@/shared/knowledge/mcp-tools";
 import type { ActionItem, DissectResult } from "@/shared/types/knowledge";
+import { requireProjectId } from "@/shared/knowledge/project-scope";
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,6 +16,7 @@ export async function POST(req: NextRequest) {
     if (!goal) {
       return NextResponse.json({ error: "goal 不能为空" }, { status: 400 });
     }
+    const projectId = requireProjectId(body.projectId);
 
     try {
       const raw = await complete(
@@ -40,14 +42,14 @@ export async function POST(req: NextRequest) {
             assignee: a.assignee,
             deadline: a.deadline,
             verificationCriteria: a.verificationCriteria,
-            projectId: body.projectId,
+            projectId,
           })),
       );
 
       if (actionItems.length === 0) {
         const fallback = invokeKnowledgeMcpTool("dissect_task", {
           goal,
-          projectId: body.projectId,
+          projectId: projectId,
         });
         return NextResponse.json(fallback.result as DissectResult);
       }
@@ -60,7 +62,7 @@ export async function POST(req: NextRequest) {
     } catch {
       const fallback = invokeKnowledgeMcpTool("dissect_task", {
         goal,
-        projectId: body.projectId,
+        projectId: projectId,
       });
       if (!fallback.ok) {
         return NextResponse.json(
