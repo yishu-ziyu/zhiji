@@ -1,109 +1,158 @@
 /**
- * Pure Project Memory state transitions (understanding resolution + review).
- * No I/O — sqlite-store applies results transactionally.
+ * Pure Project Memory transitions (immutable revisions + head moves).
+ * Never mutates UnderstandingRevision rows in place — callers INSERT + move head.
  */
+import { randomUUID } from "node:crypto";
 import type {
+  MatterUnderstandingHead,
   OwnerResolution,
   UnderstandingBody,
   UnderstandingRevision,
+  WhyClaim,
 } from "./types";
 
-export type ResolveTransition = {
-  resolved: UnderstandingRevision;
-  supersededIds: string[];
+export type OwnerResolvePlan = {
+  /** New accepted revision to INSERT (accept/edit_accept only). */
+  acceptedToInsert?: UnderstandingRevision;
+  /** Candidate row is left unchanged forever. */
+  candidateId: string;
+  resolution: OwnerResolution;
+  nextHead: MatterUnderstandingHead;
 };
 
 /**
- * Apply Owner resolution to a candidate understanding.
- * Agent self-accept is rejected by caller (actor check); this only models Owner.
+ * Plan Owner resolution without UPDATE of candidate/accepted bodies.
+ * accept/edit_accept → new accepted revision; reject → head unchanged, resolution only.
  */
-export function applyOwnerResolution(input: {
+export function planOwnerResolution(input: {
   candidate: UnderstandingRevision;
   resolution: OwnerResolution;
-  /** Currently accepted revisions for this matter (to supersede on accept). */
-  currentlyAccepted: UnderstandingRevision[];
+  currentHead: MatterUnderstandingHead;
   nowIso?: string;
-}): ResolveTransition {
-  const { candidate, resolution, currentlyAccepted } = input;
+}): OwnerResolvePlan {
+  const { candidate, resolution, currentHead } = input;
   if (resolution.actor !== "owner") {
     throw new Error("only owner may resolve understanding");
   }
-  if (candidate.status !== "candidate" && candidate.status !== "review_needed") {
-    throw new Error(
-      `cannot resolve understanding in status ${candidate.status}`,
-    );
+  if (candidate.kind !== "candidate") {
+    throw new Error("can only resolve a candidate revision");
   }
-  if (resolution.understandingRevisionId !== candidate.id) {
+  if (resolution.candidateRevisionId !== candidate.id) {
     throw new Error("resolution target mismatch");
   }
 
-  const now = input.nowIso ?? new Date().toISOString();
+  const now = input.nowIso ?? resolution.createdAt ?? new Date().toISOString();
+
+  if (resolution.decision === "reject") {
+    return {
+      candidateId: candidate.id,
+      resolution: { ...resolution },
+      nextHead: { ...currentHead, updatedAt: now },
+    };
+  }
+
   const body: UnderstandingBody =
     resolution.decision === "edit_accept" && resolution.editedBody
       ? resolution.editedBody
       : candidate.body;
 
-  if (resolution.decision === "reject") {
-    return {
-      resolved: {
-        ...candidate,
-        status: "rejected",
-        resolvedAt: now,
-        resolvedBy: "owner",
-      },
-      supersededIds: [],
-    };
-  }
+  const acceptedId = randomUUID();
+  const accepted: UnderstandingRevision = {
+    id: acceptedId,
+    projectId: candidate.projectId,
+    matterId: candidate.matterId,
+    kind: "accepted",
+    previousAcceptedRevisionId: currentHead.acceptedRevisionId,
+    body,
+    basedOnEventIds: [...candidate.basedOnEventIds],
+    proposedBy: resolution.decision === "edit_accept" ? "owner" : candidate.proposedBy,
+    createdAt: now,
+  };
 
-  // accept | edit_accept
-  const supersededIds = currentlyAccepted
-    .filter((r) => r.id !== candidate.id)
-    .map((r) => r.id);
+  const resolutionOut: OwnerResolution = {
+    ...resolution,
+    acceptedRevisionId: acceptedId,
+  };
+
+  const nextHead: MatterUnderstandingHead = {
+    matterId: candidate.matterId,
+    acceptedRevisionId: acceptedId,
+    reviewState: "current",
+    reviewReasonEventIds: [],
+    updatedAt: now,
+  };
 
   return {
-    resolved: {
-      ...candidate,
-      body,
-      status: "accepted",
-      previousRevisionId:
-        candidate.previousRevisionId ??
-        currentlyAccepted.find((r) => r.status === "accepted")?.id,
-      resolvedAt: now,
-      resolvedBy: "owner",
-    },
-    supersededIds,
+    acceptedToInsert: accepted,
+    candidateId: candidate.id,
+    resolution: resolutionOut,
+    nextHead,
   };
 }
 
 /**
- * When a path gains a new non-tombstone revision, accepted understandings
- * that cited the prior revision become review_needed (body and old ids kept).
+ * When accepted evidence revision is replaced by a newer original, only head moves
+ * to review_needed — accepted UnderstandingRevision rows stay immutable.
  */
-export function markReviewNeededForEvidenceChange(input: {
-  accepted: UnderstandingRevision[];
-  /** Prior revision ids that are no longer the tip for their path. */
+export function planHeadReviewNeeded(input: {
+  head: MatterUnderstandingHead;
+  accepted: UnderstandingRevision | null;
   replacedRevisionIds: string[];
-}): UnderstandingRevision[] {
+  reasonEventId?: string;
+  nowIso?: string;
+}): MatterUnderstandingHead | null {
+  if (!input.accepted || !input.head.acceptedRevisionId) return null;
+  if (input.accepted.id !== input.head.acceptedRevisionId) return null;
   const replaced = new Set(input.replacedRevisionIds);
-  if (replaced.size === 0) return [];
-  return input.accepted
-    .filter((u) => u.status === "accepted")
-    .filter((u) =>
-      u.body.evidenceRevisionIds.some((id) => replaced.has(id)),
-    )
-    .map((u) => ({
-      ...u,
-      status: "review_needed" as const,
-    }));
+  if (replaced.size === 0) return null;
+  const cites = input.accepted.body.evidenceRevisionIds.some((id) =>
+    replaced.has(id),
+  );
+  if (!cites) return null;
+
+  const reasonIds = [...input.head.reviewReasonEventIds];
+  if (input.reasonEventId && !reasonIds.includes(input.reasonEventId)) {
+    reasonIds.push(input.reasonEventId);
+  }
+  return {
+    ...input.head,
+    reviewState: "review_needed",
+    reviewReasonEventIds: reasonIds,
+    updatedAt: input.nowIso ?? new Date().toISOString(),
+  };
 }
 
-/** Default honest why when no citable source sentence exists. */
 export const HONEST_WHY_DEFAULT = "原因尚无可核对依据";
 
 export function ensureHonestWhy(body: UnderstandingBody): UnderstandingBody {
-  const why = body.why?.trim();
-  if (!why) {
-    return { ...body, why: HONEST_WHY_DEFAULT };
+  const why: WhyClaim[] = body.why.map((w) => {
+    if (w.status === "supported" && (!w.evidence.length || w.evidence.some((e) => !e.quote.trim()))) {
+      return {
+        text: w.text.trim() || HONEST_WHY_DEFAULT,
+        status: "unknown" as const,
+        evidence: w.evidence.filter((e) => e.quote.trim()),
+      };
+    }
+    if (!w.text.trim() && w.status !== "supported") {
+      return { ...w, text: HONEST_WHY_DEFAULT, status: "unknown" as const };
+    }
+    return w;
+  });
+  if (why.length === 0) {
+    why.push({
+      text: HONEST_WHY_DEFAULT,
+      status: "unknown",
+      evidence: [],
+    });
   }
-  return body;
+  return { ...body, why };
+}
+
+/** Agent service must not expose OwnerDecisionWriter. */
+export function assertAgentServiceShape(service: object): void {
+  if ("resolveCandidate" in service || "resolve" in service) {
+    throw new Error(
+      "AgentMemoryService must not expose OwnerDecisionWriter methods",
+    );
+  }
 }

@@ -1,6 +1,6 @@
 /**
- * MVP-V0 Task 2: Project Memory domain contract (PRD §4).
- * Truth layer types only — no UI/API/observer.
+ * MVP-V0 Task 2: Project Memory domain contract (PRD §4, Lead amendment).
+ * Immutable understanding revisions; head moves; split writer ports.
  */
 
 export type SourceGrant = {
@@ -56,11 +56,52 @@ export type Matter = {
   updatedAt: string;
 };
 
+/** Owner-visible explicit path prefixes; never silent full-root. */
+export type MatterWatchSet = {
+  id: string;
+  projectId: string;
+  matterId: string;
+  grantId: string;
+  includePathPrefixes: string[];
+  excludePathPrefixes: string[];
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EvidenceAnchor = {
+  revisionId: string;
+  relativePath: string;
+  /** Exact source span; empty forbidden for a supported claim. */
+  quote: string;
+  lastVerifiedAt: string;
+};
+
+export type StateClaim = {
+  text: string;
+  evidence: EvidenceAnchor[];
+  gaps: string[];
+  conflicts: string[];
+};
+
+export type ChangeClaim = {
+  before: string;
+  after: string;
+  eventIds: string[];
+  evidence: EvidenceAnchor[];
+};
+
+export type WhyClaim = {
+  text: string;
+  status: "supported" | "unknown" | "conflicted";
+  evidence: EvidenceAnchor[];
+};
+
 export type UnderstandingBody = {
-  now: string;
-  then: string;
-  changed: string[];
-  why: string;
+  now: StateClaim;
+  then: StateClaim & { at: string };
+  changed: ChangeClaim[];
+  why: WhyClaim[];
   depends: Array<{
     kind: "matter" | "action" | "evidence";
     id: string;
@@ -70,32 +111,40 @@ export type UnderstandingBody = {
   nextDecision: string;
 };
 
+/**
+ * Immutable understanding row. Never UPDATE body/kind after insert.
+ * kind is fixed at creation: candidate | accepted.
+ */
 export type UnderstandingRevision = {
   id: string;
   projectId: string;
   matterId: string;
-  previousRevisionId?: string;
+  kind: "candidate" | "accepted";
+  previousAcceptedRevisionId?: string;
   body: UnderstandingBody;
   basedOnEventIds: string[];
-  status:
-    | "candidate"
-    | "accepted"
-    | "rejected"
-    | "superseded"
-    | "review_needed";
   proposedBy: "agent" | "owner";
   createdAt: string;
-  resolvedAt?: string;
-  resolvedBy?: "owner";
 };
 
 export type OwnerResolution = {
   id: string;
-  understandingRevisionId: string;
+  candidateRevisionId: string;
   decision: "accept" | "edit_accept" | "reject";
   editedBody?: UnderstandingBody;
   actor: "owner";
   createdAt: string;
+  /** Set only for accept/edit_accept. */
+  acceptedRevisionId?: string;
+};
+
+/** Mutable pointer only — not an understanding body. */
+export type MatterUnderstandingHead = {
+  matterId: string;
+  acceptedRevisionId?: string;
+  reviewState: "current" | "review_needed";
+  reviewReasonEventIds: string[];
+  updatedAt: string;
 };
 
 export type AnalysisRun = {
@@ -118,19 +167,18 @@ export type ObservationSignal = {
   kind: ChangeKind;
   relativePath: string;
   previousPath?: string;
-  /** Required for added/modified/reconciled when creating a non-tombstone revision. */
   content?: Uint8Array;
   observedAt: string;
-  /** Optional override; default derived for content-addressed idempotency. */
   dedupeKey?: string;
 };
 
 export type MatterState = {
   matter: Matter;
+  head: MatterUnderstandingHead;
   accepted?: UnderstandingRevision;
   candidate?: UnderstandingRevision;
   recentEvents: ChangeEvent[];
-  reviewNeeded: UnderstandingRevision[];
+  watchSet?: MatterWatchSet;
 };
 
 export type MatterStateReconstructionInput = {
@@ -151,19 +199,39 @@ export interface ObservationAdapter {
   reconcile(grant: SourceGrant): Promise<ObservationSignal[]>;
 }
 
-export interface ProjectMemoryStore {
-  ingest(
-    signal: ObservationSignal,
-  ): Promise<{ event?: ChangeEvent; revision?: OriginalRevision }>;
+export interface ProjectMemoryReader {
   readRevision(id: string): Promise<Uint8Array | null>;
   listEvents(projectId: string, after?: string): Promise<ChangeEvent[]>;
   getMatterState(projectId: string, matterId: string): Promise<MatterState>;
+}
+
+export interface ObservationWriter {
+  ingest(
+    signal: ObservationSignal,
+  ): Promise<{ event?: ChangeEvent; revision?: OriginalRevision }>;
+}
+
+export interface CandidateWriter {
   saveCandidate(
     run: AnalysisRun,
     body: UnderstandingBody,
   ): Promise<UnderstandingRevision>;
-  resolve(input: OwnerResolution): Promise<UnderstandingRevision>;
 }
+
+/** Never inject into AgentModelLoop or background AnalysisRun services. */
+export interface OwnerDecisionWriter {
+  resolveCandidate(input: OwnerResolution): Promise<{
+    resolution: OwnerResolution;
+    accepted?: UnderstandingRevision;
+    head: MatterUnderstandingHead;
+  }>;
+}
+
+/**
+ * Agent-facing surface: read + propose candidates only.
+ * Must not include OwnerDecisionWriter.
+ */
+export type AgentMemoryService = ProjectMemoryReader & CandidateWriter;
 
 export interface AgentModelLoop {
   propose(input: MatterStateReconstructionInput): Promise<UnderstandingBody>;

@@ -1,7 +1,7 @@
 /**
- * ProjectMemoryStore: SQLite metadata + CAS originals.
- * Write order: CAS temp→fsync→rename, then SQLite transaction for revision/event/outbox.
- * Orphan blobs OK; events must never reference missing blobs.
+ * Project Memory store: SQLite metadata + CAS originals.
+ * Split ports: Reader / ObservationWriter / CandidateWriter / OwnerDecisionWriter.
+ * Understanding revisions are immutable; head pointer moves.
  */
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -9,20 +9,26 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ContentAddressedStore, sha256Hex } from "./cas";
 import {
-  applyOwnerResolution,
   ensureHonestWhy,
-  markReviewNeededForEvidenceChange,
+  planHeadReviewNeeded,
+  planOwnerResolution,
 } from "./reducer";
 import type {
+  AgentMemoryService,
   AnalysisRun,
+  CandidateWriter,
   ChangeEvent,
   ChangeKind,
   Matter,
   MatterState,
+  MatterUnderstandingHead,
+  MatterWatchSet,
   ObservationSignal,
+  ObservationWriter,
   OriginalRevision,
+  OwnerDecisionWriter,
   OwnerResolution,
-  ProjectMemoryStore,
+  ProjectMemoryReader,
   SourceGrant,
   UnderstandingBody,
   UnderstandingRevision,
@@ -30,11 +36,8 @@ import type {
 import { revisionIdFromSha256, sha256FromRevisionId } from "./types";
 
 export type SqliteProjectMemoryOptions = {
-  /** Directory holding project-memory.sqlite and cas/ */
   dataDir: string;
-  /** Optional CAS root override (default dataDir/cas). */
   casDir?: string;
-  /** Test hook: replace CAS put to simulate write failure after call site. */
   cas?: ContentAddressedStore;
 };
 
@@ -67,14 +70,20 @@ type UnderstandingRow = {
   id: string;
   project_id: string;
   matter_id: string;
-  previous_revision_id: string | null;
+  kind: string;
+  previous_accepted_revision_id: string | null;
   body_json: string;
   based_on_event_ids_json: string;
-  status: string;
   proposed_by: string;
   created_at: string;
-  resolved_at: string | null;
-  resolved_by: string | null;
+};
+
+type HeadRow = {
+  matter_id: string;
+  accepted_revision_id: string | null;
+  review_state: string;
+  review_reason_event_ids_json: string;
+  updated_at: string;
 };
 
 function payloadHash(kind: string, aggregateId: string, payload: unknown): string {
@@ -87,7 +96,10 @@ function payloadHash(kind: string, aggregateId: string, payload: unknown): strin
     .digest("hex");
 }
 
-export function defaultDedupeKey(signal: ObservationSignal, tipSha?: string): string {
+export function defaultDedupeKey(
+  signal: ObservationSignal,
+  tipSha?: string,
+): string {
   if (signal.dedupeKey?.trim()) return signal.dedupeKey.trim();
   const pathKey = signal.relativePath.replace(/\\/g, "/");
   if (signal.kind === "deleted") {
@@ -100,8 +112,7 @@ export function defaultDedupeKey(signal: ObservationSignal, tipSha?: string): st
     ].join("|");
   }
   const sha =
-    tipSha ??
-    (signal.content ? sha256Hex(signal.content) : "empty");
+    tipSha ?? (signal.content ? sha256Hex(signal.content) : "empty");
   return [
     signal.projectId,
     signal.grantId,
@@ -112,7 +123,16 @@ export function defaultDedupeKey(signal: ObservationSignal, tipSha?: string): st
   ].join("|");
 }
 
-export class SqliteProjectMemoryStore implements ProjectMemoryStore {
+/**
+ * Full store implementing all ports. Use asAgentMemoryService() for agent surface.
+ */
+export class SqliteProjectMemoryStore
+  implements
+    ProjectMemoryReader,
+    ObservationWriter,
+    CandidateWriter,
+    OwnerDecisionWriter
+{
   readonly dbPath: string;
   readonly cas: ContentAddressedStore;
   private readonly db: DatabaseSync;
@@ -122,7 +142,9 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
     this.dbPath = path.join(options.dataDir, "project-memory.sqlite");
     this.cas =
       options.cas ??
-      new ContentAddressedStore(options.casDir ?? path.join(options.dataDir, "cas"));
+      new ContentAddressedStore(
+        options.casDir ?? path.join(options.dataDir, "cas"),
+      );
     this.db = new DatabaseSync(this.dbPath);
     this.db.exec(`
       PRAGMA journal_mode = WAL;
@@ -134,6 +156,19 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Agent-facing: Reader + CandidateWriter only (no resolve). */
+  asAgentMemoryService(): AgentMemoryService {
+    const self = this;
+    const agent: AgentMemoryService = {
+      readRevision: (id) => self.readRevision(id),
+      listEvents: (projectId, after) => self.listEvents(projectId, after),
+      getMatterState: (projectId, matterId) =>
+        self.getMatterState(projectId, matterId),
+      saveCandidate: (run, body) => self.saveCandidate(run, body),
+    };
+    return agent;
   }
 
   private migrate(): void {
@@ -185,27 +220,47 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS matter_watch_sets (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        matter_id TEXT NOT NULL,
+        grant_id TEXT NOT NULL,
+        include_path_prefixes_json TEXT NOT NULL,
+        exclude_path_prefixes_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(project_id, matter_id, grant_id)
+      );
+
       CREATE TABLE IF NOT EXISTS understanding_revisions (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL,
         matter_id TEXT NOT NULL,
-        previous_revision_id TEXT,
+        kind TEXT NOT NULL,
+        previous_accepted_revision_id TEXT,
         body_json TEXT NOT NULL,
         based_on_event_ids_json TEXT NOT NULL,
-        status TEXT NOT NULL,
         proposed_by TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        resolved_at TEXT,
-        resolved_by TEXT
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS matter_understanding_heads (
+        matter_id TEXT PRIMARY KEY,
+        accepted_revision_id TEXT,
+        review_state TEXT NOT NULL,
+        review_reason_event_ids_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS owner_resolutions (
         id TEXT PRIMARY KEY,
-        understanding_revision_id TEXT NOT NULL,
+        candidate_revision_id TEXT NOT NULL,
         decision TEXT NOT NULL,
         edited_body_json TEXT,
         actor TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        accepted_revision_id TEXT
       );
 
       CREATE TABLE IF NOT EXISTS analysis_runs (
@@ -240,7 +295,6 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
     `);
   }
 
-  /** Test / grant helper — not on ProjectMemoryStore port. */
   upsertGrant(grant: SourceGrant): void {
     this.db
       .prepare(
@@ -263,7 +317,6 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       );
   }
 
-  /** Test helper. */
   upsertMatter(matter: Matter): void {
     this.db
       .prepare(
@@ -283,6 +336,44 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
         matter.status,
         matter.createdAt,
         matter.updatedAt,
+      );
+    // Ensure head row exists
+    const head = this.getHead(matter.id);
+    if (!head) {
+      this.putHead({
+        matterId: matter.id,
+        reviewState: "current",
+        reviewReasonEventIds: [],
+        updatedAt: matter.createdAt,
+      });
+    }
+  }
+
+  upsertWatchSet(watch: MatterWatchSet): void {
+    if (!watch.includePathPrefixes.length) {
+      throw new Error("MatterWatchSet requires at least one includePathPrefix");
+    }
+    this.db
+      .prepare(
+        `INSERT INTO matter_watch_sets
+         (id, project_id, matter_id, grant_id, include_path_prefixes_json, exclude_path_prefixes_json, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(project_id, matter_id, grant_id) DO UPDATE SET
+           include_path_prefixes_json=excluded.include_path_prefixes_json,
+           exclude_path_prefixes_json=excluded.exclude_path_prefixes_json,
+           status=excluded.status,
+           updated_at=excluded.updated_at`,
+      )
+      .run(
+        watch.id,
+        watch.projectId,
+        watch.matterId,
+        watch.grantId,
+        JSON.stringify(watch.includePathPrefixes),
+        JSON.stringify(watch.excludePathPrefixes),
+        watch.status,
+        watch.createdAt,
+        watch.updatedAt,
       );
   }
 
@@ -320,15 +411,54 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       id: row.id,
       projectId: row.project_id,
       matterId: row.matter_id,
-      previousRevisionId: row.previous_revision_id ?? undefined,
+      kind: row.kind as "candidate" | "accepted",
+      previousAcceptedRevisionId:
+        row.previous_accepted_revision_id ?? undefined,
       body: JSON.parse(row.body_json) as UnderstandingBody,
       basedOnEventIds: JSON.parse(row.based_on_event_ids_json) as string[],
-      status: row.status as UnderstandingRevision["status"],
       proposedBy: row.proposed_by as "agent" | "owner",
       createdAt: row.created_at,
-      resolvedAt: row.resolved_at ?? undefined,
-      resolvedBy: (row.resolved_by as "owner" | undefined) ?? undefined,
     };
+  }
+
+  private mapHead(row: HeadRow): MatterUnderstandingHead {
+    return {
+      matterId: row.matter_id,
+      acceptedRevisionId: row.accepted_revision_id ?? undefined,
+      reviewState: row.review_state as "current" | "review_needed",
+      reviewReasonEventIds: JSON.parse(
+        row.review_reason_event_ids_json,
+      ) as string[],
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private getHead(matterId: string): MatterUnderstandingHead | null {
+    const row = this.db
+      .prepare(`SELECT * FROM matter_understanding_heads WHERE matter_id = ?`)
+      .get(matterId) as HeadRow | undefined;
+    return row ? this.mapHead(row) : null;
+  }
+
+  private putHead(head: MatterUnderstandingHead): void {
+    this.db
+      .prepare(
+        `INSERT INTO matter_understanding_heads
+         (matter_id, accepted_revision_id, review_state, review_reason_event_ids_json, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(matter_id) DO UPDATE SET
+           accepted_revision_id=excluded.accepted_revision_id,
+           review_state=excluded.review_state,
+           review_reason_event_ids_json=excluded.review_reason_event_ids_json,
+           updated_at=excluded.updated_at`,
+      )
+      .run(
+        head.matterId,
+        head.acceptedRevisionId ?? null,
+        head.reviewState,
+        JSON.stringify(head.reviewReasonEventIds),
+        head.updatedAt,
+      );
   }
 
   private latestTip(
@@ -361,6 +491,13 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
     return row ? this.mapRevision(row) : null;
   }
 
+  private getUnderstanding(id: string): UnderstandingRevision | null {
+    const row = this.db
+      .prepare(`SELECT * FROM understanding_revisions WHERE id = ?`)
+      .get(id) as UnderstandingRow | undefined;
+    return row ? this.mapUnderstanding(row) : null;
+  }
+
   private insertOutbox(
     kind: string,
     aggregateId: string,
@@ -383,36 +520,74 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       );
   }
 
-  private markReviewNeededInTx(
+  private insertUnderstanding(u: UnderstandingRevision): void {
+    this.db
+      .prepare(
+        `INSERT INTO understanding_revisions
+         (id, project_id, matter_id, kind, previous_accepted_revision_id, body_json, based_on_event_ids_json, proposed_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        u.id,
+        u.projectId,
+        u.matterId,
+        u.kind,
+        u.previousAcceptedRevisionId ?? null,
+        JSON.stringify(u.body),
+        JSON.stringify(u.basedOnEventIds),
+        u.proposedBy,
+        u.createdAt,
+      );
+  }
+
+  private markHeadsReviewNeeded(
     projectId: string,
     replacedRevisionIds: string[],
+    reasonEventId: string,
   ): void {
-    if (replacedRevisionIds.length === 0) return;
-    const accepted = (
-      this.db
-        .prepare(
-          `SELECT * FROM understanding_revisions
-           WHERE project_id = ? AND status = 'accepted'`,
-        )
-        .all(projectId) as UnderstandingRow[]
-    ).map((r) => this.mapUnderstanding(r));
+    if (!replacedRevisionIds.length) return;
+    const heads = this.db
+      .prepare(`SELECT * FROM matter_understanding_heads`)
+      .all() as HeadRow[];
+    for (const hrow of heads) {
+      const head = this.mapHead(hrow);
+      if (!head.acceptedRevisionId) continue;
+      const accepted = this.getUnderstanding(head.acceptedRevisionId);
+      if (!accepted || accepted.projectId !== projectId) continue;
+      const next = planHeadReviewNeeded({
+        head,
+        accepted,
+        replacedRevisionIds,
+        reasonEventId,
+      });
+      if (next) {
+        this.putHead(next);
+        this.insertOutbox(
+          "understanding_head_review_needed",
+          head.matterId,
+          { replacedRevisionIds, reasonEventId },
+          next.updatedAt,
+        );
+      }
+    }
+  }
 
-    const toMark = markReviewNeededForEvidenceChange({
-      accepted,
-      replacedRevisionIds,
-    });
-    for (const u of toMark) {
-      this.db
-        .prepare(
-          `UPDATE understanding_revisions SET status = 'review_needed' WHERE id = ?`,
-        )
-        .run(u.id);
-      this.insertOutbox(
-        "understanding_review_needed",
-        u.id,
-        { replacedRevisionIds },
-        new Date().toISOString(),
-      );
+  private validateEvidence(body: UnderstandingBody, projectId: string): void {
+    for (const rid of body.evidenceRevisionIds) {
+      const rev = this.getRevision(rid);
+      if (!rev || rev.projectId !== projectId) {
+        throw new Error(`evidence revision missing or foreign: ${rid}`);
+      }
+    }
+    for (const claim of [body.now, body.then, ...body.changed, ...body.why]) {
+      const anchors =
+        "evidence" in claim ? claim.evidence : ([] as { revisionId: string }[]);
+      for (const a of anchors) {
+        const rev = this.getRevision(a.revisionId);
+        if (!rev || rev.projectId !== projectId) {
+          throw new Error(`anchor revision missing or foreign: ${a.revisionId}`);
+        }
+      }
     }
   }
 
@@ -420,7 +595,11 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
     signal: ObservationSignal,
   ): Promise<{ event?: ChangeEvent; revision?: OriginalRevision }> {
     const relativePath = signal.relativePath.replace(/\\/g, "/");
-    if (!relativePath || relativePath.startsWith("/") || relativePath.includes("..")) {
+    if (
+      !relativePath ||
+      relativePath.startsWith("/") ||
+      relativePath.includes("..")
+    ) {
       throw new Error("relativePath invalid");
     }
 
@@ -434,15 +613,12 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       throw new Error("content required for non-delete observation");
     }
 
-    // CAS first — if this throws, SQLite must not gain revision/event.
     const casResult = this.cas.put(signal.content);
-    const revId = revisionIdFromSha256(casResult.sha256);
-
-    // Integrity: blob must exist before SQL.
     if (!this.cas.has(casResult.sha256)) {
       throw new Error("CAS write missing after put");
     }
 
+    const revId = revisionIdFromSha256(casResult.sha256);
     const dedupeKey = defaultDedupeKey(
       { ...signal, relativePath },
       casResult.sha256,
@@ -455,16 +631,17 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       return { event: existing, revision: rev ?? undefined };
     }
 
-    // Same tip sha (non-tombstone) → treat as idempotent no-op even if kind differs.
-    if (
-      tip &&
-      !tip.tombstone &&
-      tip.sha256 === casResult.sha256
-    ) {
+    if (tip && !tip.tombstone && tip.sha256 === casResult.sha256) {
       return { revision: tip };
     }
 
-    const beforeId = tip && !tip.tombstone ? tip.id : tip?.tombstone ? tip.previousRevisionId : undefined;
+    const beforeId =
+      tip && !tip.tombstone
+        ? tip.id
+        : tip?.tombstone
+          ? tip.previousRevisionId
+          : undefined;
+
     const revision: OriginalRevision = {
       id: revId,
       projectId: signal.projectId,
@@ -547,7 +724,7 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       );
 
       if (beforeId) {
-        this.markReviewNeededInTx(signal.projectId, [beforeId]);
+        this.markHeadsReviewNeeded(signal.projectId, [beforeId], event.id);
       }
 
       this.db.exec("COMMIT");
@@ -565,7 +742,6 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
     tip: OriginalRevision | null,
   ): { event?: ChangeEvent; revision?: OriginalRevision } {
     if (!tip || tip.tombstone) {
-      // Nothing to delete / already deleted — idempotent empty.
       const dedupeKey = defaultDedupeKey(
         { ...signal, relativePath },
         tip?.sha256,
@@ -582,7 +758,6 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       return {};
     }
 
-    // Keep last blob; tombstone revision reuses last sha for addressing history.
     const lastLiveId = tip.id;
     const lastSha = tip.sha256;
     if (!this.cas.has(lastSha)) {
@@ -603,28 +778,18 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       };
     }
 
-    // Tombstone revision id is distinct: sha256 of "tombstone:" + lastSha + path + time
     const tombstoneMaterial = new TextEncoder().encode(
       `tombstone:${lastSha}:${relativePath}:${signal.observedAt}`,
     );
-    // Do NOT put tombstone material as content blob for file bytes — tombstone points at last live sha for read of prior content.
-    // Store a meta-only revision row with same sha256 as last live (content still readable) and tombstone=1.
-    // UNIQUE(project, grant, path, sha256, tombstone) allows same sha with tombstone 0 and 1.
-    const tombstoneId = revisionIdFromSha256(
-      sha256Hex(tombstoneMaterial),
-    );
-    // Ensure tombstone id blob can exist as empty marker? PRD: event must not point missing blob.
-    // afterRevisionId for delete = tombstone revision; readRevision should return last live bytes.
-    // Put empty marker under tombstone hash so has() is true for tombstone id's sha, OR use lastSha as id.
-    // Spec: OriginalRevision.id = sha256:<hex> of content. Tombstone is not content — use synthetic id and store lastSha field.
     this.cas.put(tombstoneMaterial);
+    const tombstoneId = revisionIdFromSha256(sha256Hex(tombstoneMaterial));
 
     const revision: OriginalRevision = {
       id: tombstoneId,
       projectId: signal.projectId,
       grantId: signal.grantId,
       relativePath,
-      sha256: lastSha, // content address of last live bytes
+      sha256: lastSha,
       sizeBytes: tip.sizeBytes,
       observedAt: signal.observedAt,
       previousRevisionId: lastLiveId,
@@ -689,7 +854,7 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
         signal.observedAt,
       );
 
-      this.markReviewNeededInTx(signal.projectId, [lastLiveId]);
+      this.markHeadsReviewNeeded(signal.projectId, [lastLiveId], event.id);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -702,10 +867,8 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
   async readRevision(id: string): Promise<Uint8Array | null> {
     const rev = this.getRevision(id);
     if (!rev) return null;
-    // For tombstone, return last live content by sha256 field (preserved blob).
     const bytes = this.cas.read(rev.sha256);
     if (bytes) return bytes;
-    // Fallback: if id itself is content hash
     return this.cas.read(sha256FromRevisionId(id));
   }
 
@@ -759,28 +922,76 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       updatedAt: mrow.updated_at,
     };
 
-    const urows = this.db
+    let head = this.getHead(matterId);
+    if (!head) {
+      head = {
+        matterId,
+        reviewState: "current",
+        reviewReasonEventIds: [],
+        updatedAt: matter.createdAt,
+      };
+      this.putHead(head);
+    }
+
+    const accepted = head.acceptedRevisionId
+      ? this.getUnderstanding(head.acceptedRevisionId) ?? undefined
+      : undefined;
+
+    const candRow = this.db
       .prepare(
         `SELECT * FROM understanding_revisions
-         WHERE project_id = ? AND matter_id = ?
-         ORDER BY created_at DESC, rowid DESC`,
+         WHERE project_id = ? AND matter_id = ? AND kind = 'candidate'
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT 1`,
       )
-      .all(projectId, matterId) as UnderstandingRow[];
-    const understandings = urows.map((r) => this.mapUnderstanding(r));
+      .get(projectId, matterId) as UnderstandingRow | undefined;
+    const candidate = candRow ? this.mapUnderstanding(candRow) : undefined;
 
-    const accepted = understandings.find((u) => u.status === "accepted");
-    const candidate = understandings.find((u) => u.status === "candidate");
-    const reviewNeeded = understandings.filter(
-      (u) => u.status === "review_needed",
-    );
-    const recentEvents = (await this.listEvents(projectId)).slice(-50);
+    const wrow = this.db
+      .prepare(
+        `SELECT * FROM matter_watch_sets
+         WHERE project_id = ? AND matter_id = ?
+         ORDER BY updated_at DESC LIMIT 1`,
+      )
+      .get(projectId, matterId) as
+      | {
+          id: string;
+          project_id: string;
+          matter_id: string;
+          grant_id: string;
+          include_path_prefixes_json: string;
+          exclude_path_prefixes_json: string;
+          status: string;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+
+    const watchSet: MatterWatchSet | undefined = wrow
+      ? {
+          id: wrow.id,
+          projectId: wrow.project_id,
+          matterId: wrow.matter_id,
+          grantId: wrow.grant_id,
+          includePathPrefixes: JSON.parse(
+            wrow.include_path_prefixes_json,
+          ) as string[],
+          excludePathPrefixes: JSON.parse(
+            wrow.exclude_path_prefixes_json,
+          ) as string[],
+          status: wrow.status as "active" | "disabled",
+          createdAt: wrow.created_at,
+          updatedAt: wrow.updated_at,
+        }
+      : undefined;
 
     return {
       matter,
+      head,
       accepted,
       candidate,
-      recentEvents,
-      reviewNeeded,
+      recentEvents: (await this.listEvents(projectId)).slice(-50),
+      watchSet,
     };
   }
 
@@ -789,22 +1000,16 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
     body: UnderstandingBody,
   ): Promise<UnderstandingRevision> {
     const safeBody = ensureHonestWhy(body);
-    // Validate evidence revisions exist and belong to project.
-    for (const rid of safeBody.evidenceRevisionIds) {
-      const rev = this.getRevision(rid);
-      if (!rev || rev.projectId !== run.projectId) {
-        throw new Error(`evidence revision missing or foreign: ${rid}`);
-      }
-    }
+    this.validateEvidence(safeBody, run.projectId);
 
     const now = new Date().toISOString();
     const understanding: UnderstandingRevision = {
       id: randomUUID(),
       projectId: run.projectId,
       matterId: run.matterId,
+      kind: "candidate",
       body: safeBody,
       basedOnEventIds: [...run.eventIds],
-      status: "candidate",
       proposedBy: "agent",
       createdAt: now,
     };
@@ -835,24 +1040,7 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
           run.error ?? null,
         );
 
-      this.db
-        .prepare(
-          `INSERT INTO understanding_revisions
-           (id, project_id, matter_id, previous_revision_id, body_json, based_on_event_ids_json, status, proposed_by, created_at, resolved_at, resolved_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
-        )
-        .run(
-          understanding.id,
-          understanding.projectId,
-          understanding.matterId,
-          understanding.previousRevisionId ?? null,
-          JSON.stringify(understanding.body),
-          JSON.stringify(understanding.basedOnEventIds),
-          understanding.status,
-          understanding.proposedBy,
-          understanding.createdAt,
-        );
-
+      this.insertUnderstanding(understanding);
       this.insertOutbox(
         "understanding_candidate",
         understanding.id,
@@ -868,85 +1056,79 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
     return understanding;
   }
 
-  async resolve(input: OwnerResolution): Promise<UnderstandingRevision> {
+  async resolveCandidate(input: OwnerResolution): Promise<{
+    resolution: OwnerResolution;
+    accepted?: UnderstandingRevision;
+    head: MatterUnderstandingHead;
+  }> {
     if (input.actor !== "owner") {
       throw new Error("only owner may resolve understanding");
     }
 
-    const row = this.db
-      .prepare(`SELECT * FROM understanding_revisions WHERE id = ?`)
-      .get(input.understandingRevisionId) as UnderstandingRow | undefined;
-    if (!row) throw new Error("understanding not found");
-    const candidate = this.mapUnderstanding(row);
+    const candidate = this.getUnderstanding(input.candidateRevisionId);
+    if (!candidate) throw new Error("understanding not found");
+    if (candidate.kind !== "candidate") {
+      throw new Error("can only resolve a candidate revision");
+    }
 
-    const acceptedRows = this.db
-      .prepare(
-        `SELECT * FROM understanding_revisions
-         WHERE project_id = ? AND matter_id = ? AND status = 'accepted'`,
-      )
-      .all(candidate.projectId, candidate.matterId) as UnderstandingRow[];
-    const currentlyAccepted = acceptedRows.map((r) => this.mapUnderstanding(r));
+    let head = this.getHead(candidate.matterId);
+    if (!head) {
+      head = {
+        matterId: candidate.matterId,
+        reviewState: "current",
+        reviewReasonEventIds: [],
+        updatedAt: candidate.createdAt,
+      };
+    }
 
-    const transition = applyOwnerResolution({
+    const plan = planOwnerResolution({
       candidate,
       resolution: input,
-      currentlyAccepted,
+      currentHead: head,
       nowIso: input.createdAt,
     });
 
-    // Validate edited evidence if present.
-    for (const rid of transition.resolved.body.evidenceRevisionIds) {
-      const rev = this.getRevision(rid);
-      if (!rev || rev.projectId !== candidate.projectId) {
-        throw new Error(`evidence revision missing or foreign: ${rid}`);
-      }
+    if (plan.acceptedToInsert) {
+      this.validateEvidence(plan.acceptedToInsert.body, candidate.projectId);
     }
+
+    // Snapshot candidate body before TX for immutability check after
+    const candidateBodyBefore = JSON.stringify(candidate.body);
 
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      for (const sid of transition.supersededIds) {
-        this.db
-          .prepare(
-            `UPDATE understanding_revisions SET status = 'superseded' WHERE id = ?`,
-          )
-          .run(sid);
+      if (plan.acceptedToInsert) {
+        this.insertUnderstanding(plan.acceptedToInsert);
       }
-
-      this.db
-        .prepare(
-          `UPDATE understanding_revisions
-           SET body_json = ?, status = ?, resolved_at = ?, resolved_by = ?, previous_revision_id = ?
-           WHERE id = ?`,
-        )
-        .run(
-          JSON.stringify(transition.resolved.body),
-          transition.resolved.status,
-          transition.resolved.resolvedAt ?? null,
-          transition.resolved.resolvedBy ?? null,
-          transition.resolved.previousRevisionId ?? null,
-          transition.resolved.id,
-        );
 
       this.db
         .prepare(
           `INSERT INTO owner_resolutions
-           (id, understanding_revision_id, decision, edited_body_json, actor, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+           (id, candidate_revision_id, decision, edited_body_json, actor, created_at, accepted_revision_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
-          input.id,
-          input.understandingRevisionId,
-          input.decision,
-          input.editedBody ? JSON.stringify(input.editedBody) : null,
-          input.actor,
-          input.createdAt,
+          plan.resolution.id,
+          plan.resolution.candidateRevisionId,
+          plan.resolution.decision,
+          plan.resolution.editedBody
+            ? JSON.stringify(plan.resolution.editedBody)
+            : null,
+          plan.resolution.actor,
+          plan.resolution.createdAt,
+          plan.resolution.acceptedRevisionId ?? null,
         );
+
+      this.putHead(plan.nextHead);
 
       this.insertOutbox(
         "understanding_resolved",
-        transition.resolved.id,
-        { decision: input.decision },
-        input.createdAt,
+        plan.resolution.id,
+        {
+          decision: plan.resolution.decision,
+          acceptedRevisionId: plan.resolution.acceptedRevisionId,
+        },
+        plan.resolution.createdAt,
       );
 
       this.db.exec("COMMIT");
@@ -955,7 +1137,21 @@ export class SqliteProjectMemoryStore implements ProjectMemoryStore {
       throw error;
     }
 
-    return transition.resolved;
+    // Candidate must remain byte-identical
+    const candidateAfter = this.getUnderstanding(candidate.id);
+    if (
+      !candidateAfter ||
+      JSON.stringify(candidateAfter.body) !== candidateBodyBefore ||
+      candidateAfter.kind !== "candidate"
+    ) {
+      throw new Error("candidate revision was mutated (contract violation)");
+    }
+
+    return {
+      resolution: plan.resolution,
+      accepted: plan.acceptedToInsert,
+      head: plan.nextHead,
+    };
   }
 }
 
