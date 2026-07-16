@@ -4,7 +4,7 @@
 > **基础**:已 audit 的真实代码状态(shared/llm/adapter.ts、app/track/efficiency/page.tsx 等)
 > **状态**:D2-D7 待实施,D1 spike 脚本已就绪待执行
 > **核心约束**:不动现有 4 个 Workflow 的主流程,只加 Agent 编排层
-> **2026-07-06 评分细则更新**:赛事实际评分为**90% 评委人工评分 + 10% AI 技术评分**。因此本 plan 的主线从"真 tool_use 技术深度"调整为"3 分钟人工评委看懂且稳定的 Agent Demo"。step-3.7-flash tool_use spike 仍做,但不再绑架主线。详见 `docs/score-rubric.md`。
+> **2026-07-06 评分细则更新**:赛事实际评分为**90% 评委人工评分 + 10% AI 技术评分**。因此本 plan 的重点从"真 tool_use 技术深度"调整为"3 分钟人工评委看懂且稳定的 Agent Demo"。step-3.7-flash tool_use spike 仍做,但不占满全部精力。详见 `docs/score-rubric.md`。
 
 ---
 

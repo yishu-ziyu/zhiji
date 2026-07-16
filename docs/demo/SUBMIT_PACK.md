@@ -4,7 +4,7 @@
 **产品页：** `/track/knowledge`
 **仓库：** https://github.com/yishu-ziyu/fc-opc-ibot
 
-> 用平常中文。不说「金路径 / 知识经 / 闭环当产品名」。
+> 用平常中文写。
 
 ---
 

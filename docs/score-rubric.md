@@ -114,7 +114,7 @@ AI 技术评分看:
 - Trace Panel 命名为"思考过程可视化"
 - 把技术解释留到 Q&A,不在主路演里讲
 
-### 2. D2-D7 的主线从"技术真 Agent"调整为"评委看懂的 Agent"
+### 2. D2-D7 的重点从"技术真 Agent"调整为"评委看懂的 Agent"
 
 关键不是让技术评审在 DevTools 里看到 `tool_use` block,而是让 90% 人工评分看见:
 
@@ -143,7 +143,7 @@ AI 技术评分看:
 | P0 | `docs/demo/DEMO_SCRIPT.md` 熟练演练 3 次,控制 180s | 人工评分 90% 的核心 |
 | P0 | 小掌柜 UI + 早报 + 4 动作链视觉跑通 | 评委体验 + 创新可见 |
 | P0 | Demo fallback:mock 数据 + 录像 | 稳定性 + 现场不翻车 |
-| P1 | step-3.7-flash tool_use spike | 技术评分 10%,但不应绑架主线 |
+| P1 | step-3.7-flash tool_use spike | 技术评分 10%,但不应占满全部精力 |
 | P1 | E2E 回归 + build | 技术评分 10% + 稳定性 |
 | P1 | 商业化一页答辩话术 | 商业化潜力 |
 | P2 | adapter 真 tool_use 解析 | 只有 spike Go 且不影响 Demo 时做 |
@@ -159,7 +159,7 @@ AI 技术评分看:
 
 最优策略:
 
-1. 主线:小掌柜 Agent 编排层的可见体验
+1. 重点:小掌柜 Agent 编排层的可见体验
 2. 兜底:mock / replay / 录像保证现场稳定
 3. 技术:最小必要实现 + 可解释 + 有测试
 4. 路演:3 分钟金句、ROI、创客共鸣
