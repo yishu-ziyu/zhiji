@@ -19,6 +19,7 @@ import {
   ChevronDown,
   FilePlus2,
   Filter,
+  KeyRound,
   Plus,
   Search,
   Sparkles,
@@ -52,6 +53,11 @@ import {
 } from "./components/LocalFolderEntry";
 import type { AgentSession } from "./components/AgentPresenceRail";
 import { ClaimReviewPanel } from "./components/ClaimReviewPanel";
+import {
+  ByokMissingBanner,
+  ByokSettingsPanel,
+  type ByokStatusView,
+} from "./components/ByokSettingsPanel";
 import { createMvpApi } from "./lib/folder-connection-api";
 import type { UnderstandingBody } from "./lib/folder-connection-api";
 import {
@@ -98,6 +104,9 @@ async function apiJson<T>(
         : undefined;
     if (csrf && !headers.has("x-csrf-token")) {
       headers.set("x-csrf-token", csrf);
+    }
+    if (init?.body && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
     }
   }
   const response = await fetch(url, { ...init, headers });
@@ -190,6 +199,9 @@ export default function KnowledgePage() {
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectSummary, setNewProjectSummary] = useState("");
+  /** BYOK: in-app model key form (user fills; never packaged). */
+  const [byokOpen, setByokOpen] = useState(false);
+  const [byokStatus, setByokStatus] = useState<ByokStatusView | null>(null);
   /** A3: files received before a project exists; ingested after create confirms. */
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -417,6 +429,21 @@ export default function KnowledgePage() {
     agentSession?.matterId,
     agentSession?.memory?.candidate?.id,
   ]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const byok = await apiJson<{ status: ByokStatusView }>("/api/llm/byok");
+        if (active) setByokStatus(byok.status);
+      } catch {
+        /* status optional; panel can still open */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -2000,6 +2027,25 @@ export default function KnowledgePage() {
           <button
             type="button"
             className={styles.iconButton}
+            data-testid="byok-settings-open"
+            aria-label="模型密钥设置"
+            title={
+              byokStatus?.configured
+                ? "模型密钥已配置 · 点击修改"
+                : "填写你的模型密钥（Bring Your Own Key）"
+            }
+            onClick={() => setByokOpen(true)}
+            style={
+              byokStatus && !byokStatus.configured
+                ? { color: "#ff9500" }
+                : undefined
+            }
+          >
+            <KeyRound size={18} />
+          </button>
+          <button
+            type="button"
+            className={styles.iconButton}
             data-testid="workspace-upload-button"
             aria-label="上传本地文件"
             title={projectId ? "上传到当前项目" : "上传：将先新建项目再收下"}
@@ -2073,6 +2119,14 @@ export default function KnowledgePage() {
             ) : null}
           </div>
         </div>
+        {byokStatus !== null && !byokStatus.configured ? (
+          <div style={{ flexBasis: "100%", width: "100%", marginTop: 4 }}>
+            <ByokMissingBanner
+              visible
+              onOpen={() => setByokOpen(true)}
+            />
+          </div>
+        ) : null}
       </header>
 
       {isEmptyWorkspace ? (
@@ -2511,6 +2565,17 @@ export default function KnowledgePage() {
           <button type="button" aria-label="关闭" onClick={() => { setNotice(null); setError(null); }}><X size={15} /></button>
         </div>
       ) : null}
+
+      <ByokSettingsPanel
+        open={byokOpen}
+        onClose={() => setByokOpen(false)}
+        initialStatus={byokStatus}
+        requestJson={apiJson}
+        onSaved={(status) => {
+          setByokStatus(status);
+          setNotice("模型密钥已保存，本机即时生效");
+        }}
+      />
 
       {createProjectOpen ? (
         <div className={styles.modalBackdrop} role="presentation">
