@@ -33,13 +33,25 @@ import {
   KNOWLEDGE_SOURCES,
   UNDIRECTED_RELATION_TYPES,
 } from "@/shared/types/knowledge";
-import { materialCardSummary } from "@/shared/knowledge/materials";
+import type { CrossProjectReference } from "@/shared/types/knowledge";
+import { materialCardSummary, materialContentHash, readProjectMaterial } from "@/shared/knowledge/materials";
 import {
   projectResultToCandidateCard,
   type ResultCandidateInput,
 } from "@/shared/knowledge/result-candidate";
+import {
+  assertOwnerApprover,
+  ProjectAccessError,
+  ProjectScopeError,
+  requireProjectId,
+} from "@/shared/knowledge/project-scope";
 
 export { DEFAULT_PROJECT_ID } from "@/shared/types/knowledge";
+export {
+  ProjectAccessError,
+  ProjectScopeError,
+  requireProjectId,
+} from "@/shared/knowledge/project-scope";
 
 /** Demo seed is off by default. Only inject when SEED_DEMO=1. */
 export function isDemoSeedEnabled(): boolean {
@@ -163,6 +175,10 @@ function querySessionsPath(): string {
 
 function relationsPath(): string {
   return path.join(resolveDataDir(), "relations.json");
+}
+
+function crossProjectRefsPath(): string {
+  return path.join(resolveDataDir(), "cross-project-refs.json");
 }
 
 function ensureDataDir(): void {
@@ -357,9 +373,11 @@ function copyEvent(event: WorkEvent): WorkEvent {
 function normalizeCard(
   raw: Partial<KnowledgeCard> & { id?: string },
 ): KnowledgeCard {
+  // T-19: never invent DEFAULT_PROJECT_ID on load — missing id stays empty (excluded from scoped lists).
+  const projectId = raw.projectId?.trim() || "";
   return {
     id: raw.id ?? randomUUID(),
-    projectId: raw.projectId ?? DEFAULT_PROJECT_ID,
+    projectId,
     content: raw.content?.trim() || "未命名卡片",
     source: raw.source ?? "manual",
     tags: raw.tags ?? [],
@@ -399,7 +417,8 @@ export function normalizeAction(
 
   return {
     id: raw.id ?? randomUUID(),
-    projectId: raw.projectId ?? DEFAULT_PROJECT_ID,
+    // T-19: never invent DEFAULT_PROJECT_ID on load
+    projectId: raw.projectId?.trim() || "",
     title,
     description,
     assignee: raw.assignee?.trim() || "待定",
@@ -731,6 +750,7 @@ export function getProject(id: string): Project | null {
 export function addProject(input: {
   name: string;
   summary?: string;
+  sensitive?: boolean;
 }): Project {
   const name = input.name?.trim();
   if (!name) throw new Error("项目名称不能为空");
@@ -743,7 +763,23 @@ export function addProject(input: {
     status: "active",
     createdAt: now,
     updatedAt: now,
+    sensitive: input.sensitive === true ? true : undefined,
   };
+  projects.set(project.id, project);
+  saveProjects(projects);
+  return copyProject(project);
+}
+
+/** T-19: mark project sensitive (Owner isolation). */
+export function setProjectSensitive(
+  projectId: string,
+  sensitive: boolean,
+): Project {
+  const projects = workingProjects();
+  const project = projects.get(projectId);
+  if (!project) throw new Error("项目不存在");
+  project.sensitive = sensitive ? true : undefined;
+  project.updatedAt = new Date().toISOString();
   projects.set(project.id, project);
   saveProjects(projects);
   return copyProject(project);
@@ -847,6 +883,28 @@ export function getCard(id: string): KnowledgeCard | null {
   return card ? copyCard(card) : null;
 }
 
+/** T-19: get card only if it belongs to projectId; else null (API → 404). */
+export function getCardInProject(
+  projectId: string,
+  cardId: string,
+): KnowledgeCard | null {
+  const scope = requireProjectId(projectId);
+  const card = getCard(cardId);
+  if (!card || card.projectId !== scope) return null;
+  return card;
+}
+
+/** T-19: get action only if it belongs to projectId; else null. */
+export function getActionInProject(
+  projectId: string,
+  actionId: string,
+): ActionItem | null {
+  const scope = requireProjectId(projectId);
+  const item = getAction(actionId);
+  if (!item || item.projectId !== scope) return null;
+  return item;
+}
+
 /** B-1: find the citation card bound to a project material file id. */
 export function getCardBySourceFileId(
   projectId: string,
@@ -932,7 +990,8 @@ export function ensureMaterialCitationCard(input: {
 export function addCard(input: NewCardInput): KnowledgeCard {
   const content = input.content?.trim();
   if (!content) throw new Error("卡片内容不能为空");
-  const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+  // T-19: never silent DEFAULT_PROJECT_ID
+  const projectId = requireProjectId(input.projectId);
   if (!getProject(projectId)) throw new Error("项目不存在");
   if (input.source && !KNOWLEDGE_SOURCES.includes(input.source)) {
     throw new Error("卡片来源无效");
@@ -1115,7 +1174,8 @@ export function getWorkItemDetail(id: string): {
 export function addAction(input: NewActionInput): ActionItem {
   const description = input.description?.trim();
   if (!description) throw new Error("工作项描述不能为空");
-  const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+  // T-19: never silent DEFAULT_PROJECT_ID
+  const projectId = requireProjectId(input.projectId);
   if (!getProject(projectId)) throw new Error("项目不存在");
   assertCardRefsBelongToProject(projectId, [
     input.cardId,
@@ -1178,11 +1238,18 @@ export function patchWorkItem(
   id: string,
   patch: PatchWorkItemInput,
   actor: string = DEFAULT_ACTOR,
+  options?: { projectId?: string },
 ): ActionItem {
   const actions = workingActions();
   const events = workingEvents();
   const item = actions.get(id);
   if (!item) throw new Error("工作项不存在");
+  if (options?.projectId !== undefined) {
+    const scope = requireProjectId(options.projectId);
+    if (item.projectId !== scope) {
+      throw new ProjectAccessError("工作项不在当前项目范围内");
+    }
+  }
   if (patch.cardId) {
     assertCardRefsBelongToProject(item.projectId, [patch.cardId]);
   }
@@ -1418,6 +1485,7 @@ export function resetKnowledgeStoreForTests(): void {
     footprintEventsPath(),
     querySessionsPath(),
     relationsPath(),
+    crossProjectRefsPath(),
   ]) {
     if (fs.existsSync(p)) fs.unlinkSync(p);
   }
@@ -1519,15 +1587,19 @@ export function recordOpenedFootprint(
   saveFootprintEvents(fp);
 }
 
-export function getLibraryMapData(): {
+export function getLibraryMapData(projectId: string): {
   nodes: LibraryNode[];
   layout: string;
 } {
-  return buildLibraryMap(listCards());
+  const scope = requireProjectId(projectId);
+  if (!getProject(scope)) throw new Error("项目不存在");
+  return buildLibraryMap(listCards({ projectId: scope }));
 }
 
 export function getFootprintData(options: {
   mode: FootprintViewMode;
+  /** T-19: required project scope */
+  projectId: string;
   querySessionId?: string;
   workItemId?: string;
   sinceDays?: number;
@@ -1539,7 +1611,9 @@ export function getFootprintData(options: {
   litCount: number;
   dimCount: number;
 } {
-  const cards = listCards();
+  const scope = requireProjectId(options.projectId);
+  if (!getProject(scope)) throw new Error("项目不存在");
+  const cards = listCards({ projectId: scope });
   const allIds = new Set(cards.map((c) => c.id));
   const events = [...loadFootprintEvents().values()];
 
@@ -1797,6 +1871,134 @@ export function extractRelations(options?: {
     }
   }
   return { created, count: created.length };
+}
+
+// --- T-19 cross-project references (Owner-approved, revision-pinned) ---
+
+function loadCrossProjectRefs(): Map<string, CrossProjectReference> {
+  return readJsonMap<CrossProjectReference>(crossProjectRefsPath());
+}
+
+function saveCrossProjectRefs(map: Map<string, CrossProjectReference>): void {
+  writeJsonMap(crossProjectRefsPath(), map);
+}
+
+function copyCrossProjectRef(ref: CrossProjectReference): CrossProjectReference {
+  return structuredClone(ref);
+}
+
+function resolveSourceContentHash(input: {
+  sourceProjectId: string;
+  sourceKind: "card" | "material";
+  sourceObjectId: string;
+}): { hash: string; title?: string } {
+  if (input.sourceKind === "card") {
+    const card = getCardInProject(input.sourceProjectId, input.sourceObjectId);
+    if (!card) throw new Error("源卡片不存在或不在源项目中");
+    const hash =
+      card.sourceContentHash?.trim() ||
+      materialContentHash(card.content ?? "");
+    return { hash, title: card.title || card.content.slice(0, 80) };
+  }
+  const read = readProjectMaterial(
+    input.sourceProjectId,
+    input.sourceObjectId,
+  );
+  if (!read) throw new Error("源材料不存在或不在源项目中");
+  const hash =
+    read.meta.contentHash?.trim() ||
+    materialContentHash(
+      read.content ||
+        (read.dataUrl ? Buffer.from(read.dataUrl.split(",")[1] ?? "", "base64") : ""),
+    );
+  return { hash, title: read.meta.name };
+}
+
+/**
+ * Create Owner-approved cross-project reference.
+ * Pins source revision hash; sensitive sources never store title on host side.
+ */
+export function createCrossProjectReference(input: {
+  hostProjectId: string;
+  sourceProjectId: string;
+  sourceKind: "card" | "material";
+  sourceObjectId: string;
+  approvedBy: string;
+}): CrossProjectReference {
+  const hostProjectId = requireProjectId(input.hostProjectId);
+  const sourceProjectId = requireProjectId(input.sourceProjectId);
+  if (hostProjectId === sourceProjectId) {
+    throw new ProjectScopeError("跨项目引用的源项目不能与宿主项目相同");
+  }
+  if (!getProject(hostProjectId)) throw new Error("宿主项目不存在");
+  const sourceProject = getProject(sourceProjectId);
+  if (!sourceProject) throw new Error("源项目不存在");
+  const approvedBy = assertOwnerApprover(input.approvedBy);
+  const objectId = input.sourceObjectId.trim();
+  if (!objectId) throw new Error("sourceObjectId 无效");
+  if (input.sourceKind !== "card" && input.sourceKind !== "material") {
+    throw new Error("sourceKind 无效");
+  }
+
+  const { hash, title } = resolveSourceContentHash({
+    sourceProjectId,
+    sourceKind: input.sourceKind,
+    sourceObjectId: objectId,
+  });
+  const now = new Date().toISOString();
+  const ref: CrossProjectReference = {
+    id: randomUUID(),
+    hostProjectId,
+    sourceProjectId,
+    sourceKind: input.sourceKind,
+    sourceObjectId: objectId,
+    sourceContentHash: hash,
+    approvedBy,
+    approvedAt: now,
+    lastVerifiedAt: now,
+    reviewRequired: false,
+    sourceTitle: sourceProject.sensitive ? undefined : title,
+  };
+  const map = loadCrossProjectRefs();
+  map.set(ref.id, ref);
+  saveCrossProjectRefs(map);
+  return copyCrossProjectRef(ref);
+}
+
+export function listCrossProjectReferences(
+  hostProjectId: string,
+): CrossProjectReference[] {
+  const host = requireProjectId(hostProjectId);
+  return [...loadCrossProjectRefs().values()]
+    .filter((r) => r.hostProjectId === host)
+    .map(copyCrossProjectRef)
+    .sort((a, b) => b.approvedAt.localeCompare(a.approvedAt));
+}
+
+/**
+ * Re-check source hash; marks reviewRequired when source bytes/content changed.
+ */
+export function verifyCrossProjectReference(
+  refId: string,
+): CrossProjectReference {
+  const map = loadCrossProjectRefs();
+  const live = map.get(refId);
+  if (!live) throw new Error("跨项目引用不存在");
+  try {
+    const { hash } = resolveSourceContentHash({
+      sourceProjectId: live.sourceProjectId,
+      sourceKind: live.sourceKind,
+      sourceObjectId: live.sourceObjectId,
+    });
+    live.reviewRequired = hash !== live.sourceContentHash;
+    live.lastVerifiedAt = new Date().toISOString();
+  } catch {
+    live.reviewRequired = true;
+    live.lastVerifiedAt = new Date().toISOString();
+  }
+  map.set(live.id, live);
+  saveCrossProjectRefs(map);
+  return copyCrossProjectRef(live);
 }
 
 export { WorkItemValidationError, RelationValidationError };
