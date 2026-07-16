@@ -140,7 +140,9 @@ export default function MvpKnowledgeWorkbenchPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.runAnalysis(projectId, matterId, memory.events.map((event) => event.id));
+      // Watch-matched events only (`events`); do not send full project dump or unmatched `filteredEvents`.
+      const eventIds = memory.events.map((event) => event.id);
+      await api.runAnalysis(projectId, matterId, eventIds);
       await loadMemory();
       setNotice("已按匹配变化运行一次状态重建；结果仍是 candidate。");
     } catch (nextError) {
@@ -183,7 +185,13 @@ export default function MvpKnowledgeWorkbenchPage() {
     if (!memory?.candidate) return;
     setBusy(true);
     try {
-      const result = await api.resolveCandidate(memory.candidate.id, decision, editedBody);
+      const result = await api.resolveCandidate(
+        projectId,
+        matterId,
+        memory.candidate.id,
+        decision,
+        editedBody,
+      );
       await loadMemory();
       if (decision === "reject") {
         setResolutionMessage(`已写入 Owner resolution：reject。candidate ${result.resolution.candidateRevisionId} 保持不变。`);

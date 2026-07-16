@@ -178,7 +178,9 @@ export type ContractApi = {
   ): Promise<MatterWatchSet>;
   runAnalysis(projectId: string, matterId: string, eventIds: string[]): Promise<UnderstandingRevision>;
   resolveCandidate(
-    candidateRevisionId: string,
+    projectId: string,
+    matterId: string,
+    candidateId: string,
     decision: ResolutionDecision,
     editedBody?: UnderstandingBody,
   ): Promise<ResolutionResponse>;
@@ -498,10 +500,10 @@ function createFixtureApi(): ContractApi {
     async runAnalysis() {
       return clone(fixtureCandidate);
     },
-    async resolveCandidate(_candidateRevisionId, decision, editedBody) {
+    async resolveCandidate(_projectId, _matterId, candidateId, decision, editedBody) {
       const resolution: OwnerResolution = {
         id: `resolution-${decision}-fixture`,
-        candidateRevisionId: fixtureCandidate.id,
+        candidateRevisionId: candidateId || fixtureCandidate.id,
         decision,
         editedBody,
         actor: "owner",
@@ -676,10 +678,21 @@ function createHttpApi(): ContractApi {
       );
       return data.candidate;
     },
-    async resolveCandidate(candidateRevisionId, decision, editedBody) {
+    async resolveCandidate(nextProjectId, nextMatterId, candidateId, decision, editedBody) {
       return httpJson<ResolutionResponse>(
-        `/api/knowledge/understanding/${encodeURIComponent(candidateRevisionId)}/resolve`,
-        { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision, editedBody, actor: "owner" }) },
+        `/api/knowledge/understanding/${encodeURIComponent(candidateId)}/resolve`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            projectId: nextProjectId,
+            matterId: nextMatterId,
+            candidateId,
+            decision,
+            editedBody,
+            actor: "owner",
+          }),
+        },
       );
     },
     async getRevision(nextProjectId, revisionId) {
