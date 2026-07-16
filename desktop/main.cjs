@@ -90,19 +90,20 @@ async function startCapabilityServer(paths, allowedEnv, logFile) {
 
   fs.mkdirSync(paths.knowledgeDir, { recursive: true });
 
-  const env = {
-    ...process.env,
-    ...allowedEnv,
-    NODE_ENV: "production",
-    HOSTNAME: "127.0.0.1",
-    HOST: "127.0.0.1",
-    PORT: String(port),
-    KNOWLEDGE_DATA_DIR: paths.knowledgeDir,
-  };
-  // Do not pass shell secrets beyond allowlist accidentally into logs
+  // P0: never spread process.env — only minimal + allowlisted keys.
+  const env = runtime.buildUtilityProcessEnv({
+    allowedEnv,
+    port,
+    knowledgeDir: paths.knowledgeDir,
+    pathEnv: process.env.PATH,
+    homeEnv: process.env.HOME,
+    tmpDir: process.env.TMPDIR,
+    lang: process.env.LANG,
+  });
+  runtime.assertEnvHasNoForbiddenKeys(env);
   appendLog(
     logFile,
-    `starting utilityProcess port=${port} knowledgeDir configured LLM_API_KEY=${allowedEnv.LLM_API_KEY ? "configured" : "missing"} LLM_BASE_URL=${allowedEnv.LLM_BASE_URL ? "configured" : "missing"} LLM_MODEL=${allowedEnv.LLM_MODEL ? "configured" : "missing"}`,
+    `starting utilityProcess port=${port} knowledgeDir=configured ${runtime.formatConfigPresence(allowedEnv)}`,
   );
 
   serverProcess = utilityProcess.fork(paths.serverEntry, [], {
@@ -174,15 +175,15 @@ function createMainWindow(preloadPath, port, logFile) {
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (!runtime.isAllowedAppUrl(url, port)) {
       event.preventDefault();
-      appendLog(logFile, `blocked navigation: ${url}`);
+      const safe = runtime.decideWindowOpen(url).blockedUrlSafe;
+      appendLog(logFile, `blocked navigation: ${safe}`);
     }
   });
 
+  // P1: never open new windows (even same-origin).
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (runtime.isAllowedAppUrl(url, port)) {
-      return { action: "allow" };
-    }
-    appendLog(logFile, `blocked window open: ${url}`);
+    const decision = runtime.decideWindowOpen(url);
+    appendLog(logFile, `blocked window open: ${decision.blockedUrlSafe}`);
     return { action: "deny" };
   });
 

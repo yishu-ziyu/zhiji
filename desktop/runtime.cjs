@@ -9,12 +9,24 @@ const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
 
+/** Allowlisted keys that may enter utilityProcess env (never full process.env). */
 const ALLOWED_ENV_KEYS = Object.freeze([
   "LLM_BASE_URL",
   "LLM_API_KEY",
   "LLM_MODEL",
   "AGENT_RUN_MODE",
   "AGENT_ALLOW_DETERMINISTIC_FALLBACK",
+  "ANYSEARCH_API_KEY",
+]);
+
+/** Sentinel keys used in tests — must never appear in utility env. */
+const FORBIDDEN_PARENT_ENV_HINTS = Object.freeze([
+  "ANTHROPIC_AUTH_TOKEN",
+  "OPENAI_API_KEY",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_ACCESS_KEY_ID",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
 ]);
 
 /**
@@ -117,7 +129,7 @@ function parseDesktopEnv(raw) {
 }
 
 /**
- * Merge file env with process.env — process wins for allowlisted keys.
+ * Merge file env with process.env — process wins for allowlisted keys only.
  * @param {Record<string, string | undefined>} processEnv
  * @param {string} [fileContents]
  */
@@ -132,6 +144,99 @@ function resolveAllowedEnvironment(processEnv, fileContents) {
     }
   }
   return out;
+}
+
+/**
+ * Minimal env for utilityProcess — NEVER spreads process.env.
+ * @param {{
+ *   allowedEnv: Record<string, string>,
+ *   port: number,
+ *   knowledgeDir: string,
+ *   pathEnv?: string,
+ *   homeEnv?: string,
+ *   tmpDir?: string,
+ *   lang?: string,
+ * }} input
+ * @returns {Record<string, string>}
+ */
+function buildUtilityProcessEnv(input) {
+  const allowed = input.allowedEnv || {};
+  /** @type {Record<string, string>} */
+  const env = {
+    NODE_ENV: "production",
+    HOSTNAME: "127.0.0.1",
+    HOST: "127.0.0.1",
+    PORT: String(input.port),
+    KNOWLEDGE_DATA_DIR: String(input.knowledgeDir),
+  };
+  // PATH is required for native tooling / node resolution; never inherit secrets.
+  const pathVal =
+    typeof input.pathEnv === "string" && input.pathEnv.length > 0
+      ? input.pathEnv
+      : "/usr/bin:/bin:/usr/sbin:/sbin";
+  env.PATH = pathVal;
+  if (typeof input.homeEnv === "string" && input.homeEnv.length > 0) {
+    env.HOME = input.homeEnv;
+  }
+  if (typeof input.tmpDir === "string" && input.tmpDir.length > 0) {
+    env.TMPDIR = input.tmpDir;
+  }
+  if (typeof input.lang === "string" && input.lang.length > 0) {
+    env.LANG = input.lang;
+  }
+  for (const key of ALLOWED_ENV_KEYS) {
+    const v = allowed[key];
+    if (typeof v === "string" && v.length > 0) {
+      env[key] = v;
+    }
+  }
+  return env;
+}
+
+/**
+ * Log-safe status line for allowlisted config keys (never values).
+ * @param {Record<string, string>} allowedEnv
+ */
+function formatConfigPresence(allowedEnv) {
+  const parts = [];
+  for (const key of ALLOWED_ENV_KEYS) {
+    parts.push(`${key}=${allowedEnv[key] ? "configured" : "missing"}`);
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Window open policy: always deny new windows (competition shell).
+ * @param {string} url
+ * @returns {{ action: "deny", blockedUrlSafe: string }}
+ */
+function decideWindowOpen(url) {
+  let blockedUrlSafe = "(invalid-url)";
+  try {
+    const u = new URL(String(url || ""));
+    // Strip query/hash so logs never hold tokens
+    blockedUrlSafe = `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    blockedUrlSafe = "(unparseable)";
+  }
+  return { action: "deny", blockedUrlSafe };
+}
+
+/**
+ * Assert constructed env does not contain forbidden parent secrets.
+ * @param {Record<string, string>} env
+ * @param {string[]} [extraForbidden]
+ */
+function assertEnvHasNoForbiddenKeys(env, extraForbidden = []) {
+  const forbidden = new Set([
+    ...FORBIDDEN_PARENT_ENV_HINTS,
+    ...extraForbidden,
+  ]);
+  for (const key of Object.keys(env)) {
+    if (forbidden.has(key)) {
+      throw new Error(`utility env must not contain ${key}`);
+    }
+  }
 }
 
 /**
@@ -253,8 +358,13 @@ function healthCheckUrl(port) {
 
 module.exports = {
   ALLOWED_ENV_KEYS,
+  FORBIDDEN_PARENT_ENV_HINTS,
+  assertEnvHasNoForbiddenKeys,
+  buildUtilityProcessEnv,
   chooseLoopbackPort,
   createWindowOptions,
+  decideWindowOpen,
+  formatConfigPresence,
   healthCheckUrl,
   isAllowedAppUrl,
   knowledgeEntryUrl,

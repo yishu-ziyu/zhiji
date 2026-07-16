@@ -19,7 +19,9 @@
     "test:e2e": "playwright test",
     "desktop:dev": "node scripts/desktop-dev.mjs",
     "desktop:prepare": "npm run build && node scripts/prepare-desktop-bundle.mjs",
-    "desktop:package": "npm run desktop:prepare && node scripts/package-desktop.mjs"
+    "desktop:ensure-electron": "node scripts/ensure-electron-zip.mjs",
+    "desktop:install-env": "node scripts/install-desktop-env.mjs",
+    "desktop:package": "npm run desktop:prepare && node scripts/ensure-electron-zip.mjs && node scripts/package-desktop.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",

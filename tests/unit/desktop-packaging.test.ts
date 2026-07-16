@@ -81,3 +81,32 @@ describe("createWindowOptions still sandboxed in desktop/runtime.cjs", () => {
     expect(src).toContain("sandbox: true");
   });
 });
+
+describe("main.cjs credential + window policy (static audit)", () => {
+  it("does not spread process.env; denies window open; uses buildUtilityProcessEnv", () => {
+    const mainSrc = fs.readFileSync(
+      path.resolve(__dirname, "../../desktop/main.cjs"),
+      "utf8",
+    );
+    expect(mainSrc).not.toMatch(/\.\.\.\s*process\.env/);
+    expect(mainSrc).toContain("buildUtilityProcessEnv");
+    expect(mainSrc).toContain("decideWindowOpen");
+    expect(mainSrc).toMatch(/action:\s*["']deny["']/);
+    expect(mainSrc).not.toMatch(/action:\s*["']allow["']/);
+  });
+});
+
+describe("ensure-electron-zip checksum helpers", () => {
+  it("reads expected sha256 for darwin-arm64 zip from electron package", async () => {
+    const { readExpectedChecksum, ZIP_NAME, sha256File, findVerifiedZip } =
+      await import("../../scripts/ensure-electron-zip.mjs");
+    const { expectedSha256, zipName } = readExpectedChecksum();
+    expect(zipName).toBe(ZIP_NAME);
+    expect(expectedSha256).toMatch(/^[a-f0-9]{64}$/);
+    // Local cache may already hold a verified zip after electron install
+    const found = findVerifiedZip(expectedSha256);
+    if (found) {
+      expect(sha256File(found)).toBe(expectedSha256);
+    }
+  });
+});

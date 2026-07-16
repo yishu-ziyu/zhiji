@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
  * Package .desktop-stage into macOS arm64 .app via @electron/packager 20.0.3
+ * Uses local verified electron zip (electronZipDir) — no flaky re-fetch.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { ensureElectronZipDir, ZIP_NAME } from "./ensure-electron-zip.mjs";
 
 const require = createRequire(import.meta.url);
 const { packager } = require("@electron/packager");
@@ -56,9 +58,52 @@ function assertMainSandbox(appRoot) {
     throw new Error("packaged runtime missing sandbox: true");
   }
   const mainSrc = fs.readFileSync(mainPath, "utf8");
-  // Production must not honor dev URL when packaged — check guard exists
   if (!mainSrc.includes("app.isPackaged")) {
     throw new Error("main.cjs must gate FC_OPC_DESKTOP_DEV_URL on !isPackaged");
+  }
+  if (mainSrc.includes("...process.env")) {
+    throw new Error("main.cjs must not spread process.env into utilityProcess");
+  }
+  if (!mainSrc.includes("buildUtilityProcessEnv")) {
+    throw new Error("main.cjs must use buildUtilityProcessEnv");
+  }
+  if (!mainSrc.includes('action: "deny"') && !mainSrc.includes("action: 'deny'")) {
+    throw new Error("main.cjs must deny window open");
+  }
+}
+
+/**
+ * Packaged app resources must match current staging critical files.
+ * @param {string} resourcesApp
+ */
+function assertMatchesStaging(resourcesApp) {
+  const pairs = [
+    ["desktop/main.cjs", "desktop/main.cjs"],
+    ["desktop/runtime.cjs", "desktop/runtime.cjs"],
+    ["runtime/server.js", "runtime/server.js"],
+  ];
+  for (const [stageRel, appRel] of pairs) {
+    const a = path.join(stageDir, stageRel);
+    const b = path.join(resourcesApp, appRel);
+    if (!fs.existsSync(a) || !fs.existsSync(b)) {
+      throw new Error(`missing pair for staging compare: ${stageRel}`);
+    }
+    const ha = fs.readFileSync(a);
+    const hb = fs.readFileSync(b);
+    if (!ha.equals(hb)) {
+      throw new Error(`packaged ${appRel} differs from staging ${stageRel}`);
+    }
+  }
+  // BUILD_ID when present
+  const stageBuild = path.join(stageDir, "runtime", ".next", "BUILD_ID");
+  const appBuild = path.join(resourcesApp, "runtime", ".next", "BUILD_ID");
+  if (fs.existsSync(stageBuild)) {
+    if (!fs.existsSync(appBuild)) {
+      throw new Error("packaged app missing runtime/.next/BUILD_ID");
+    }
+    if (fs.readFileSync(stageBuild, "utf8") !== fs.readFileSync(appBuild, "utf8")) {
+      throw new Error("packaged BUILD_ID differs from staging");
+    }
   }
 }
 
@@ -67,6 +112,12 @@ async function main() {
     throw new Error("missing .desktop-stage — run desktop:prepare first");
   }
   assertNoEnvInTree(stageDir, "staging");
+
+  const electronZipDir = await Promise.resolve(ensureElectronZipDir());
+  const zipPath = path.join(electronZipDir, ZIP_NAME);
+  if (!fs.existsSync(zipPath)) {
+    throw new Error(`electron zip missing after ensure: ${zipPath}`);
+  }
 
   fs.mkdirSync(outDir, { recursive: true });
 
@@ -80,17 +131,8 @@ async function main() {
     overwrite: true,
     prune: false,
     asar: false,
-    // Reuse electron zip cache from electron install (avoid re-fetch flake)
-    download: {
-      cacheRoot:
-        process.env.ELECTRON_CACHE ||
-        path.join(
-          process.env.HOME || "",
-          "Library",
-          "Caches",
-          "electron",
-        ),
-    },
+    // Local verified zip only — packager will not re-download when present
+    electronZipDir,
   });
 
   console.log("[desktop:package] packager out:", paths);
@@ -106,6 +148,7 @@ async function main() {
     }
     assertNoEnvInTree(resourcesApp, ".app Resources/app");
     assertMainSandbox(resourcesApp);
+    assertMatchesStaging(resourcesApp);
     console.log("[desktop:package] app:", appPath);
   }
 }

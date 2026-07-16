@@ -39,6 +39,29 @@ const runtime = require("../../desktop/runtime.cjs") as {
   ) => Promise<{ ok: true; status: number } | { ok: false; reason: string }>;
   redactForLog: (line: string) => string;
   ALLOWED_ENV_KEYS: readonly string[];
+  FORBIDDEN_PARENT_ENV_HINTS: readonly string[];
+  resolveAllowedEnvironment: (
+    processEnv: Record<string, string | undefined>,
+    fileContents?: string,
+  ) => Record<string, string>;
+  buildUtilityProcessEnv: (input: {
+    allowedEnv: Record<string, string>;
+    port: number;
+    knowledgeDir: string;
+    pathEnv?: string;
+    homeEnv?: string;
+    tmpDir?: string;
+    lang?: string;
+  }) => Record<string, string>;
+  assertEnvHasNoForbiddenKeys: (
+    env: Record<string, string>,
+    extra?: string[],
+  ) => void;
+  decideWindowOpen: (url: string) => {
+    action: "deny";
+    blockedUrlSafe: string;
+  };
+  formatConfigPresence: (allowedEnv: Record<string, string>) => string;
 };
 
 const tmpDirs: string[] = [];
@@ -224,5 +247,85 @@ describe("redactForLog", () => {
     const out = runtime.redactForLog(line);
     expect(out).not.toContain("sk-secret-abc");
     expect(out.toLowerCase()).toMatch(/redact|configured|\*\*\*/i);
+  });
+});
+
+describe("buildUtilityProcessEnv (no parent credential leak)", () => {
+  it("does not include sentinel parent secrets even if present in process.env", () => {
+    const parentWithSentinels: Record<string, string | undefined> = {
+      ...process.env,
+      ANTHROPIC_AUTH_TOKEN: "sentinel-anthropic-must-not-leak",
+      OPENAI_API_KEY: "sentinel-openai-must-not-leak",
+      AWS_SECRET_ACCESS_KEY: "sentinel-aws-must-not-leak",
+      LLM_API_KEY: "allowlisted-model-key",
+      LLM_BASE_URL: "https://example.invalid/v1",
+      LLM_MODEL: "test-model",
+      RANDOM_JUNK: "nope",
+    };
+
+    const allowed = runtime.resolveAllowedEnvironment(parentWithSentinels, "");
+    expect(allowed.LLM_API_KEY).toBe("allowlisted-model-key");
+    expect(allowed).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(allowed).not.toHaveProperty("OPENAI_API_KEY");
+    expect(allowed).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+
+    const utilEnv = runtime.buildUtilityProcessEnv({
+      allowedEnv: allowed,
+      port: 4242,
+      knowledgeDir: "/tmp/fc-opc-knowledge-test",
+      pathEnv: parentWithSentinels.PATH || "/usr/bin:/bin",
+      homeEnv: "/tmp/home-test",
+    });
+
+    expect(utilEnv.NODE_ENV).toBe("production");
+    expect(utilEnv.HOSTNAME).toBe("127.0.0.1");
+    expect(utilEnv.HOST).toBe("127.0.0.1");
+    expect(utilEnv.PORT).toBe("4242");
+    expect(utilEnv.KNOWLEDGE_DATA_DIR).toBe("/tmp/fc-opc-knowledge-test");
+    expect(utilEnv.LLM_API_KEY).toBe("allowlisted-model-key");
+    expect(utilEnv.PATH).toBeTruthy();
+
+    // Sentinel must be absent from utility env keys
+    for (const key of runtime.FORBIDDEN_PARENT_ENV_HINTS) {
+      expect(utilEnv).not.toHaveProperty(key);
+    }
+    expect(utilEnv).not.toHaveProperty("RANDOM_JUNK");
+    expect(utilEnv).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(utilEnv).not.toHaveProperty("OPENAI_API_KEY");
+    expect(utilEnv).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+
+    // Values must not appear either
+    const blob = JSON.stringify(utilEnv);
+    expect(blob).not.toContain("sentinel-anthropic-must-not-leak");
+    expect(blob).not.toContain("sentinel-openai-must-not-leak");
+    expect(blob).not.toContain("sentinel-aws-must-not-leak");
+
+    expect(() => runtime.assertEnvHasNoForbiddenKeys(utilEnv)).not.toThrow();
+  });
+
+  it("formatConfigPresence never embeds secret values", () => {
+    const line = runtime.formatConfigPresence({
+      LLM_API_KEY: "super-secret-value-xyz",
+      LLM_BASE_URL: "https://example.invalid",
+    });
+    expect(line).toContain("LLM_API_KEY=configured");
+    expect(line).not.toContain("super-secret-value-xyz");
+  });
+});
+
+describe("decideWindowOpen (deny all new windows)", () => {
+  it("always denies, including same-origin knowledge URLs", () => {
+    const same = runtime.decideWindowOpen(
+      "http://127.0.0.1:4242/track/knowledge?token=secret-query",
+    );
+    expect(same.action).toBe("deny");
+    expect(same.blockedUrlSafe).toBe(
+      "http://127.0.0.1:4242/track/knowledge",
+    );
+    expect(same.blockedUrlSafe).not.toContain("token");
+    expect(same.blockedUrlSafe).not.toContain("secret");
+
+    const external = runtime.decideWindowOpen("https://evil.example/x");
+    expect(external.action).toBe("deny");
   });
 });
