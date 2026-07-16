@@ -539,6 +539,167 @@ describe("project-memory sqlite-store + CAS (amended contract)", () => {
     expect(state.accepted?.id).toBe(acceptedId);
   });
 
+  it("ingest rejects missing, foreign, and revoked grants", async () => {
+    const bytes = new TextEncoder().encode("x");
+    await expect(
+      store.ingest({
+        projectId: "p1",
+        grantId: "no-such-grant",
+        kind: "added",
+        relativePath: "x.md",
+        content: bytes,
+        observedAt: "2026-07-16T20:00:00.000Z",
+      }),
+    ).rejects.toThrow(/grant missing/i);
+
+    store.upsertGrant({
+      id: "g-foreign",
+      projectId: "p-other",
+      kind: "local_folder",
+      rootPath: "/tmp/other",
+      status: "active",
+      createdAt: "2026-07-16T00:00:00.000Z",
+      updatedAt: "2026-07-16T00:00:00.000Z",
+    });
+    await expect(
+      store.ingest({
+        projectId: "p1",
+        grantId: "g-foreign",
+        kind: "added",
+        relativePath: "x.md",
+        content: bytes,
+        observedAt: "2026-07-16T20:00:01.000Z",
+      }),
+    ).rejects.toThrow(/foreign/i);
+
+    store.upsertGrant({
+      id: "g-revoked",
+      projectId: "p1",
+      kind: "local_folder",
+      rootPath: "/tmp/rev",
+      status: "revoked",
+      createdAt: "2026-07-16T00:00:00.000Z",
+      updatedAt: "2026-07-16T00:00:00.000Z",
+    });
+    await expect(
+      store.ingest({
+        projectId: "p1",
+        grantId: "g-revoked",
+        kind: "added",
+        relativePath: "x.md",
+        content: bytes,
+        observedAt: "2026-07-16T20:00:02.000Z",
+      }),
+    ).rejects.toThrow(/revoked/i);
+  });
+
+  it("saveCandidate rejects missing/foreign matter and foreign eventIds", async () => {
+    const bytes = new TextEncoder().encode("body");
+    const add = await store.ingest({
+      projectId: "p1",
+      grantId: "g1",
+      kind: "added",
+      relativePath: "ri.md",
+      content: bytes,
+      observedAt: "2026-07-16T21:00:00.000Z",
+    });
+
+    await expect(
+      store.saveCandidate(
+        {
+          id: "run-miss",
+          projectId: "p1",
+          matterId: "no-matter",
+          trigger: "retry",
+          eventIds: [add.event!.id],
+          status: "queued",
+          attempt: 1,
+          createdAt: "2026-07-16T21:01:00.000Z",
+          updatedAt: "2026-07-16T21:01:00.000Z",
+        },
+        bodyFor(add.revision!.id, "ri.md", "body"),
+      ),
+    ).rejects.toThrow(/matter missing/i);
+
+    store.upsertMatter({
+      id: "m-other",
+      projectId: "p-other",
+      title: "other",
+      goal: "g",
+      status: "active",
+      createdAt: "2026-07-16T00:00:00.000Z",
+      updatedAt: "2026-07-16T00:00:00.000Z",
+    });
+    await expect(
+      store.saveCandidate(
+        {
+          id: "run-foreign-m",
+          projectId: "p1",
+          matterId: "m-other",
+          trigger: "retry",
+          eventIds: [add.event!.id],
+          status: "queued",
+          attempt: 1,
+          createdAt: "2026-07-16T21:02:00.000Z",
+          updatedAt: "2026-07-16T21:02:00.000Z",
+        },
+        bodyFor(add.revision!.id, "ri.md", "body"),
+      ),
+    ).rejects.toThrow(/matter foreign/i);
+
+    await expect(
+      store.saveCandidate(
+        {
+          id: "run-foreign-e",
+          projectId: "p1",
+          matterId: "m1",
+          trigger: "retry",
+          eventIds: ["evt-does-not-exist"],
+          status: "queued",
+          attempt: 1,
+          createdAt: "2026-07-16T21:03:00.000Z",
+          updatedAt: "2026-07-16T21:03:00.000Z",
+        },
+        bodyFor(add.revision!.id, "ri.md", "body"),
+      ),
+    ).rejects.toThrow(/event missing/i);
+
+    // event under other project
+    store.upsertGrant({
+      id: "g-p2",
+      projectId: "p2",
+      kind: "local_folder",
+      rootPath: "/tmp/p2",
+      status: "active",
+      createdAt: "2026-07-16T00:00:00.000Z",
+      updatedAt: "2026-07-16T00:00:00.000Z",
+    });
+    const foreign = await store.ingest({
+      projectId: "p2",
+      grantId: "g-p2",
+      kind: "added",
+      relativePath: "f.md",
+      content: new TextEncoder().encode("foreign"),
+      observedAt: "2026-07-16T21:04:00.000Z",
+    });
+    await expect(
+      store.saveCandidate(
+        {
+          id: "run-xproj",
+          projectId: "p1",
+          matterId: "m1",
+          trigger: "retry",
+          eventIds: [foreign.event!.id],
+          status: "queued",
+          attempt: 1,
+          createdAt: "2026-07-16T21:05:00.000Z",
+          updatedAt: "2026-07-16T21:05:00.000Z",
+        },
+        bodyFor(add.revision!.id, "ri.md", "body"),
+      ),
+    ).rejects.toThrow(/event foreign/i);
+  });
+
   it("rejects supported WhyClaim when quote not in revision bytes", async () => {
     const v1 = new TextEncoder().encode("hello world");
     const add = await store.ingest({

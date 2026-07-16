@@ -76,31 +76,46 @@ describe("project-memory shared runtime identity", () => {
     }
   });
 
-  it("agent route defaults bind to the shared runtime singleton (same SQLite path)", async () => {
+  it("capability accessors share one SQLite; Agent has no resolveCandidate", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pm-runtime-loop-"));
     try {
-      resetSharedProjectMemoryStoreForTests();
+      resetSharedProjectMemoryStoreForTests(tmp);
       const {
-        getDefaultSqliteStore,
+        getSharedObservationWriter,
+        getSharedAgentMemoryService,
+        getSharedOwnerDecisionWriter,
+        getSharedProjectMemoryReader,
+      } = await import("./runtime");
+
+      const writer = getSharedObservationWriter({ dataDir: tmp });
+      const agent = getSharedAgentMemoryService({ dataDir: tmp });
+      const owner = getSharedOwnerDecisionWriter({ dataDir: tmp });
+      const reader = getSharedProjectMemoryReader({ dataDir: tmp });
+
+      expect(getSharedProjectMemoryDataDir()).toBe(path.resolve(tmp));
+      expect(typeof writer.ingest).toBe("function");
+      expect(Object.keys(writer).sort()).toEqual(["ingest"]);
+      expect(Object.keys(owner).sort()).toEqual(["resolveCandidate"]);
+      expect("resolveCandidate" in agent).toBe(false);
+      expect("ingest" in agent).toBe(false);
+      expect(typeof agent.saveCandidate).toBe("function");
+      expect(typeof agent.readRevision).toBe("function");
+      expect(typeof reader.getMatterState).toBe("function");
+      expect("resolveCandidate" in reader).toBe(false);
+      expect("saveCandidate" in reader).toBe(false);
+
+      const {
         getAgentMemoryService,
         getOwnerDecisionWriter,
         resetDefaultProjectMemoryStoreForTests,
       } = await import("./reconstruct");
-
       resetDefaultProjectMemoryStoreForTests(tmp);
-
-      const shared = getSharedProjectMemoryStore({ dataDir: tmp });
-      const fromRoutes = getDefaultSqliteStore();
-      const agent = getAgentMemoryService();
-      const owner = getOwnerDecisionWriter();
-
-      expect(fromRoutes).toBe(shared);
-      expect(owner).toBe(shared);
-      expect(fromRoutes.dbPath).toBe(projectMemorySqlitePath(tmp));
-      expect(getSharedProjectMemoryDataDir()).toBe(path.resolve(tmp));
-      expect("resolveCandidate" in agent).toBe(false);
-      // grants.ts getDefaultSourceGrantManager() also calls getSharedProjectMemoryStore()
-      // (wired in production; not imported here — @parcel/watcher optional in unit env)
+      const routeAgent = getAgentMemoryService();
+      const routeOwner = getOwnerDecisionWriter();
+      expect("resolveCandidate" in routeAgent).toBe(false);
+      expect(Object.keys(routeOwner).sort()).toEqual(["resolveCandidate"]);
+      // Full store must not be returned as OwnerDecisionWriter
+      expect(routeOwner).not.toBe(getSharedProjectMemoryStore({ dataDir: tmp }));
     } finally {
       resetSharedProjectMemoryStoreForTests();
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -355,6 +355,108 @@ export class SqliteProjectMemoryStore
       );
   }
 
+  getGrant(projectId: string, grantId: string): SourceGrant | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM source_grants WHERE id = ? AND project_id = ?`,
+      )
+      .get(grantId, projectId) as
+      | {
+          id: string;
+          project_id: string;
+          kind: string;
+          root_path: string;
+          status: string;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      kind: row.kind as SourceGrant["kind"],
+      rootPath: row.root_path,
+      status: row.status as SourceGrant["status"],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Write boundary: grant must exist under projectId and be active.
+   * Missing, foreign (other project), disabled, or revoked → reject.
+   */
+  private requireActiveGrant(projectId: string, grantId: string): SourceGrant {
+    if (!grantId?.trim()) {
+      throw new Error("grantId required for ingest");
+    }
+    const byId = this.db
+      .prepare(`SELECT * FROM source_grants WHERE id = ?`)
+      .get(grantId) as
+      | {
+          id: string;
+          project_id: string;
+          kind: string;
+          root_path: string;
+          status: string;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+    if (!byId) {
+      throw new Error("grant missing");
+    }
+    if (byId.project_id !== projectId) {
+      throw new Error("grant foreign to project");
+    }
+    if (byId.status === "revoked") {
+      throw new Error("grant revoked");
+    }
+    if (byId.status !== "active") {
+      throw new Error(`grant not active (${byId.status})`);
+    }
+    return {
+      id: byId.id,
+      projectId: byId.project_id,
+      kind: byId.kind as SourceGrant["kind"],
+      rootPath: byId.root_path,
+      status: byId.status as SourceGrant["status"],
+      createdAt: byId.created_at,
+      updatedAt: byId.updated_at,
+    };
+  }
+
+  private requireMatter(projectId: string, matterId: string): void {
+    const row = this.db
+      .prepare(`SELECT id FROM matters WHERE id = ? AND project_id = ?`)
+      .get(matterId, projectId) as { id: string } | undefined;
+    if (!row) {
+      // distinguish missing vs foreign
+      const any = this.db
+        .prepare(`SELECT project_id FROM matters WHERE id = ?`)
+        .get(matterId) as { project_id: string } | undefined;
+      if (!any) throw new Error("matter missing");
+      throw new Error("matter foreign to project");
+    }
+  }
+
+  private requireEventsBelongToProject(
+    projectId: string,
+    eventIds: string[],
+  ): void {
+    for (const eid of eventIds) {
+      if (!eid?.trim()) throw new Error("eventId empty");
+      const row = this.db
+        .prepare(`SELECT project_id FROM change_events WHERE id = ?`)
+        .get(eid) as { project_id: string } | undefined;
+      if (!row) throw new Error(`event missing: ${eid}`);
+      if (row.project_id !== projectId) {
+        throw new Error(`event foreign to project: ${eid}`);
+      }
+    }
+  }
+
   upsertMatter(matter: Matter): void {
     this.db
       .prepare(
@@ -723,6 +825,8 @@ export class SqliteProjectMemoryStore
   async ingest(
     signal: ObservationSignal,
   ): Promise<{ event?: ChangeEvent; revision?: OriginalRevision }> {
+    this.requireActiveGrant(signal.projectId, signal.grantId);
+
     const relativePath = signal.relativePath.replace(/\\/g, "/");
     if (
       !relativePath ||
@@ -1157,6 +1261,9 @@ export class SqliteProjectMemoryStore
     run: AnalysisRun,
     body: UnderstandingBody,
   ): Promise<UnderstandingRevision> {
+    this.requireMatter(run.projectId, run.matterId);
+    this.requireEventsBelongToProject(run.projectId, run.eventIds);
+
     const safeBody = ensureHonestWhy(body);
     this.validateEvidence(safeBody, run.projectId);
 

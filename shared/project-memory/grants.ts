@@ -6,6 +6,7 @@ import {
   relativePathWithinGrantRoot,
 } from "./observer";
 import {
+  getSharedObservationWriter,
   getSharedProjectMemoryStore,
   resetSharedProjectMemoryStoreForTests,
 } from "./runtime";
@@ -404,11 +405,14 @@ let defaultManager: SourceGrantManager | undefined;
 
 /**
  * Default manager shares the process-wide Project Memory SQLite via runtime.ts.
- * Must not open a separate data/knowledge or .data/project-memory store.
+ * Observation writes go through ObservationWriter capability; grant rows still
+ * need store.upsertGrant (same singleton instance, not a second dataDir).
  */
 export function getDefaultSourceGrantManager(): SourceGrantManager {
   if (!defaultManager) {
     const store = getSharedProjectMemoryStore();
+    // Ensure observation writer is the shared capability (same SQLite).
+    void getSharedObservationWriter();
     defaultManager = new SourceGrantManager({
       store,
       adapter: createLocalObservationAdapter(),

@@ -17,10 +17,11 @@ import {
 import { assertAgentServiceShape } from "./reducer";
 import {
   getSharedAgentMemoryService,
+  getSharedOwnerDecisionWriter,
+  getSharedProjectMemoryReader,
   getSharedProjectMemoryStore,
   resetSharedProjectMemoryStoreForTests,
 } from "./runtime";
-import type { SqliteProjectMemoryStore } from "./sqlite-store";
 import type {
   AgentMemoryService,
   AnalysisRun,
@@ -276,21 +277,26 @@ export async function resolveUnderstanding(
 }
 
 /**
- * Default full store for process (routes pick agent vs owner surface).
- * Delegates to shared runtime so observer manager and Agent APIs share one SQLite.
+ * @deprecated Routes must not receive the full store. Use capability accessors.
+ * Boot/tests only.
  */
-export function getDefaultSqliteStore(): SqliteProjectMemoryStore {
+export function getDefaultSqliteStore() {
   return getSharedProjectMemoryStore();
 }
 
-/** AnalysisRun / memory GET — Reader + CandidateWriter only. */
+/** AnalysisRun — Reader + CandidateWriter only (no resolveCandidate). */
 export function getAgentMemoryService(): AgentMemoryService {
   return getSharedAgentMemoryService();
 }
 
-/** Resolve route — OwnerDecisionWriter only (full store implements the port). */
+/** Memory/revision GET — Reader only. */
+export function getProjectMemoryReader(): ProjectMemoryReader {
+  return getSharedProjectMemoryReader();
+}
+
+/** Resolve route — OwnerDecisionWriter only (not full store object). */
 export function getOwnerDecisionWriter(): OwnerDecisionWriter {
-  return getSharedProjectMemoryStore();
+  return getSharedOwnerDecisionWriter();
 }
 
 export function resetDefaultProjectMemoryStoreForTests(dataDir?: string): void {
