@@ -118,7 +118,11 @@ function normalizeSignalPath(grant: SourceGrant, relativePath: string): string {
 function latestGrantPaths(events: ChangeEvent[], grantId: string): Set<string> {
   const latest = new Map<string, ChangeEvent>();
   for (const event of events) {
-    if (event.grantId === grantId) latest.set(event.relativePath, event);
+    if (event.grantId !== grantId) continue;
+    if (event.kind === "renamed" && event.previousPath) {
+      latest.delete(event.previousPath);
+    }
+    latest.set(event.relativePath, event);
   }
   return new Set(
     [...latest.values()]

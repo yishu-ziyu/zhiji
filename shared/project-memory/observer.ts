@@ -35,6 +35,11 @@ export type LocalObservationAdapterOptions = {
   onReconcile?: (signals: ObservationSignal[]) => Promise<void> | void;
 };
 
+type ObservedWatchEvent = {
+  signal: ObservationSignal;
+  content?: Uint8Array;
+};
+
 export class GrantBoundaryError extends Error {
   constructor(message = "path is outside the authorized grant root") {
     super(message);
@@ -243,6 +248,7 @@ export class LocalObservationAdapter implements ObservationAdapter {
   private readonly clock: () => string;
   private readonly maxReadAttempts: number;
   private readonly onReconcile?: LocalObservationAdapterOptions["onReconcile"];
+  private readonly snapshots = new Map<string, Map<string, Uint8Array>>();
 
   constructor(options: LocalObservationAdapterOptions = {}) {
     this.watcher = options.watcher ?? defaultWatcher;
@@ -270,6 +276,12 @@ export class LocalObservationAdapter implements ObservationAdapter {
       this.maxReadAttempts,
     );
     files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+    this.snapshots.set(
+      grant.id,
+      new Map(
+        files.map((file) => [file.relativePath, new Uint8Array(file.content)]),
+      ),
+    );
     const signals = files.map<ObservationSignal>((file) => ({
       projectId: grant.projectId,
       grantId: grant.id,
@@ -283,10 +295,10 @@ export class LocalObservationAdapter implements ObservationAdapter {
     return signals;
   }
 
-  private async eventToSignal(
+  private async eventToObserved(
     grant: SourceGrant,
     event: ParcelWatchEvent,
-  ): Promise<ObservationSignal | null> {
+  ): Promise<ObservedWatchEvent | null> {
     const safe = await realpathInsideRoot(grant.rootPath, event.path);
     const relativePath = safe.relativePath;
     if (!relativePath || relativePath === ".") {
@@ -295,11 +307,14 @@ export class LocalObservationAdapter implements ObservationAdapter {
     const observedAt = this.clock();
     if (event.type === "delete") {
       return {
-        projectId: grant.projectId,
-        grantId: grant.id,
-        kind: "deleted",
-        relativePath,
-        observedAt,
+        signal: {
+          projectId: grant.projectId,
+          grantId: grant.id,
+          kind: "deleted",
+          relativePath,
+          observedAt,
+        },
+        content: this.snapshots.get(grant.id)?.get(relativePath),
       };
     }
 
@@ -311,14 +326,77 @@ export class LocalObservationAdapter implements ObservationAdapter {
     if (!content) return null;
     const kind = event.type === "create" ? "added" : "modified";
     return {
-      projectId: grant.projectId,
-      grantId: grant.id,
-      kind,
-      relativePath,
+      signal: {
+        projectId: grant.projectId,
+        grantId: grant.id,
+        kind,
+        relativePath,
+        content,
+        observedAt,
+        dedupeKey: `watch:${grant.id}:${kind}:${relativePath}:${sha256Hex(content)}`,
+      },
       content,
-      observedAt,
-      dedupeKey: `watch:${grant.id}:${kind}:${relativePath}:${sha256Hex(content)}`,
     };
+  }
+
+  private async emitWatchEvents(
+    grant: SourceGrant,
+    events: ParcelWatchEvent[],
+    emit: (signal: ObservationSignal) => Promise<void>,
+  ): Promise<void> {
+    const observed: ObservedWatchEvent[] = [];
+    for (const event of events) {
+      const item = await this.eventToObserved(grant, event);
+      if (item) observed.push(item);
+    }
+
+    const deleted = observed.filter(
+      (item) => item.signal.kind === "deleted" && item.content,
+    );
+    const usedDeletes = new Set<ObservedWatchEvent>();
+    const renames = new Map<ObservedWatchEvent, ObservedWatchEvent>();
+    const snapshot = this.snapshots.get(grant.id) ?? new Map<string, Uint8Array>();
+    this.snapshots.set(grant.id, snapshot);
+
+    for (const item of observed) {
+      if (item.signal.kind === "added" && item.content) {
+        const contentSha = sha256Hex(item.content);
+        const prior = deleted.find(
+          (candidate) =>
+            !usedDeletes.has(candidate) &&
+            candidate.signal.relativePath !== item.signal.relativePath &&
+            candidate.content &&
+            sha256Hex(candidate.content) === contentSha,
+        );
+        if (prior) {
+          usedDeletes.add(prior);
+          renames.set(item, prior);
+        }
+      }
+    }
+
+    for (const item of observed) {
+      const prior = renames.get(item);
+      if (prior && item.content) {
+        const contentSha = sha256Hex(item.content);
+        await emit({
+          ...item.signal,
+          kind: "renamed",
+          previousPath: prior.signal.relativePath,
+          dedupeKey: `watch:${grant.id}:renamed:${prior.signal.relativePath}:${item.signal.relativePath}:${contentSha}`,
+        });
+        snapshot.set(item.signal.relativePath, new Uint8Array(item.content));
+        snapshot.delete(prior.signal.relativePath);
+        continue;
+      }
+      if (usedDeletes.has(item)) continue;
+      await emit(item.signal);
+      if (item.signal.kind === "deleted") {
+        snapshot.delete(item.signal.relativePath);
+      } else if (item.content) {
+        snapshot.set(item.signal.relativePath, new Uint8Array(item.content));
+      }
+    }
   }
 
   async start(
@@ -349,10 +427,7 @@ export class LocalObservationAdapter implements ObservationAdapter {
         if (stopped) return;
         try {
           if (error) throw error;
-          for (const event of events) {
-            const signal = await this.eventToSignal(grant, event);
-            if (signal) await emit(signal);
-          }
+          await this.emitWatchEvents(grant, events, emit);
         } catch (caught) {
           if (caught instanceof GrantBoundaryError) throw caught;
           // Provider errors and overflows converge on a fresh authorized-root

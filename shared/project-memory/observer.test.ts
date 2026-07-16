@@ -11,7 +11,7 @@ import {
   type ParcelWatcher,
 } from "./observer";
 import { selectMatterEvents, SourceGrantManager } from "./grants";
-import type { ChangeEvent, SourceGrant } from "./types";
+import type { ChangeEvent, ObservationSignal, SourceGrant } from "./types";
 
 class FakeWatcher implements ParcelWatcher {
   private callback?: (
@@ -127,6 +127,37 @@ describe("MVP-V0 local project observer and grant boundary", () => {
     expect(reconciles).toBe(1);
     await watcher.fail(new Error("provider overflow"));
     expect(reconciles).toBe(2);
+    await stop.stop();
+  });
+
+  it("correlates a same-batch delete/create into one rename signal", async () => {
+    const oldPath = path.join(root, "before.txt");
+    const newPath = path.join(root, "after.txt");
+    fs.writeFileSync(oldPath, "rename content");
+    const watcher = new FakeWatcher();
+    const adapter = createLocalObservationAdapter({
+      watcher,
+      clock: () => "2026-07-16T10:00:00.000Z",
+    });
+    const observed: ObservationSignal[] = [];
+    const stop = await adapter.start(grant(root), async (signal) => {
+      observed.push(signal);
+    });
+    observed.length = 0;
+
+    fs.renameSync(oldPath, newPath);
+    await watcher.emit(
+      { type: "delete", path: oldPath },
+      { type: "create", path: newPath },
+    );
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toMatchObject({
+      kind: "renamed",
+      relativePath: "after.txt",
+      previousPath: "before.txt",
+    });
+    expect(observed[0]?.content).toEqual(new TextEncoder().encode("rename content"));
     await stop.stop();
   });
 
