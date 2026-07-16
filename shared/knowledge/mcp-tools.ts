@@ -15,6 +15,7 @@ import type {
   KnowledgeSource,
 } from "@/shared/types/knowledge";
 import { ACTION_STATUSES } from "@/shared/types/knowledge";
+import { requireProjectId } from "./project-scope";
 
 export type McpToolDefinition = {
   name: string;
@@ -25,7 +26,7 @@ export type McpToolDefinition = {
 export const KNOWLEDGE_MCP_TOOLS: McpToolDefinition[] = [
   {
     name: "search_knowledge",
-    description: "Search knowledge cards by query and optional filters",
+    description: "Search knowledge cards by query within a required projectId",
     inputSchema: {
       type: "object",
       properties: {
@@ -38,14 +39,15 @@ export const KNOWLEDGE_MCP_TOOLS: McpToolDefinition[] = [
             limit: { type: "number" },
             projectId: { type: "string" },
           },
+          required: ["projectId"],
         },
       },
-      required: ["query"],
+      required: ["query", "filters"],
     },
   },
   {
     name: "add_knowledge",
-    description: "Add a knowledge card",
+    description: "Add a knowledge card in a required projectId",
     inputSchema: {
       type: "object",
       properties: {
@@ -56,7 +58,7 @@ export const KNOWLEDGE_MCP_TOOLS: McpToolDefinition[] = [
         links: { type: "array", items: { type: "string" } },
         projectId: { type: "string" },
       },
-      required: ["content"],
+      required: ["content", "projectId"],
     },
   },
   {
@@ -68,7 +70,7 @@ export const KNOWLEDGE_MCP_TOOLS: McpToolDefinition[] = [
         goal: { type: "string" },
         projectId: { type: "string" },
       },
-      required: ["goal"],
+      required: ["goal", "projectId"],
     },
   },
   {
@@ -95,11 +97,13 @@ export const KNOWLEDGE_MCP_TOOLS: McpToolDefinition[] = [
         context: { type: "string" },
         projectId: { type: "string" },
       },
+      required: ["projectId"],
     },
   },
 ];
 
-function offlineDissect(goal: string, projectId?: string): ActionItem[] {
+function offlineDissect(goal: string, projectId: string): ActionItem[] {
+  const scope = requireProjectId(projectId);
   const clean = goal.trim();
   const chunks = clean
     .split(/[；;。\n]|然后|并且|以及|再/)
@@ -129,17 +133,20 @@ function offlineDissect(goal: string, projectId?: string): ActionItem[] {
       status: "todo",
       nextStep: `推进：${description.slice(0, 40)}`,
       verificationCriteria: `子任务「${description.slice(0, 40)}」可核对完成`,
-      projectId,
+      projectId: scope,
     }),
   );
 }
 
 function offlineSuggestions(
-  context?: string,
-  projectId?: string,
+  context: string | undefined,
+  projectId: string,
 ): ActionSuggestion[] {
-  const open = listActions({ projectId }).filter((a) => a.status !== "done");
-  const cards = listCards({ projectId }).slice(0, 5);
+  const scope = requireProjectId(projectId);
+  const open = listActions({ projectId: scope }).filter(
+    (a) => a.status !== "done",
+  );
+  const cards = listCards({ projectId: scope }).slice(0, 5);
   const suggestions: ActionSuggestion[] = [];
 
   for (const item of open.slice(0, 3)) {
@@ -191,7 +198,15 @@ export function invokeKnowledgeMcpTool(
     switch (name) {
       case "search_knowledge": {
         const query = String(args.query ?? "");
-        const filters = args.filters as KnowledgeSearchFilters | undefined;
+        const rawFilters =
+          (args.filters as KnowledgeSearchFilters | undefined) ?? {};
+        const projectId = requireProjectId(
+          rawFilters.projectId ?? args.projectId,
+        );
+        const filters: KnowledgeSearchFilters = {
+          ...rawFilters,
+          projectId,
+        };
         return {
           ok: true,
           tool: name,
@@ -199,6 +214,7 @@ export function invokeKnowledgeMcpTool(
         };
       }
       case "add_knowledge": {
+        const projectId = requireProjectId(args.projectId);
         const card = addCard({
           content: String(args.content ?? ""),
           source: (args.source as KnowledgeSource) || "manual",
@@ -209,17 +225,15 @@ export function invokeKnowledgeMcpTool(
           links: Array.isArray(args.links)
             ? args.links.map(String)
             : undefined,
-          projectId: args.projectId ? String(args.projectId) : undefined,
+          projectId,
         });
         return { ok: true, tool: name, result: { card } };
       }
       case "dissect_task": {
         const goal = String(args.goal ?? "");
         if (!goal.trim()) throw new Error("goal 不能为空");
-        const actionItems = offlineDissect(
-          goal,
-          args.projectId ? String(args.projectId) : undefined,
-        );
+        const projectId = requireProjectId(args.projectId);
+        const actionItems = offlineDissect(goal, projectId);
         return {
           ok: true,
           tool: name,
@@ -237,14 +251,12 @@ export function invokeKnowledgeMcpTool(
       }
       case "generate_action_suggestions": {
         const context = args.context ? String(args.context) : undefined;
+        const projectId = requireProjectId(args.projectId);
         return {
           ok: true,
           tool: name,
           result: {
-            suggestions: offlineSuggestions(
-              context,
-              args.projectId ? String(args.projectId) : undefined,
-            ),
+            suggestions: offlineSuggestions(context, projectId),
           },
         };
       }
