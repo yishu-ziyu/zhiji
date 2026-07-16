@@ -142,7 +142,7 @@
 
 ## 备份状态
 
-- 本地：`/Users/mahaoxuan/Desktop/黑客松/fc-opc-ibot`
+- 本地：仓库根目录
 - GitHub：https://github.com/yishu-ziyu/fc-opc-ibot
 - PR：https://github.com/yishu-ziyu/fc-opc-ibot/pull/1
 - 分支：`feature/ai-agent-platform`
@@ -165,7 +165,7 @@
 ### 对工程策略的影响
 
 - 主战场从旧假设的「完成度/应用价值/商业潜力/创新性/安全性」改为 **90% 人工评分体验**。
-- step-3.7-flash tool_use spike 仍做，但只是 10% 技术评分的一部分，不再绑架主线。
+- step-3.7-flash tool_use spike 仍做，但只是 10% 技术评分的一部分，不再占满全部精力。
 - 小掌柜 UI、早报、4 动作链、180 秒路演、mock/录像兜底优先级上调为 P0。
 - 文档已落地到 `docs/score-rubric.md`，并同步更新 `docs/implementation/7-day-plan.md` 和 spec v2。
 
@@ -179,11 +179,11 @@
 
 ---
 
-## 2026-07-13：效率 OPC 交付闭环主线落地
+## 2026-07-13：效率 OPC 交付流程落地
 
 ### 产品锁定
 - 赛道：效率 OPC（不做电商主叙事）
-- 北极星：闭环率
+- 北极星：完成率
 - 主产品：交付运营助手（客户对话 → 承诺 → 看板 → 确认）
 
 ### 工程

@@ -12,6 +12,31 @@ tsconfig.tsbuildinfo
 ui-test.mjs
 .tmp/
 
+# Local orchestration and raw review evidence. These are preserved on the
+# internal checkpoint branch, not published from this public repository.
+.lavish/
+/tmp/
+/.ship/config.yaml
+/.ship/tasks/attention-file-kb-20260715/
+/.ship/tasks/attention-protocol-v0-20260715/
+/.ship/tasks/knowledge-retrieval-v0-20260716/
+/.ship/tasks/overnight-20260716/
+/.ship/tasks/replace-decorative-radial-canvas-with-state-first-focus-canv/
+/WORKTREE_MAP.md
+/docs/design/project-canvas-implementation-state-first.png
+/docs/design/proof-relation-card-focus.png
+/docs/operations/
+/docs/product/2026-07-15-external-review-5-6-pro-alignment.md
+/docs/product/2026-07-15-open-product-and-agent-questions-for-review.md
+/docs/product/CODEX_LAVISH_INTEGRATION_REVIEW_PROMPT.md
+/docs/product/CODEX_SOCRATIC_PRODUCT_PROMPT.md
+/docs/product/FOUR_WINDOW_COLLAB.md
+/docs/product/LIVE_COLLABORATION_BOARD.md
+/docs/product/dev-contract-*.md
+/docs/product/reviews/
+/docs/product/socratic-product-clarity.md
+/docs/research/2026-07-15-lavish-product-integration-independent-review.md
+
 # Knowledge store (runtime JSON; re-seeded if empty)
 data/knowledge/*.json
 !data/knowledge/.gitkeep
