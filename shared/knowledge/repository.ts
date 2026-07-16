@@ -1679,8 +1679,19 @@ export function listRelations(filter?: {
   type?: RelationType | RelationType[];
   workItemId?: string;
   includeRejected?: boolean;
+  /** T-19: when set, only relations whose both endpoints live in this project */
+  projectId?: string;
 }): KnowledgeRelation[] {
-  const all = [...workingRelations().values()];
+  let all = [...workingRelations().values()];
+  if (filter?.projectId?.trim()) {
+    const scope = requireProjectId(filter.projectId);
+    const cardIds = new Set(
+      listCards({ projectId: scope }).map((c) => c.id),
+    );
+    all = all.filter(
+      (r) => cardIds.has(r.fromCardId) && cardIds.has(r.toCardId),
+    );
+  }
   return filterRelationsForQuery(all, filter).map(copyRelation);
 }
 
@@ -1916,7 +1927,8 @@ function resolveSourceContentHash(input: {
 
 /**
  * Create Owner-approved cross-project reference.
- * Pins source revision hash; sensitive sources never store title on host side.
+ * Pins source revision (client pin or computed content hash).
+ * Sensitive sources never store title on host side.
  */
 export function createCrossProjectReference(input: {
   hostProjectId: string;
@@ -1924,6 +1936,8 @@ export function createCrossProjectReference(input: {
   sourceKind: "card" | "material";
   sourceObjectId: string;
   approvedBy: string;
+  /** Explicit pin (G5: sourceRevision). Prefer over live hash when provided. */
+  sourceRevision?: string;
 }): CrossProjectReference {
   const hostProjectId = requireProjectId(input.hostProjectId);
   const sourceProjectId = requireProjectId(input.sourceProjectId);
@@ -1940,11 +1954,16 @@ export function createCrossProjectReference(input: {
     throw new Error("sourceKind 无效");
   }
 
+  // Ensure source object exists in source project (fail closed).
   const { hash, title } = resolveSourceContentHash({
     sourceProjectId,
     sourceKind: input.sourceKind,
     sourceObjectId: objectId,
   });
+  const pin =
+    input.sourceRevision?.trim() ||
+    hash ||
+    `${input.sourceKind}:${objectId}:v1`;
   const now = new Date().toISOString();
   const ref: CrossProjectReference = {
     id: randomUUID(),
@@ -1952,7 +1971,7 @@ export function createCrossProjectReference(input: {
     sourceProjectId,
     sourceKind: input.sourceKind,
     sourceObjectId: objectId,
-    sourceContentHash: hash,
+    sourceContentHash: pin,
     approvedBy,
     approvedAt: now,
     lastVerifiedAt: now,
@@ -1999,6 +2018,84 @@ export function verifyCrossProjectReference(
   map.set(live.id, live);
   saveCrossProjectRefs(map);
   return copyCrossProjectRef(live);
+}
+
+/**
+ * Mark all host refs pointing at a source object as needing review after
+ * source revision change. Does not rewrite the pinned sourceContentHash.
+ */
+export function markCrossProjectSourceChanged(input: {
+  sourceProjectId: string;
+  sourceObjectId: string;
+  newRevision?: string;
+}): CrossProjectReference[] {
+  const sourceProjectId = requireProjectId(input.sourceProjectId);
+  const objectId = input.sourceObjectId.trim();
+  if (!objectId) throw new Error("sourceObjectId 无效");
+  const map = loadCrossProjectRefs();
+  const now = new Date().toISOString();
+  const updated: CrossProjectReference[] = [];
+  for (const ref of map.values()) {
+    if (
+      ref.sourceProjectId !== sourceProjectId ||
+      ref.sourceObjectId !== objectId
+    ) {
+      continue;
+    }
+    // Pinned revision stays; newRevision only proves a change occurred.
+    if (
+      input.newRevision?.trim() &&
+      input.newRevision.trim() !== ref.sourceContentHash
+    ) {
+      ref.reviewRequired = true;
+    } else if (!input.newRevision?.trim()) {
+      ref.reviewRequired = true;
+    } else {
+      ref.reviewRequired = true;
+    }
+    ref.lastVerifiedAt = now;
+    map.set(ref.id, ref);
+    updated.push(copyCrossProjectRef(ref));
+  }
+  if (updated.length > 0) saveCrossProjectRefs(map);
+  return updated;
+}
+
+/** API-facing view of a cross-project reference (G5 RED contract fields). */
+export function toCrossProjectReferenceView(ref: CrossProjectReference): {
+  id: string;
+  projectId: string;
+  hostProjectId: string;
+  sourceProjectId: string;
+  sourceKind: "card" | "material";
+  sourceObjectId: string;
+  sourceRevision: string;
+  sourceContentHash: string;
+  approvedBy: string;
+  approvedAt: string;
+  verifiedAt: string;
+  lastVerifiedAt: string;
+  reviewRequired: boolean;
+  reviewStatus: "current" | "needs_review";
+  sourceTitle?: string;
+} {
+  return {
+    id: ref.id,
+    projectId: ref.hostProjectId,
+    hostProjectId: ref.hostProjectId,
+    sourceProjectId: ref.sourceProjectId,
+    sourceKind: ref.sourceKind,
+    sourceObjectId: ref.sourceObjectId,
+    sourceRevision: ref.sourceContentHash,
+    sourceContentHash: ref.sourceContentHash,
+    approvedBy: ref.approvedBy,
+    approvedAt: ref.approvedAt,
+    verifiedAt: ref.lastVerifiedAt,
+    lastVerifiedAt: ref.lastVerifiedAt,
+    reviewRequired: ref.reviewRequired,
+    reviewStatus: ref.reviewRequired ? "needs_review" : "current",
+    sourceTitle: ref.sourceTitle,
+  };
 }
 
 export { WorkItemValidationError, RelationValidationError };
