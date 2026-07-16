@@ -252,7 +252,49 @@ export async function runStateReconstruction(
   };
 
   let body: UnderstandingBody;
-  try {
+
+  // 无事件时禁止调模型编造英文空话：给短中文诚实结果。
+  if (events.length === 0) {
+    body = {
+      now: {
+        text: "目前还没有可核对的文件变化。",
+        evidence: [],
+        gaps: ["授权夹里暂无新的可读文件变化"],
+        conflicts: [],
+      },
+      then: {
+        text: state.accepted?.body.now.text ?? "还没有已确认的先前理解",
+        at: state.accepted?.createdAt ?? "unknown",
+        evidence: state.accepted?.body.now.evidence ?? [],
+        gaps: state.accepted ? [] : ["尚无已确认理解"],
+        conflicts: [],
+      },
+      changed: [
+        {
+          before: "",
+          after: "未发现新的文件变化",
+          eventIds: [],
+          evidence: [],
+        },
+      ],
+      why: [
+        {
+          text: "没有新的文件内容可供核对。只新建空文件夹通常不会记成变化。",
+          status: "unknown",
+          evidence: [],
+        },
+      ],
+      depends: [],
+      evidenceRevisionIds: [],
+      nextDecision:
+        "在文件夹中放入或修改文件后，再点「再读一遍变化」。不必对空结果强行确认。",
+    };
+    run = {
+      ...run,
+      status: "awaiting_owner",
+      updatedAt: new Date().toISOString(),
+    };
+  } else try {
     body = sanitizeModelBody(await model.propose(reconInput), reconInput);
   } catch (err) {
     const message = err instanceof Error ? err.message : "model failed";

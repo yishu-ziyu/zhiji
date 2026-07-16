@@ -120,7 +120,7 @@ export default function MvpKnowledgeWorkbenchPage() {
 
   /**
    * First-use chain maps onto the Owner-visible 8-step Agent process.
-   * Progress advances only after each real API returns — never a timer fake.
+   * Progress advances only after each real API returns - never a timer fake.
    */
   async function runFirstUsePipeline(options: {
     kind: "fresh" | "continue";
@@ -267,16 +267,35 @@ export default function MvpKnowledgeWorkbenchPage() {
   }
 
   async function runAnalysis() {
-    if (!memory) return;
+    if (!memory || !grant) return;
     setBusy(true);
     setError(null);
+    setResolutionMessage(null);
     try {
-      const eventIds = eventIdsForMatterAnalysis(memory);
+      // 真的再读磁盘：先对账，再决定是否重建。禁止「用旧事件复述 + 假成功」。
+      setPipelinePhase("map");
+      await api.reconcileGrant(projectId, grant.id);
+      const afterReconcile = await api.getMemory(projectId, matterId);
+      setMemory(afterReconcile);
+      setMatter(afterReconcile.matter);
+
+      const eventIds = eventIdsForMatterAnalysis(afterReconcile);
+      if (eventIds.length === 0) {
+        setPipelinePhase(null);
+        setNotice(
+          "没发现可核对的文件变化。只新建空文件夹不会记成变化；放入或修改文件后再试。",
+        );
+        return;
+      }
+
+      setPipelinePhase("reason");
       await api.runAnalysis(projectId, matterId, eventIds);
       await loadMemory();
-      setNotice("已根据最新变化更新理解，请你再确认一次。");
+      setPipelinePhase(null);
+      setNotice("已根据文件夹里的文件变化更新理解，请你确认是否准确。");
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "更新理解失败");
+      setPipelinePhase(null);
+      setError(nextError instanceof Error ? nextError.message : "再读失败");
     } finally {
       setBusy(false);
     }

@@ -67,15 +67,15 @@ export function buildDeterministicUnderstandingBody(
   const now: StateClaim = {
     text: nowText,
     evidence: anchors,
-    gaps: anchors.length === 0 ? ["无可用 evidence 锚点"] : [],
+    gaps: anchors.length === 0 ? ["暂无可用的原文依据"] : [],
     conflicts: [],
   };
 
   const then: StateClaim & { at: string } = {
-    text: prev?.now?.text ?? "尚无已确认的先前理解",
+    text: prev?.now?.text ?? "还没有已确认的先前理解",
     at: input.accepted?.createdAt ?? "unknown",
     evidence: prev?.now?.evidence ?? [],
-    gaps: prev ? [] : ["无 prior accepted"],
+    gaps: prev ? [] : ["尚无已确认理解"],
     conflicts: [],
   };
 
@@ -107,9 +107,9 @@ function summarizeNow(
   changed: ChangeClaim[],
 ): string {
   if (changed.length === 0 || changed[0]?.after === "无明显文件变化") {
-    return `事项「${input.matterId}」：暂无新的可核对变化`;
+    return "目前还没有可核对的文件变化。";
   }
-  return `事项「${input.matterId}」：观测到 ${changed.length} 处变化，待 Owner 确认新理解`;
+  return `看到 ${changed.length} 处相关变化，请确认下面的理解是否准确。`;
 }
 
 function anchorsFromEvents(
