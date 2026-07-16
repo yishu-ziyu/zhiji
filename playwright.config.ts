@@ -15,7 +15,7 @@ export default defineConfig({
   // 用生产 build 跑 e2e（Turbopack dev server 在 React 19 + Next.js 16 下 hydration 不工作）
   webServer: {
     command:
-      "rm -rf .tmp/e2e-knowledge && mkdir -p .tmp/e2e-knowledge && npm run build && KNOWLEDGE_DATA_DIR=.tmp/e2e-knowledge AGENT_RUN_MODE=deterministic npm run start",
+      "rm -rf .tmp/e2e-knowledge && mkdir -p .tmp/e2e-knowledge && npm run build && KNOWLEDGE_DATA_DIR=.tmp/e2e-knowledge SEED_DEMO=1 AGENT_RUN_MODE=deterministic npm run start",
     url: baseURL,
     reuseExistingServer: !!process.env.PLAYWRIGHT_REUSE_SERVER,
     timeout: 120000,

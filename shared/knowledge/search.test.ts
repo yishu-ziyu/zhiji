@@ -15,6 +15,7 @@ describe("searchKnowledge", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fc-opc-search-"));
     previousDataDir = process.env.KNOWLEDGE_DATA_DIR;
     process.env.KNOWLEDGE_DATA_DIR = tmpDir;
+    process.env.SEED_DEMO = "1";
     const repo = await import("./repository");
     const search = await import("./search");
     addCard = repo.addCard;
@@ -30,6 +31,7 @@ describe("searchKnowledge", () => {
     } else {
       process.env.KNOWLEDGE_DATA_DIR = previousDataDir;
     }
+    delete process.env.SEED_DEMO;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

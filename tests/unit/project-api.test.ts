@@ -27,6 +27,8 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fc-opc-project-api-"));
   process.env.KNOWLEDGE_DATA_DIR = tmpDir;
   process.env.AGENT_RUN_MODE = "deterministic";
+  // Seed-dependent fixtures (ka-seed-*) require explicit demo mode.
+  process.env.SEED_DEMO = "1";
   resetKnowledgeStoreForTests();
 });
 
@@ -34,6 +36,7 @@ afterEach(() => {
   delete process.env.KNOWLEDGE_DATA_DIR;
   delete process.env.AGENT_RUN_MODE;
   delete process.env.LLM_BASE_URL;
+  delete process.env.SEED_DEMO;
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 

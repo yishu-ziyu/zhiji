@@ -35,6 +35,12 @@ import {
 } from "@/shared/types/knowledge";
 
 export { DEFAULT_PROJECT_ID } from "@/shared/types/knowledge";
+
+/** Demo seed is off by default. Only inject when SEED_DEMO=1. */
+export function isDemoSeedEnabled(): boolean {
+  return process.env.SEED_DEMO === "1";
+}
+
 import {
   assertCanPatchTo,
   assertWorkItemForStatus,
@@ -351,6 +357,7 @@ function normalizeCard(
     timestamp: raw.timestamp ?? new Date().toISOString(),
     links: raw.links ?? [],
     title: raw.title?.trim() || undefined,
+    sourceFileId: raw.sourceFileId?.trim() || undefined,
   };
 }
 
@@ -536,6 +543,8 @@ function seedIfEmpty(
   actions: Map<string, ActionItem>,
   events: Map<string, WorkEvent>,
 ): void {
+  // Product honesty: never auto-inject demo work as the user's situation.
+  if (!isDemoSeedEnabled()) return;
   if (cards.size > 0) return;
   const now = new Date().toISOString();
   for (const card of buildSeedCards(now)) {
@@ -567,6 +576,7 @@ function seedIfEmpty(
 
 /** Ensure demo relations exist when cards already seeded without relations file. */
 function ensureSeedRelations(): void {
+  if (!isDemoSeedEnabled()) return;
   const relations = loadRelations();
   if (relations.size > 0) return;
   const cards = loadCards();
@@ -588,12 +598,13 @@ function workingRelations(): Map<string, KnowledgeRelation> {
 
 function workingProjects(): Map<string, Project> {
   const projects = loadProjects();
-  if (!projects.has(DEFAULT_PROJECT_ID)) {
+  // Only auto-create the labeled demo project when SEED_DEMO=1.
+  if (isDemoSeedEnabled() && !projects.has(DEFAULT_PROJECT_ID)) {
     const now = new Date().toISOString();
     projects.set(DEFAULT_PROJECT_ID, {
       id: DEFAULT_PROJECT_ID,
-      name: "fc-opc-ibot",
-      summary: "帮助知识工作者恢复项目状态、理解变化并继续执行",
+      name: "【示例】fc-opc-ibot",
+      summary: "示例数据（SEED_DEMO=1），不是用户自建工作局面",
       status: "active",
       createdAt: now,
       updatedAt: now,
@@ -1259,7 +1270,8 @@ export function unlinkEvidence(
 }
 
 /**
- * Test helper: wipe store files and re-seed.
+ * Test helper: wipe store files.
+ * Re-seeds only when SEED_DEMO=1 (same as production path).
  * Prefer setting KNOWLEDGE_DATA_DIR to a temp dir in tests.
  */
 export function resetKnowledgeStoreForTests(): void {
@@ -1277,11 +1289,17 @@ export function resetKnowledgeStoreForTests(): void {
   ]) {
     if (fs.existsSync(p)) fs.unlinkSync(p);
   }
-  const cards = new Map<string, KnowledgeCard>();
-  const actions = new Map<string, ActionItem>();
-  const events = new Map<string, WorkEvent>();
-  seedIfEmpty(cards, actions, events);
-  workingProjects();
+  const filesDir = path.join(resolveDataDir(), "files");
+  if (fs.existsSync(filesDir)) {
+    fs.rmSync(filesDir, { recursive: true, force: true });
+  }
+  if (isDemoSeedEnabled()) {
+    workingProjects();
+    const cards = new Map<string, KnowledgeCard>();
+    const actions = new Map<string, ActionItem>();
+    const events = new Map<string, WorkEvent>();
+    seedIfEmpty(cards, actions, events);
+  }
 }
 
 export function getKnowledgeDataDirForTests(): string {
