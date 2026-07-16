@@ -39,7 +39,12 @@ import type {
   RedactedCrossProjectHint,
 } from "@/shared/types/knowledge";
 import { REDACTED_CROSS_PROJECT_HINT_MESSAGE } from "@/shared/types/knowledge";
-import { materialCardSummary, materialContentHash, readProjectMaterial } from "@/shared/knowledge/materials";
+import {
+  listProjectMaterials,
+  materialCardSummary,
+  materialContentHash,
+  readProjectMaterial,
+} from "@/shared/knowledge/materials";
 import {
   projectResultToCandidateCard,
   type ResultCandidateInput,
@@ -728,8 +733,38 @@ function eventEvidenceIds(meta?: Record<string, unknown>): string[] {
   ];
 }
 
+/** True when project has cards, work items, or materials (not an empty shell). */
+export function projectHasWorkbenchSubstance(projectId: string): boolean {
+  const id = projectId?.trim();
+  if (!id) return false;
+  if (listCards({ projectId: id }).length > 0) return true;
+  if (listActions({ projectId: id }).length > 0) return true;
+  try {
+    if (listProjectMaterials(id).length > 0) return true;
+  } catch {
+    // materials store unavailable — treat as no materials
+  }
+  return false;
+}
+
+const EMPTY_SHELL_GRACE_MS = 15 * 60 * 1000;
+
+/**
+ * Workbench project list: active only; hide long-lived empty shells
+ * (no cards / work / materials) so fixture leftovers do not clutter the nav.
+ * Brand-new empty projects stay visible for EMPTY_SHELL_GRACE_MS.
+ */
 export function listProjects(): Project[] {
-  const projects = [...workingProjects().values()].map(copyProject);
+  const now = Date.now();
+  const projects = [...workingProjects().values()]
+    .map(copyProject)
+    .filter((project) => project.status === "active")
+    .filter((project) => {
+      if (projectHasWorkbenchSubstance(project.id)) return true;
+      const created = Date.parse(project.createdAt);
+      if (!Number.isFinite(created)) return false;
+      return now - created < EMPTY_SHELL_GRACE_MS;
+    });
   const workItems = listActions();
   const events = [...workingEvents().values()];
   return rankProjectsByActivity(projects, workItems, events);
@@ -782,12 +817,17 @@ export function addProject(input: {
 /**
  * Merge glue: ensure a knowledge Project exists with a stable id
  * (folder-connect uses projectIdFromCanonicalFolder). Idempotent.
+ *
+ * `syncNameFromFolder`: folder connect/continue always aligns display name with
+ * the authorized folder basename (fixes stale names after re-authorize).
  */
 export function ensureProject(input: {
   id: string;
   name: string;
   summary?: string;
   sensitive?: boolean;
+  /** When true, overwrite name if the folder basename changed. */
+  syncNameFromFolder?: boolean;
 }): Project {
   const id = input.id?.trim();
   const name = input.name?.trim();
@@ -797,12 +837,28 @@ export function ensureProject(input: {
   const existing = projects.get(id);
   if (existing) {
     let changed = false;
-    if (!existing.name?.trim() && name) {
+    if (input.syncNameFromFolder && existing.name !== name) {
+      existing.name = name;
+      changed = true;
+    } else if (!existing.name?.trim() && name) {
       existing.name = name;
       changed = true;
     }
-    if (input.summary?.trim() && !existing.summary?.trim()) {
-      existing.summary = input.summary.trim();
+    if (input.summary?.trim()) {
+      // Folder-authorized summary should stay truthful; refresh when syncing name.
+      if (
+        input.syncNameFromFolder ||
+        !existing.summary?.trim()
+      ) {
+        if (existing.summary !== input.summary.trim()) {
+          existing.summary = input.summary.trim();
+          changed = true;
+        }
+      }
+    }
+    // Re-authorize brings empty shells back to active.
+    if (existing.status !== "active") {
+      existing.status = "active";
       changed = true;
     }
     if (changed) {
@@ -894,10 +950,24 @@ export function getProjectCanvasSnapshot(
 ): ProjectCanvasSnapshot {
   const project = getProject(projectId);
   if (!project) throw new Error("项目不存在");
+
+  // Policy A: old projects that already have materials still get draft work items
+  // when the canvas opens (idempotent). Avoids "materials only, work items 0".
+  try {
+    const { seedWorkItemsFromMaterials } = require(
+      "@/shared/knowledge/seed-work-items-from-materials",
+    ) as {
+      seedWorkItemsFromMaterials: (projectId: string) => unknown;
+    };
+    seedWorkItemsFromMaterials(projectId);
+  } catch {
+    // Seed is best-effort; never block canvas read.
+  }
+
   const cards = listCards({ projectId });
-  const workItems = listActions({ projectId });
+  let workItems = listActions({ projectId });
   const cardIds = new Set(cards.map((card) => card.id));
-  const workItemIds = new Set(workItems.map((item) => item.id));
+  let workItemIds = new Set(workItems.map((item) => item.id));
   const events = [...workingEvents().values()]
     .filter((event) => workItemIds.has(event.workItemId))
     .map(copyEvent);
@@ -912,13 +982,24 @@ export function getProjectCanvasSnapshot(
       .map((event) => event.actor)
       .filter((actor) => actor.startsWith("agent:") || actor === "agent"),
   );
+  // If focus was a noise seed we just cancelled, fall back to project hub.
+  let resolvedFocus = focus;
   const focusBelongs =
-    (focus.kind === "project" && focus.id === projectId) ||
-    (focus.kind === "card" && cardIds.has(focus.id)) ||
-    (focus.kind === "work_item" && workItemIds.has(focus.id)) ||
-    (focus.kind === "event" && eventIds.has(focus.id)) ||
-    (focus.kind === "agent" && agentActors.has(focus.id));
-  if (!focusBelongs) throw new Error("关注对象不属于当前项目");
+    (resolvedFocus.kind === "project" && resolvedFocus.id === projectId) ||
+    (resolvedFocus.kind === "card" && cardIds.has(resolvedFocus.id)) ||
+    (resolvedFocus.kind === "work_item" &&
+      workItemIds.has(resolvedFocus.id)) ||
+    (resolvedFocus.kind === "event" && eventIds.has(resolvedFocus.id)) ||
+    (resolvedFocus.kind === "agent" && agentActors.has(resolvedFocus.id));
+  if (!focusBelongs) {
+    if (resolvedFocus.kind === "work_item") {
+      resolvedFocus = { kind: "project", id: projectId };
+      workItems = listActions({ projectId });
+      workItemIds = new Set(workItems.map((item) => item.id));
+    } else {
+      throw new Error("关注对象不属于当前项目");
+    }
+  }
 
   const recentCardIds = [...loadFootprintEvents().values()]
     .filter((event) => cardIds.has(event.cardId) && event.depth > 0)
@@ -935,7 +1016,7 @@ export function getProjectCanvasSnapshot(
     events,
     relations,
     checkpoint: getLatestProjectCheckpoint(projectId),
-    focus,
+    focus: resolvedFocus,
     now,
     recentCardIds,
   });

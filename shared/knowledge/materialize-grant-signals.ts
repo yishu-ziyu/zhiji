@@ -34,12 +34,12 @@ const MAX_BYTES = 256_000;
 
 function isSkippablePath(relativePath: string): boolean {
   const normalized = `/${relativePath.replace(/\\/g, "/")}`;
-  // Skip hidden segments (e.g. /.git/, /.cache/) except rare top-level notes.
   const parts = normalized.split("/").filter(Boolean);
   for (const part of parts) {
-    if (part.startsWith(".") && !/^\.[^.]+\.(md|txt|json)$/i.test(part)) {
-      return true;
-    }
+    // Skip all hidden segments (.git, .fixture-seed-*, .DS_Store, …).
+    // Canvas seeds should come from visible work docs (README/TODO/…), not dots.
+    if (part.startsWith(".")) return true;
+    if (/fixture[-_]?seed/i.test(part)) return true;
   }
   return SKIP_PATH_PARTS.some((part) => normalized.includes(part));
 }

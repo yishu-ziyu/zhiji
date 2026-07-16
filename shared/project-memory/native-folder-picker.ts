@@ -461,10 +461,12 @@ async function finalizeConnectionForAnalysis(
   const defaultWatchSet = connection.watchSet;
 
   // Single product surface: folder-connect id must appear in knowledge workbench list.
+  // Always sync display name from authorized folder basename (stale names after re-auth).
   ensureProject({
     id: projectId,
     name: meta.folderName || "本地项目",
     summary: "已授权本地文件夹（只读边界内）",
+    syncNameFromFolder: true,
   });
 
   // Load persisted matter/head/understanding before reconcile projects new disk state.

@@ -4,20 +4,23 @@
  *
  * Deterministic only — model loop can later replace/supplement the same schema.
  */
-import { createHash } from "node:crypto";
 import type { ActionItem, KnowledgeCard } from "@/shared/types/knowledge";
 import {
   addAction,
   getAction,
+  getCard,
   listActions,
   listCards,
+  updateActionStatus,
 } from "@/shared/knowledge/repository";
+import { createHash } from "node:crypto";
 
 const MAX_SEED_ITEMS = 5;
 
 export type SeedWorkItemsResult = {
   created: number;
   skippedExisting: number;
+  cancelledNoise: number;
   itemIds: string[];
   /** Stable reason for empty seed (product-facing Chinese). */
   emptyReason: string | null;
@@ -36,6 +39,32 @@ function baseName(pathOrName: string): string {
   return pathOrName.split(/[/\\]/).pop() || pathOrName;
 }
 
+/** Hidden / fixture / lockfile noise must never become work items. */
+export function isNoiseSeedName(name: string): boolean {
+  const n = name.toLowerCase();
+  if (!n.trim()) return true;
+  if (n.startsWith(".")) return true;
+  if (/fixture[-_]?seed/i.test(n)) return true;
+  if (/seed[-_]?(sha|log|hash|id)/i.test(n)) return true;
+  if (n.includes("package-lock") || n.includes("pnpm-lock")) return true;
+  if (n === "package.json" || n === "tsconfig.json") return true;
+  if (
+    n.endsWith(".map") ||
+    n.endsWith(".mp3") ||
+    n.endsWith(".css") ||
+    n.endsWith(".lock") ||
+    n.endsWith(".png") ||
+    n.endsWith(".jpg") ||
+    n.endsWith(".jpeg") ||
+    n.endsWith(".gif") ||
+    n.endsWith(".webp") ||
+    n.endsWith(".svg")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function rankMaterialCard(card: KnowledgeCard): number {
   const name = baseName(card.sourceFileId || card.title || "").toLowerCase();
   if (/^readme(\.|$)/i.test(name)) return 0;
@@ -47,21 +76,27 @@ function rankMaterialCard(card: KnowledgeCard): number {
   return 40;
 }
 
+function hasWorkSignal(content: string | undefined): boolean {
+  const text = (content || "").trim();
+  if (!text) return false;
+  // Checklist / action-ish markdown
+  if (/^\s*[-*]\s+\[[ xX]\]/m.test(text)) return true;
+  if (/\b(TODO|FIXME|下一步|待办|要做)\b/i.test(text)) return true;
+  // Real prose, not a bare hash/token
+  if (text.length >= 40 && !/^[a-f0-9\s-]{8,}$/i.test(text)) return true;
+  return false;
+}
+
 function isSeedableCard(card: KnowledgeCard): boolean {
   if (!card.sourceFileId?.trim() && !card.title?.trim()) return false;
-  const name = baseName(card.sourceFileId || card.title || "").toLowerCase();
-  // Skip obvious non-work noise even if it became a card.
-  if (
-    name.includes("package-lock") ||
-    name.includes("pnpm-lock") ||
-    name.endsWith(".map") ||
-    name.endsWith(".mp3") ||
-    name.endsWith(".css") ||
-    name.endsWith(".lock")
-  ) {
-    return false;
-  }
-  return rankMaterialCard(card) <= 20 || Boolean(card.content?.trim());
+  const name = baseName(card.sourceFileId || card.title || "");
+  if (isNoiseSeedName(name)) return false;
+  const rank = rankMaterialCard(card);
+  // Prefer role docs (readme/todo/notes/decisions).
+  if (rank <= 3) return true;
+  // Other markdown only when content looks like work, not fixture noise.
+  if (rank <= 10 && hasWorkSignal(card.content)) return true;
+  return false;
 }
 
 type Draft = {
@@ -142,6 +177,36 @@ function draftForCard(projectId: string, card: KnowledgeCard): Draft {
 }
 
 /**
+ * Cancel todo seed-* drafts whose evidence is noise or no longer seedable.
+ * Idempotent; never touches non-seed or terminal items.
+ */
+function cancelNoiseSeedDrafts(projectId: string): number {
+  let cancelled = 0;
+  for (const item of listActions({ projectId })) {
+    if (!item.id.startsWith("seed-")) continue;
+    if (item.status !== "todo") continue;
+
+    const card = item.cardId ? getCard(item.cardId) : null;
+    const label = baseName(
+      card?.sourceFileId || card?.title || item.title || "",
+    );
+    const noise =
+      isNoiseSeedName(label) ||
+      /审阅「\./.test(item.title) ||
+      (card ? !isSeedableCard(card) : /fixture|seed-sha|seed-log/i.test(item.title));
+
+    if (!noise) continue;
+    try {
+      updateActionStatus(item.id, "cancelled", { actor: "system" });
+      cancelled += 1;
+    } catch {
+      // ignore validation races
+    }
+  }
+  return cancelled;
+}
+
+/**
  * Create draft work items from project material citation cards.
  * Idempotent by stable seed ids. Does not require Owner confirm (policy A).
  */
@@ -152,16 +217,20 @@ export function seedWorkItemsFromMaterials(
     return {
       created: 0,
       skippedExisting: 0,
+      cancelledNoise: 0,
       itemIds: [],
       emptyReason: "项目 id 为空",
     };
   }
+
+  const cancelledNoise = cancelNoiseSeedDrafts(projectId);
 
   const cards = listCards({ projectId }).filter(isSeedableCard);
   if (cards.length === 0) {
     return {
       created: 0,
       skippedExisting: 0,
+      cancelledNoise,
       itemIds: [],
       emptyReason: "还没有可当作依据的材料，无法提出在跟的事",
     };
@@ -185,6 +254,7 @@ export function seedWorkItemsFromMaterials(
       picked.push(card);
       continue;
     }
+    // Generic md only after roles; already filtered by isSeedableCard.
     picked.push(card);
   }
 
@@ -229,6 +299,7 @@ export function seedWorkItemsFromMaterials(
   return {
     created,
     skippedExisting,
+    cancelledNoise,
     itemIds,
     emptyReason:
       created === 0 && skippedExisting === 0
