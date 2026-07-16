@@ -22,6 +22,10 @@ export type MaterialFile = {
   updatedAt: string;
   /** Byte size when known (list/detail). */
   sizeBytes?: number;
+  /** B-1: linked KnowledgeCard id (citable object). */
+  citationCardId?: string;
+  /** B-1: display title for citation (not only disk basename). */
+  citationTitle?: string;
 };
 
 export type MaterialReadResult = {

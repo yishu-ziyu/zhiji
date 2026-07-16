@@ -1863,7 +1863,6 @@ export default function KnowledgePage() {
                       </strong>
                       <small style={{ display: "block", color: "#81848a" }}>
                         可引用 · {materialKindLabel(file.kind)}
-                        {file.citationCardId ? "" : ""}
                       </small>
                     </button>
                   ))

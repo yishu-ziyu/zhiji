@@ -6,19 +6,52 @@ import {
   readProjectMaterial,
   renderMarkdownLite,
   writeProjectMaterial,
+  type MaterialFile,
 } from "@/shared/knowledge/materials";
-import { addCard, getProject } from "@/shared/knowledge/repository";
+import {
+  ensureMaterialCitationCard,
+  getProject,
+} from "@/shared/knowledge/repository";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+function citeMaterial(
+  projectId: string,
+  material: MaterialFile,
+  contentForSummary = "",
+): MaterialFile {
+  const kind = kindFromName(material.name);
+  const summary = materialCardSummary(
+    material.relativePath || material.name,
+    kind === "image" || kind === "binary" || kind === "audio"
+      ? ""
+      : contentForSummary,
+  );
+  const card = ensureMaterialCitationCard({
+    projectId,
+    materialId: material.id,
+    title: material.name,
+    contentSummary: summary,
+  });
+  return {
+    ...material,
+    citationCardId: card.id,
+    citationTitle: card.title || material.name,
+  };
+}
+
 export async function GET(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
+  if (!getProject(id)) {
+    return NextResponse.json({ error: "项目不存在" }, { status: 404 });
+  }
   const fileId = req.nextUrl.searchParams.get("file");
   if (fileId) {
     const file = readProjectMaterial(id, fileId);
     if (!file) {
       return NextResponse.json({ error: "文件不存在" }, { status: 404 });
     }
+    const cited = citeMaterial(id, file.meta, file.content);
     const isText = file.previewMode === "text";
     const html =
       isText &&
@@ -26,7 +59,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
         ? renderMarkdownLite(file.content)
         : undefined;
     return NextResponse.json({
-      file: file.meta,
+      file: cited,
       content: isText ? file.content : "",
       html,
       preview: isText,
@@ -37,10 +70,15 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       sizeBytes: file.sizeBytes ?? file.meta.sizeBytes,
       sizeLabel: file.sizeLabel,
       unsupportedMessage: file.unsupportedMessage,
+      citationCardId: cited.citationCardId,
+      citationTitle: cited.citationTitle,
     });
   }
-  // M2: list already sorted newest-first by listProjectMaterials.
-  return NextResponse.json({ materials: listProjectMaterials(id) });
+  // M2 newest-first; B-1 each material is a citable object (card linked).
+  const materials = listProjectMaterials(id).map((material) =>
+    citeMaterial(id, material),
+  );
+  return NextResponse.json({ materials });
 }
 
 /** Add one local file into this project (single-file; no recursive folder). */
@@ -75,16 +113,28 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           : "";
     const cardContent = materialCardSummary(
       material.relativePath || material.name,
-      kind === "image" || kind === "binary" ? "" : rawText,
+      kind === "image" || kind === "binary" || kind === "audio" ? "" : rawText,
     );
-    const card = addCard({
+    const card = ensureMaterialCitationCard({
       projectId: id,
+      materialId: material.id,
       title: body.title?.trim() || material.name,
-      content: cardContent,
-      source: "doc",
-      sourceFileId: material.id,
+      contentSummary: cardContent,
     });
-    return NextResponse.json({ material, card }, { status: 201 });
+    const cited: MaterialFile = {
+      ...material,
+      citationCardId: card.id,
+      citationTitle: card.title || material.name,
+    };
+    return NextResponse.json(
+      {
+        material: cited,
+        card,
+        citationCardId: card.id,
+        citationTitle: cited.citationTitle,
+      },
+      { status: 201 },
+    );
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "添加文件失败" },
