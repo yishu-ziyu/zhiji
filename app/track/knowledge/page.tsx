@@ -39,6 +39,10 @@ import { ProjectInspector } from "./components/ProjectInspector";
 import { ProjectNavigator } from "./components/ProjectNavigator";
 import { ProjectTimeline } from "./components/ProjectTimeline";
 import {
+  mergeProjectsForA6Enter,
+  pickA6EnterProjectId,
+} from "@/shared/knowledge/a6-enter";
+import {
   classifyTopLevelDrop,
   classifyWebkitRelativeFiles,
   type FolderProjectImport,
@@ -353,8 +357,69 @@ export default function KnowledgePage() {
   }
 
   /**
+   * A6: force left nav + center snapshot + materials onto one project id.
+   * Does not clear busy mid-flight (caller owns busy).
+   */
+  async function enterProjectAfterImport(project: Project) {
+    const id = project.id;
+    navigationRequestRef.current += 1;
+    mutationRequestRef.current += 1;
+    const navToken = navigationRequestRef.current;
+    activeProjectIdRef.current = id;
+    const focus = { kind: "project" as const, id };
+    setProjectId(id);
+    setSnapshot(null);
+    setProjectCards([]);
+    setMyOpenWork([]);
+    setFootprint([]);
+    setQuery("");
+    setSearchResults([]);
+    setSearching(false);
+    setMaterialView(null);
+    setCheckpointOpen(false);
+    searchRequestRef.current += 1;
+    updateUrl(id, focus);
+    void apiJson(`/api/knowledge/projects/${id}/open`, { method: "POST" }).catch(
+      () => undefined,
+    );
+
+    await Promise.all([
+      loadSnapshot(id, focus),
+      loadProjectCards(id),
+      loadMyOpenWork(id),
+      loadFootprint(),
+    ]);
+    if (
+      navToken !== navigationRequestRef.current ||
+      activeProjectIdRef.current !== id
+    ) {
+      return;
+    }
+
+    try {
+      const materialList = await apiJson<{
+        materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
+      }>(`/api/knowledge/projects/${id}/materials`);
+      if (
+        navToken !== navigationRequestRef.current ||
+        activeProjectIdRef.current !== id
+      ) {
+        return;
+      }
+      setMaterials(materialList.materials);
+      setMaterialsOpen(true);
+    } catch {
+      // Still entered the project; materials panel optional if list fails.
+      if (activeProjectIdRef.current === id) {
+        setMaterials([]);
+        setMaterialsOpen(true);
+      }
+    }
+  }
+
+  /**
    * A5 UI: each top-level folder → create project + post materials (relative path).
-   * Classify/walk owned by G3A (folder-import + read-drop-entries).
+   * A6: after ≥1 success, actively enter first created project (not stay on old shell).
    */
   async function handleFolderProjectImports(imports: FolderProjectImport[]) {
     if (imports.length === 0) return;
@@ -363,6 +428,7 @@ export default function KnowledgePage() {
     try {
       const created: Project[] = [];
       const fileCounts: number[] = [];
+      let skipped = 0;
       for (const folder of imports) {
         const name = folder.projectName.trim();
         if (!name) continue;
@@ -380,43 +446,53 @@ export default function KnowledgePage() {
         created.push(data.project);
         let n = 0;
         for (const entry of folder.files) {
-          await apiJson(`/api/knowledge/projects/${data.project.id}/materials`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: entry.relativePath,
-              content: entry.content,
-            }),
-          });
-          n += 1;
+          try {
+            await apiJson(`/api/knowledge/projects/${data.project.id}/materials`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: entry.relativePath,
+                content: entry.content,
+              }),
+            });
+            n += 1;
+          } catch {
+            // Binary / invalid path: skip one file, do not abort whole folder.
+            skipped += 1;
+          }
         }
         fileCounts.push(n);
       }
       if (created.length === 0) {
+        // A6: whole batch failed → do not force-switch current project.
         setBusy(false);
         setError("未能从文件夹创建项目");
         return;
       }
-      setProjects((prev) => {
-        const next = [...created];
-        for (const p of prev) {
-          if (!next.some((c) => c.id === p.id)) next.push(p);
-        }
-        return next;
-      });
-      // Open first new project; remaining projects switchable in left nav.
-      await handleSelectProject(created[0].id);
-      const materialList = await apiJson<{
-        materials: Array<{ id: string; name: string; kind: string; updatedAt: string }>;
-      }>(`/api/knowledge/projects/${created[0].id}/materials`);
-      setMaterials(materialList.materials);
-      setMaterialsOpen(true);
+
+      const enterId = pickA6EnterProjectId(created.map((p) => p.id));
+      const enterTarget = created.find((p) => p.id === enterId) ?? created[0];
+
+      // Left nav must include new projects before/as we select them.
+      let existing: Project[] = [];
+      try {
+        const all = await apiJson<{ projects: Project[] }>("/api/knowledge/projects");
+        existing = all.projects;
+      } catch {
+        existing = projects;
+      }
+      setProjects(mergeProjectsForA6Enter(created, existing));
+
+      // A6: enter first successful project in this batch (not stay on 奕枢 shell).
+      await enterProjectAfterImport(enterTarget);
+
       setBusy(false);
       const names = created.map((p) => p.name).join("、");
+      const skipHint = skipped > 0 ? `（跳过 ${skipped} 个无法作为文本接入的文件）` : "";
       setNotice(
         created.length === 1
-          ? `已从文件夹创建项目「${names}」${fileCounts[0] ? `，并收下 ${fileCounts[0]} 个文件` : ""}`
-          : `已接入 ${created.length} 个项目：${names}。可在左侧切换查看材料。`,
+          ? `已进入新项目「${enterTarget.name}」${fileCounts[0] ? `，并收下 ${fileCounts[0]} 个文件` : ""}${skipHint}`
+          : `已接入 ${created.length} 个项目：${names}。已进入「${enterTarget.name}」，可在左侧切换。${skipHint}`,
       );
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "文件夹接入失败");
@@ -573,12 +649,17 @@ export default function KnowledgePage() {
 
   function handleWorkspaceDrop(event: DragEvent) {
     event.preventDefault();
+    event.stopPropagation();
     dragDepthRef.current = 0;
     setDragOver(false);
     void (async () => {
       try {
+        setError(null);
         const fromEntries = await readDataTransferItems(event.dataTransfer.items);
-        if (fromEntries) {
+        const entriesUseful =
+          fromEntries &&
+          (fromEntries.directories.length > 0 || fromEntries.looseFiles.length > 0);
+        if (entriesUseful && fromEntries) {
           const classified = classifyTopLevelDrop({
             directories: fromEntries.directories,
             looseFiles: fromEntries.looseFiles.map((f) => ({
@@ -608,10 +689,33 @@ export default function KnowledgePage() {
               await handleIncomingFiles(synthetic);
             }
           }
+          if (
+            classified.folderProjects.length === 0 &&
+            classified.looseFiles.length === 0
+          ) {
+            setError("拖入内容无法识别。请改用顶栏「上传文件夹」，或拖入单个文件。");
+          }
           return;
         }
-        // Entry API unavailable: flat FileList (no reliable folder split).
-        await handleIncomingFiles(event.dataTransfer.files);
+        // Fallback: FileList with webkitRelativePath (folder pick / some browsers).
+        const flat = Array.from(event.dataTransfer.files ?? []).filter(Boolean);
+        if (flat.length === 0) {
+          setError(
+            "未能读取拖入的文件夹（部分浏览器不支持整夹拖入）。请点顶栏「上传文件夹」。",
+          );
+          return;
+        }
+        const hasRelative = flat.some(
+          (file) =>
+            Boolean(
+              (file as File & { webkitRelativePath?: string }).webkitRelativePath,
+            ),
+        );
+        if (hasRelative) {
+          await handleWebkitDirectoryFiles(flat);
+          return;
+        }
+        await handleIncomingFiles(flat);
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "拖入失败");
       }
@@ -627,25 +731,58 @@ export default function KnowledgePage() {
     files: FileList | File[] | null | undefined,
   ) {
     const list = Array.from(files ?? []).filter((file) => file && file.name);
-    if (list.length === 0) return;
-    const payloads = await Promise.all(
-      list.map(async (file) => ({
-        name: file.name,
-        content: await file.text(),
-        webkitRelativePath:
-          (file as File & { webkitRelativePath?: string }).webkitRelativePath ??
-          file.name,
-      })),
-    );
-    const classified = classifyWebkitRelativeFiles(payloads);
-    if (classified.folderProjects.length > 0) {
-      await handleFolderProjectImports(classified.folderProjects);
+    if (list.length === 0) {
+      setError("未选中任何文件");
+      return;
     }
-    if (classified.looseFiles.length > 0) {
-      const loose = classified.looseFiles.map(
-        (item) => new File([item.content], item.name, { type: "text/plain" }),
+    setBusy(true);
+    setError(null);
+    try {
+      const payloads: Array<{
+        name: string;
+        content: string;
+        webkitRelativePath?: string;
+      }> = [];
+      for (const file of list) {
+        try {
+          // Skip empty / clearly binary-heavy reads that break utf-8 pipeline.
+          if (file.size === 0) continue;
+          const content = await file.text();
+          payloads.push({
+            name: file.name,
+            content,
+            webkitRelativePath:
+              (file as File & { webkitRelativePath?: string })
+                .webkitRelativePath ?? file.name,
+          });
+        } catch {
+          // continue other files
+        }
+      }
+      if (payloads.length === 0) {
+        setBusy(false);
+        setError("文件夹内没有可读文本文件（图片/二进制暂不接入）");
+        return;
+      }
+      const classified = classifyWebkitRelativeFiles(payloads);
+      if (classified.folderProjects.length > 0) {
+        await handleFolderProjectImports(classified.folderProjects);
+        return;
+      }
+      if (classified.looseFiles.length > 0) {
+        const loose = classified.looseFiles.map(
+          (item) => new File([item.content], item.name, { type: "text/plain" }),
+        );
+        await handleIncomingFiles(loose);
+        return;
+      }
+      setBusy(false);
+      setError("未能从所选文件夹识别出项目结构");
+    } catch (nextError) {
+      setBusy(false);
+      setError(
+        nextError instanceof Error ? nextError.message : "上传文件夹失败",
       );
-      await handleIncomingFiles(loose);
     }
   }
 
