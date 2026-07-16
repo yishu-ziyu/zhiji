@@ -177,6 +177,8 @@ export default function KnowledgePage() {
   const [agentResolutionMessage, setAgentResolutionMessage] = useState<
     string | null
   >(null);
+  /** Bump to focus always-visible right-rail chat (AI Copilot / §2b). */
+  const [agentChatFocusKey, setAgentChatFocusKey] = useState(0);
   const folderApiRef = useRef(
     typeof window !== "undefined" &&
       new URL(window.location.href).searchParams.get("fixture") === "1"
@@ -1186,8 +1188,23 @@ export default function KnowledgePage() {
     setNotice("当前没有可聚焦的重点。");
   }
 
+  /** Focus the always-visible right-rail「问 Agent」composer. */
+  function focusAgentChat() {
+    setAgentChatFocusKey((k) => k + 1);
+    requestAnimationFrame(() => {
+      document
+        .querySelector('[data-testid="agent-chat-panel"]')
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      (
+        document.querySelector(
+          '[data-testid="agent-chat-input"]',
+        ) as HTMLTextAreaElement | null
+      )?.focus();
+    });
+  }
+
   /**
-   * Topbar / card "AI Copilot" — true folder-reading Agent (product innovation).
+   * Topbar / card "AI Copilot" — open/focus Agent chat + folder-reading path.
    * Never jumps to a random HTML/material card as a fake "focus".
    */
   async function openFolderAgentCopilot() {
@@ -1215,7 +1232,7 @@ export default function KnowledgePage() {
     }
 
     setError(null);
-    // Stay on project center so right rail shows project + Agent, not a file.
+    // Stay on project center so right rail shows project + 问 Agent, not a file.
     if (projectId) {
       await handleFocus({ kind: "project", id: projectId });
     }
@@ -1236,18 +1253,23 @@ export default function KnowledgePage() {
         runStatus: session?.run?.status ?? null,
       });
 
+      // Always open the chat surface first (§2b), even when grant is missing.
       if (intent.kind === "need_folder_grant" || intent.kind === "need_project") {
         endBusy();
-        setError(intent.message);
+        setNotice(
+          intent.kind === "need_folder_grant"
+            ? "对话入口在右侧「问 Agent」。授权文件夹后即可发送。"
+            : intent.message,
+        );
+        if (intent.kind === "need_folder_grant") {
+          setError(intent.message);
+        }
+        focusAgentChat();
         return;
       }
 
       setNotice(intent.message);
-      requestAnimationFrame(() => {
-        document
-          .querySelector('[data-testid="inspector-agent-process"]')
-          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      });
+      focusAgentChat();
 
       if (intent.rerun && session?.matterId && projectId) {
         startBusy("Agent 正在阅读授权夹…");
@@ -1274,13 +1296,9 @@ export default function KnowledgePage() {
         endBusy();
         setNotice(
           analysis.run?.progressSummary ||
-            "阅读完成。请看右侧过程与待确认理解。",
+            "阅读完成。请看右侧「问 Agent」与过程。",
         );
-        requestAnimationFrame(() => {
-          document
-            .querySelector('[data-testid="inspector-agent-process"]')
-            ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        });
+        focusAgentChat();
         return;
       }
 
@@ -1292,6 +1310,7 @@ export default function KnowledgePage() {
           ? nextError.message
           : "Agent 未能阅读授权夹",
       );
+      focusAgentChat();
     }
   }
 
@@ -1870,7 +1889,7 @@ export default function KnowledgePage() {
             data-testid="workspace-ai-copilot"
             onClick={() => void openFolderAgentCopilot()}
             disabled={!projectId || busy}
-            title="在授权夹内真读并给出有出处的理解"
+            title="打开右侧「问 Agent」：自然语言驱动画布与理解"
           >
             <Sparkles size={17} />AI Copilot
           </button>
@@ -2188,17 +2207,28 @@ export default function KnowledgePage() {
                 endBusy();
               }
             }}
+            agentChatFocusKey={agentChatFocusKey}
             onAgentChatSend={async (text) => {
-              if (!agentSession) {
-                throw new Error("请先授权文件夹，再和 Agent 对话");
+              if (!projectId) {
+                throw new Error("先选一个项目，再和 Agent 对话。");
+              }
+              let session =
+                agentSession?.projectId === projectId ? agentSession : null;
+              if (!session?.matterId) {
+                session = await hydrateFolderAgentSession(projectId);
+              }
+              if (!session?.matterId) {
+                throw new Error(
+                  "先授权项目文件夹，Agent 才能在夹里查依据后回答。",
+                );
               }
               setBusy(true);
               try {
                 const eventIds =
-                  agentSession.memory?.events?.map((e) => e.id) ?? [];
+                  session.memory?.events?.map((e) => e.id) ?? [];
                 const analysis = await folderApiRef.current.runAnalysis(
-                  agentSession.projectId,
-                  agentSession.matterId,
+                  session.projectId,
+                  session.matterId,
                   eventIds,
                   {
                     ownerUtterance: text,
@@ -2206,28 +2236,24 @@ export default function KnowledgePage() {
                   },
                 );
                 const nextMemory = await folderApiRef.current.getMemory(
-                  agentSession.projectId,
-                  agentSession.matterId,
+                  session.projectId,
+                  session.matterId,
                 );
-                setAgentSession((prev) =>
-                  prev
-                    ? {
-                        ...prev,
-                        memory: {
-                          ...nextMemory,
-                          watchSet:
-                            nextMemory.watchSet ?? prev.memory?.watchSet,
-                        } as AgentSession["memory"],
-                        toolReceipts: analysis.toolReceipts ?? [],
-                        run: analysis.run ?? null,
-                      }
-                    : prev,
-                );
+                setAgentSession({
+                  ...session,
+                  memory: {
+                    ...nextMemory,
+                    watchSet:
+                      nextMemory.watchSet ?? session.memory?.watchSet,
+                  } as AgentSession["memory"],
+                  toolReceipts: analysis.toolReceipts ?? [],
+                  run: analysis.run ?? null,
+                });
                 setAgentResolutionMessage(null);
                 setNotice("Agent 已根据你的问题更新理解");
-                await loadSnapshot(agentSession.projectId, {
+                await loadSnapshot(session.projectId, {
                   kind: "project",
-                  id: agentSession.projectId,
+                  id: session.projectId,
                 });
               } catch (nextError) {
                 const msg =

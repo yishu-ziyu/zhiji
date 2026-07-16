@@ -31,7 +31,7 @@ const filters: Array<{ id: Filter; label: string }> = [
   { id: "now", label: "当前工作" },
   { id: "history", label: "历史" },
   { id: "decision", label: "决定" },
-  { id: "agent", label: "Agent" },
+  { id: "agent", label: "Agent 动态" },
 ];
 
 function eventColor(event: CanvasTimelineEvent) {
@@ -136,12 +136,20 @@ export function ProjectTimeline({ snapshot, onFocus }: Props) {
   return (
     <section className={styles.timeline} data-testid="project-timeline">
       <header className={styles.timelineHeader}>
-        <nav aria-label="时间线筛选">
+        <nav aria-label="时间线筛选（不是对话入口）">
           {filters.map((item) => (
             <button
               key={item.id}
               type="button"
               data-active={filter === item.id}
+              data-testid={
+                item.id === "agent" ? "timeline-filter-agent-activity" : undefined
+              }
+              title={
+                item.id === "agent"
+                  ? "只看时间线上的 Agent 记录，不是对话"
+                  : undefined
+              }
               onClick={() => setFilter(item.id)}
             >
               {item.label}

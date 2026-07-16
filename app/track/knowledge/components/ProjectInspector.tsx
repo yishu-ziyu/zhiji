@@ -750,7 +750,7 @@ export function ProjectInspector({
               {(snapshot.agentActivity?.feed.length ?? 0) === 0 &&
               (agentSession?.toolReceipts?.length ?? 0) === 0 ? (
                 <p className={styles.emptyCopy} data-testid="inspector-agent-feed-empty">
-                  还没有 Agent 执行记录。授权夹后点 AI Copilot，或对工作项点「交给 Agent」。
+                  还没有执行记录。用上方「问 Agent」说话，或顶栏 AI Copilot 打开对话。
                 </p>
               ) : (
                 (snapshot.agentActivity?.feed ?? []).map((item) => (
