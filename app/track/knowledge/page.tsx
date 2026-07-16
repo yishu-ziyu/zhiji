@@ -51,6 +51,7 @@ import {
   type FolderAuthorizeSession,
 } from "./components/LocalFolderEntry";
 import type { AgentSession } from "./components/AgentPresenceRail";
+import { ClaimReviewPanel } from "./components/ClaimReviewPanel";
 import { createMvpApi } from "./lib/folder-connection-api";
 import type { UnderstandingBody } from "./lib/folder-connection-api";
 import {
@@ -69,6 +70,17 @@ import {
   resolveCopilotIntent,
 } from "./lib/copilot-intent";
 import { readDataTransferItems } from "./read-drop-entries";
+import {
+  candidateClaimsFromBody,
+  hasReviewableClaims,
+  shouldApplyProjectFetch,
+} from "./workbench";
+import type {
+  Claim,
+  ClaimEvidenceLink,
+  OwnerResolution,
+  PreciseEvidenceAnchor,
+} from "@/shared/project-memory/claims/types";
 import styles from "./project-canvas.module.css";
 
 type ApiError = { error?: string };
@@ -77,7 +89,18 @@ async function apiJson<T>(
   url: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(url, init);
+  const headers = new Headers(init?.headers);
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    const csrf =
+      typeof window !== "undefined"
+        ? (window as Window & { __FC_OPC_CSRF?: string }).__FC_OPC_CSRF
+        : undefined;
+    if (csrf && !headers.has("x-csrf-token")) {
+      headers.set("x-csrf-token", csrf);
+    }
+  }
+  const response = await fetch(url, { ...init, headers });
   const data = (await response.json()) as T & ApiError;
   if (!response.ok) throw new Error(data.error || "请求失败");
   return data;
@@ -179,6 +202,31 @@ export default function KnowledgePage() {
   >(null);
   /** Bump to focus always-visible right-rail chat (AI Copilot / §2b). */
   const [agentChatFocusKey, setAgentChatFocusKey] = useState(0);
+  /**
+   * Server-hydrated claims (revisionTexts from CAS). Client rebuild is fallback
+   * only when GET has not returned claims yet — without texts it demotes supports.
+   */
+  const [serverClaims, setServerClaims] = useState<Claim[]>([]);
+  /** Audit rows for current candidate (GET after refresh). */
+  const [claimResolutions, setClaimResolutions] = useState<OwnerResolution[]>(
+    [],
+  );
+  const [claimAnchors, setClaimAnchors] = useState<PreciseEvidenceAnchor[]>([]);
+  const [claimLinks, setClaimLinks] = useState<ClaimEvidenceLink[]>([]);
+  const reviewClaims = useMemo(() => {
+    if (serverClaims.length > 0) return serverClaims;
+    if (!projectId || agentSession?.projectId !== projectId) return [];
+    const candidate = agentSession?.memory?.candidate;
+    if (!candidate?.body || !candidate.id) return [];
+    // Fallback without revisionTexts will demote supports — prefer serverClaims.
+    return candidateClaimsFromBody({
+      projectId,
+      matterId: agentSession.matterId,
+      candidateRevisionId: candidate.id,
+      runId: agentSession.run?.id,
+      body: candidate.body as UnderstandingBody,
+    });
+  }, [serverClaims, agentSession, projectId]);
   const folderApiRef = useRef(
     typeof window !== "undefined" &&
       new URL(window.location.href).searchParams.get("fixture") === "1"
@@ -210,15 +258,39 @@ export default function KnowledgePage() {
         const data = await apiJson<{ snapshot: ProjectCanvasSnapshot }>(
           `/api/knowledge/projects/${nextProjectId}/canvas?${params}`,
         );
-        if (requestId === snapshotRequestRef.current) {
+        // PR-14: late response after project switch must not overwrite UI.
+        if (
+          shouldApplyProjectFetch({
+            requestedProjectId: nextProjectId,
+            activeProjectId: activeProjectIdRef.current,
+            requestEpoch: requestId,
+            activeEpoch: snapshotRequestRef.current,
+          })
+        ) {
           setSnapshot(data.snapshot);
         }
       } catch (nextError) {
-        if (requestId === snapshotRequestRef.current) {
+        if (
+          shouldApplyProjectFetch({
+            requestedProjectId: nextProjectId,
+            activeProjectId: activeProjectIdRef.current,
+            requestEpoch: requestId,
+            activeEpoch: snapshotRequestRef.current,
+          })
+        ) {
           setError(nextError instanceof Error ? nextError.message : "读取项目失败");
         }
       } finally {
-        if (requestId === snapshotRequestRef.current) setLoading(false);
+        if (
+          shouldApplyProjectFetch({
+            requestedProjectId: nextProjectId,
+            activeProjectId: activeProjectIdRef.current,
+            requestEpoch: requestId,
+            activeEpoch: snapshotRequestRef.current,
+          })
+        ) {
+          setLoading(false);
+        }
       }
     },
     [],
@@ -288,6 +360,63 @@ export default function KnowledgePage() {
   useEffect(() => {
     setNavCollapsed(readNavCollapsedPreference());
   }, []);
+
+  // Load claim audit + server-hydrated claims (with revisionTexts) after switch / refresh.
+  useEffect(() => {
+    const matterId = agentSession?.matterId;
+    const candidateRevisionId = agentSession?.memory?.candidate?.id;
+    if (!projectId.trim() || !matterId || !candidateRevisionId) {
+      setClaimResolutions([]);
+      setServerClaims([]);
+      setClaimAnchors([]);
+      setClaimLinks([]);
+      return;
+    }
+    if (agentSession?.projectId !== projectId) {
+      setClaimResolutions([]);
+      setServerClaims([]);
+      setClaimAnchors([]);
+      setClaimLinks([]);
+      return;
+    }
+    let active = true;
+    const params = new URLSearchParams({
+      matterId,
+      candidateRevisionId,
+    });
+    void (async () => {
+      try {
+        const data = await apiJson<{
+          resolutions: OwnerResolution[];
+          claims?: Claim[] | null;
+          anchors?: PreciseEvidenceAnchor[];
+          links?: ClaimEvidenceLink[];
+        }>(
+          `/api/knowledge/projects/${encodeURIComponent(projectId)}/claim-resolutions?${params}`,
+        );
+        if (!active) return;
+        setClaimResolutions(data.resolutions ?? []);
+        setServerClaims(Array.isArray(data.claims) ? data.claims : []);
+        setClaimAnchors(Array.isArray(data.anchors) ? data.anchors : []);
+        setClaimLinks(Array.isArray(data.links) ? data.links : []);
+      } catch {
+        if (active) {
+          setClaimResolutions([]);
+          setServerClaims([]);
+          setClaimAnchors([]);
+          setClaimLinks([]);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [
+    projectId,
+    agentSession?.projectId,
+    agentSession?.matterId,
+    agentSession?.memory?.candidate?.id,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -1752,6 +1881,13 @@ export default function KnowledgePage() {
       data-nav-collapsed={navCollapsed ? "true" : "false"}
       data-drag-over={dragOver ? "true" : "false"}
       data-busy={busy ? "true" : "false"}
+      data-has-claim-review={
+        hasReviewableClaims(reviewClaims) &&
+        agentSession?.matterId &&
+        agentSession?.memory?.candidate?.id
+          ? "true"
+          : "false"
+      }
       onDragEnter={handleWorkspaceDragEnter}
       onDragOver={handleWorkspaceDragOver}
       onDragLeave={handleWorkspaceDragLeave}
@@ -2267,6 +2403,92 @@ export default function KnowledgePage() {
               }
             }}
           />
+          {hasReviewableClaims(reviewClaims) &&
+          agentSession?.matterId &&
+          agentSession?.memory?.candidate?.id ? (
+            <div
+              className={styles.claimReviewSlot}
+              data-testid="claim-review-slot"
+            >
+              <ClaimReviewPanel
+                claims={reviewClaims}
+                anchors={claimAnchors}
+                links={claimLinks}
+                initialResolutions={claimResolutions}
+                title="逐条确认判断"
+                onResolve={async (claim, decision) => {
+                  const matterId = agentSession.matterId;
+                  const candidateRevisionId =
+                    agentSession.memory?.candidate?.id;
+                  if (!matterId || !candidateRevisionId) {
+                    throw new Error("缺少 matterId 或 candidateRevisionId");
+                  }
+                  // Server loads candidate body; never send claimText/status as truth.
+                  const data = await apiJson<{
+                    resolution: OwnerResolution;
+                    finalized: boolean;
+                    remaining: number;
+                    understanding?: {
+                      accepted?: unknown;
+                      head?: unknown;
+                    };
+                  }>(
+                    `/api/knowledge/projects/${encodeURIComponent(projectId)}/claim-resolutions`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        claimId: claim.id,
+                        decision,
+                        matterId,
+                        candidateRevisionId,
+                      }),
+                    },
+                  );
+                  setClaimResolutions((prev) => [
+                    ...prev.filter((r) => r.claimId !== claim.id),
+                    data.resolution,
+                  ]);
+                  // Refresh memory so accepted head is visible (truth path).
+                  try {
+                    const nextMemory = await folderApiRef.current.getMemory(
+                      projectId,
+                      matterId,
+                    );
+                    setAgentSession((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            memory: {
+                              ...nextMemory,
+                              watchSet:
+                                nextMemory.watchSet ?? prev.memory?.watchSet,
+                            } as AgentSession["memory"],
+                          }
+                        : prev,
+                    );
+                  } catch {
+                    /* panel already has resolution */
+                  }
+                  setNotice(
+                    data.finalized
+                      ? decision === "reject"
+                        ? "已记录该判断；整份候选已完成裁决"
+                        : "已确认该判断；整份候选已写入项目记忆"
+                      : `已记录这条判断，另有 ${data.remaining} 条待确认`,
+                  );
+                  setAgentResolutionMessage(
+                    data.finalized
+                      ? decision === "reject"
+                        ? "候选已完成逐条裁决"
+                        : "已确认并记住"
+                      : null,
+                  );
+                  return data.resolution;
+                }}
+              />
+            </div>
+          ) : null}
           <ProjectTimeline snapshot={snapshot} onFocus={handleFocus} />
         </>
       )}

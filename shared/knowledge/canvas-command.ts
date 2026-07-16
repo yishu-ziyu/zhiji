@@ -172,9 +172,12 @@ export function filterEdgesForView(
   if (view === "decision") {
     next = next.filter((e) => {
       const kind = e.kind ?? "other";
-      if (kind === "blocked" || kind === "attention") return true;
+      if (kind === "blocked" || (kind as string) === "attention") return true;
       if (kind === "work" && e.strength === "strong") return true;
-      if (e.strength === "strong" && (kind === "work" || kind === "attention"))
+      if (
+        e.strength === "strong" &&
+        (kind === "work" || (kind as string) === "attention")
+      )
         return true;
       return kinds?.has(kind) && e.strength !== "weak";
     });

@@ -929,14 +929,23 @@
   box-shadow: 0 10px 24px rgba(29, 32, 37, 0.06) !important;
 }
 
-.edgeFilterBar {
+.canvasTopControls {
   position: absolute;
   z-index: 6;
   top: 14px;
   right: 18px;
+  max-width: calc(100% - 36px);
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.edgeFilterBar {
+  max-width: 100%;
   display: inline-flex;
   gap: 4px;
   padding: 4px;
+  overflow-x: auto;
   border: 1px solid #e6e6e1;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
@@ -945,6 +954,7 @@
 }
 
 .edgeFilterBar button {
+  flex: 0 0 auto;
   padding: 5px 10px;
   border: 0;
   border-radius: 8px;
@@ -952,6 +962,7 @@
   color: #5c5f66;
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -1027,15 +1038,11 @@
 }
 
 .canvasStatsBar {
-  position: absolute;
-  z-index: 6;
-  top: 12px;
-  right: 14px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
-  max-width: min(420px, 48%);
+  max-width: min(420px, 100%);
   padding: 7px 12px;
   border: 1px solid #e4e6ea;
   border-radius: 999px;
@@ -1100,100 +1107,26 @@
 .graphLinks { display: none; }
 .graphLink { display: none; }
 
-.agentAttention {
+.canvasContextActions {
   position: absolute;
   z-index: 2;
   top: 14px;
   left: 18px;
   width: min(248px, calc(42% - 20px));
-  max-height: min(42%, 280px);
-  overflow: auto;
   display: grid;
   gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid #e6e6e1;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 10px 28px rgba(29, 32, 37, 0.05);
-  backdrop-filter: blur(12px);
 }
 
-.agentAttentionHeader {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.agentAttentionHeader svg { color: #5a5e65; flex: 0 0 auto; }
-.agentAttentionHeader strong { font-size: 11px; font-weight: 650; letter-spacing: -0.01em; }
-
-.agentAttentionList {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 4px;
-}
-
-.agentAttentionList button {
-  width: 100%;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid #ebebe7;
+.canvasReturnProject {
+  justify-self: start;
+  padding: 6px 10px;
+  border: 1px solid #dfe3e8;
   border-radius: 9px;
-  background: #fbfbf9;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 6px 18px rgba(29, 32, 37, 0.05);
   color: #55585e;
   font-size: 10px;
-  line-height: 1.35;
-  text-align: left;
   cursor: pointer;
-  transition: border-color 160ms ease, background 160ms ease;
-}
-
-.agentAttentionList button span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agentAttentionList button:hover,
-.agentAttentionList button:focus-visible {
-  border-color: #cbd6e7;
-  background: #fff;
-  outline: none;
-}
-
-.agentAttentionEmpty {
-  margin: 0;
-  color: #75787e;
-  font-size: 10px;
-  line-height: 1.55;
-}
-
-.agentAttentionMore {
-  width: 100%;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #6a6e75;
-  font-size: 10px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.agentAttentionMore:hover {
-  background: #f3f3ef;
-  color: #30343a;
-}
-
-.agentAttentionList button[data-primary="true"] {
-  border-color: #c5d4ea;
-  background: #f5f8fd;
-  font-weight: 600;
 }
 
 .edgeDetail {
@@ -1254,13 +1187,6 @@
   background: #eef2f8;
 }
 
-.canvasHint {
-  margin: 6px 0 0;
-  color: #8a8d93;
-  font-size: 9px;
-  line-height: 1.4;
-}
-
 .relationChip[data-strength="strong"] {
   background: #e8f0fc;
   color: #2f57a8;
@@ -1268,14 +1194,6 @@
 
 .relationChip[data-strength="weak"] {
   opacity: 0.75;
-}
-
-.projectNow {
-  display: grid;
-  gap: 5px;
-  padding-bottom: 7px;
-  margin-bottom: 2px;
-  border-bottom: 1px solid #ecece8;
 }
 
 .projectNowJudgment {
@@ -1290,22 +1208,12 @@
   -webkit-line-clamp: 3;
 }
 
-.projectNowNext {
-  margin: 0;
-  color: #55585e;
-  font-size: 10px;
-  line-height: 1.45;
+.projectNowInspector {
+  display: grid;
+  gap: 7px;
 }
 
-.projectNowGaps {
-  margin: 0;
-  padding-left: 1.1em;
-  color: #6a6e75;
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.projectNow[data-status="empty"] .projectNowJudgment {
+.projectNowInspector[data-status="empty"] .projectNowJudgment {
   font-weight: 550;
   color: #5c5f66;
 }
@@ -1548,6 +1456,24 @@
 .foldedList button:hover { background: #f3f3ef; }
 .foldedList svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .foldedList small { margin-left: auto; color: #8a8d92; font-size: 9px; }
+
+/* ClaimReview gets its own right-column row; it never overlays the Inspector. */
+.claimReviewSlot {
+  grid-column: 3;
+  grid-row: 3;
+  z-index: 2;
+  align-self: stretch;
+  justify-self: stretch;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 18px 18px 4px;
+  padding: 0;
+}
+
+.workspace[data-has-claim-review="true"] .inspector {
+  grid-row: 2;
+  margin-bottom: 10px;
+}
 
 .inspector {
   grid-column: 3;
@@ -2243,7 +2169,7 @@
   .navigator { padding-left: 12px; padding-right: 12px; }
   .referenceBlock { display: none; }
   .focusCanvas { gap: 12px; padding-inline: 14px; }
-  .agentAttention { width: min(230px, calc(50% - 18px)); }
+  .canvasContextActions { width: min(230px, calc(50% - 18px)); }
   .relationNode { width: min(100%, 188px); padding-inline: 9px; }
   .focusState strong { font-size: 15px; }
   .topbar { padding-right: 16px; }

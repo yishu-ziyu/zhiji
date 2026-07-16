@@ -54,10 +54,15 @@ describe("eventIdsForMatterAnalysis", () => {
       events: [{ id: "matched-1" }, { id: "matched-2" }],
       filteredEvents: [{ id: "noise-1" }],
     };
-    expect(eventIdsForMatterAnalysis(memory)).toEqual([
-      "matched-1",
-      "matched-2",
-    ]);
-    expect(eventIdsForMatterAnalysis(memory)).not.toContain("noise-1");
+    expect(
+      eventIdsForMatterAnalysis(
+        memory as unknown as Parameters<typeof eventIdsForMatterAnalysis>[0],
+      ),
+    ).toEqual(["matched-1", "matched-2"]);
+    expect(
+      eventIdsForMatterAnalysis(
+        memory as unknown as Parameters<typeof eventIdsForMatterAnalysis>[0],
+      ),
+    ).not.toContain("noise-1");
   });
 });

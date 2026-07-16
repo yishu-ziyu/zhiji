@@ -46,11 +46,16 @@ async function fetchMessages(
   projectId: string,
   sessionId: string,
 ): Promise<AgentChatTurn[]> {
+  const csrf = (window as Window & { __FC_OPC_CSRF?: string })
+    .__FC_OPC_CSRF;
   const res = await fetch(
     `/api/knowledge/projects/${encodeURIComponent(projectId)}/dialogue`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(csrf ? { "x-csrf-token": csrf } : {}),
+      },
       body: JSON.stringify({ action: "list_messages", sessionId }),
     },
   );

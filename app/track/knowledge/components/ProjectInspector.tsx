@@ -347,17 +347,63 @@ export function ProjectInspector({
         {tab === "overview" ? (
           <>
             <section className={styles.focusSummary}>
-              <span className={styles.sectionEyebrow}>当前关注</span>
-              <h3>{snapshot.inspector.title}</h3>
-              <MarkdownBody
-                source={snapshot.inspector.summary}
-                hintName={snapshot.inspector.title}
-                data-testid="inspector-overview-summary"
-              />
-              <div className={styles.whyImportant}>
-                <CircleAlert size={16} />
-                <span>{snapshot.inspector.whyImportant}</span>
-              </div>
+              {snapshot.focus.kind === "project" && snapshot.projectNow ? (
+                <div
+                  className={styles.projectNowInspector}
+                  data-testid="project-now"
+                  data-status={snapshot.projectNow.status}
+                >
+                  <span className={styles.sectionEyebrow}>现在怎样</span>
+                  <p
+                    className={styles.projectNowJudgment}
+                    data-testid="project-now-judgment"
+                  >
+                    {snapshot.projectNow.judgment}
+                  </p>
+                  {snapshot.projectNow.nextStep ? (
+                    <div
+                      className={styles.whyImportant}
+                      data-testid="project-now-next"
+                    >
+                      <CircleAlert size={16} />
+                      <span>建议：{snapshot.projectNow.nextStep}</span>
+                    </div>
+                  ) : null}
+                  {snapshot.projectNow.evidence.length > 0 ? (
+                    <div
+                      className={styles.evidenceChips}
+                      data-testid="project-now-evidence"
+                    >
+                      {snapshot.projectNow.evidence.slice(0, 3).map((item) => (
+                        <button
+                          type="button"
+                          key={item.id}
+                          data-testid={`project-now-evidence-${item.id}`}
+                          onClick={() => onFocus({ kind: "card", id: item.id })}
+                          title={item.label}
+                        >
+                          <FileText size={12} />
+                          依据：{item.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <>
+                  <span className={styles.sectionEyebrow}>当前关注</span>
+                  <h3>{snapshot.inspector.title}</h3>
+                  <MarkdownBody
+                    source={snapshot.inspector.summary}
+                    hintName={snapshot.inspector.title}
+                    data-testid="inspector-overview-summary"
+                  />
+                  <div className={styles.whyImportant}>
+                    <CircleAlert size={16} />
+                    <span>{snapshot.inspector.whyImportant}</span>
+                  </div>
+                </>
+              )}
               {snapshot.inspector.workItem ? (
                 <dl className={styles.workFacts}>
                   <div><dt>负责人</dt><dd>{snapshot.inspector.workItem.assignee}</dd></div>
@@ -447,7 +493,10 @@ export function ProjectInspector({
             ) : null}
 
             {snapshot.attention.length > 0 && canCheckpoint ? (
-              <section className={styles.attentionList}>
+              <section
+                className={styles.attentionList}
+                data-testid="agent-attention"
+              >
                 <div className={styles.listHeading}>
                   <h3>现在先看这些</h3>
                   <span>{snapshot.attention.length}</span>

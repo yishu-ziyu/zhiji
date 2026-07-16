@@ -26,7 +26,6 @@ import {
   FileText,
   ListChecks,
   MessageSquareText,
-  Sparkles,
 } from "lucide-react";
 import type {
   CanvasEdge,
@@ -665,13 +664,19 @@ function CanvasFlow({
       const st = storeApi.getState();
       const updates = new Map<
         string,
-        { id: string; nodeElement: HTMLElement; force: boolean }
+        { id: string; nodeElement: HTMLDivElement; force: boolean }
       >();
       for (const id of ids) {
         const el = st.domNode?.querySelector(
           `.react-flow__node[data-id="${id}"]`,
         ) as HTMLElement | null;
-        if (el) updates.set(id, { id, nodeElement: el, force: true });
+        if (el) {
+          updates.set(id, {
+            id,
+            nodeElement: el as HTMLDivElement,
+            force: true,
+          });
+        }
       }
       if (updates.size > 0) st.updateNodeInternals(updates);
       for (const id of ids) updateNodeInternals(id);
@@ -682,13 +687,19 @@ function CanvasFlow({
         const st2 = storeApi.getState();
         const updates2 = new Map<
           string,
-          { id: string; nodeElement: HTMLElement; force: boolean }
+          { id: string; nodeElement: HTMLDivElement; force: boolean }
         >();
         for (const id of ids) {
           const el = st2.domNode?.querySelector(
             `.react-flow__node[data-id="${id}"]`,
           ) as HTMLElement | null;
-          if (el) updates2.set(id, { id, nodeElement: el, force: true });
+          if (el) {
+            updates2.set(id, {
+              id,
+              nodeElement: el as HTMLDivElement,
+              force: true,
+            });
+          }
         }
         if (updates2.size > 0) st2.updateNodeInternals(updates2);
       }, 80);
@@ -891,7 +902,6 @@ export function ProjectCanvas({
   onViewPresetChange,
   agentLive = null,
 }: Props) {
-  const [showAllAttention, setShowAllAttention] = useState(false);
   const [selectedEdge, setSelectedEdge] = useState<CanvasEdge | null>(null);
   const [localView, setLocalView] = useState<CanvasViewId>("now");
   const [layoutEpoch, setLayoutEpoch] = useState(0);
@@ -905,7 +915,6 @@ export function ProjectCanvas({
 
   useEffect(() => {
     setSelectedEdge(null);
-    setShowAllAttention(false);
   }, [snapshot?.focus.kind, snapshot?.focus.id, snapshot?.project.id]);
 
   if (!snapshot) {
@@ -918,240 +927,131 @@ export function ProjectCanvas({
     );
   }
 
-  const primaryAttention = snapshot.attention[0];
-  const attentionItems = showAllAttention
-    ? snapshot.attention.slice(0, 5)
-    : primaryAttention
-      ? [primaryAttention]
-      : [];
-  const evidenceItems = (snapshot.projectNow?.evidence ?? []).slice(0, 3);
-
   return (
     <section className={styles.canvasArea} data-testid="project-canvas">
-      <aside
-        className={styles.agentAttention}
-        data-testid="agent-attention"
-        data-no-pan
-      >
+      {selectedEdge || snapshot.focus.kind !== "project" ? (
+        <aside className={styles.canvasContextActions} data-no-pan>
+          {selectedEdge ? (
+            <div
+              className={styles.edgeDetail}
+              data-testid="canvas-edge-detail"
+            >
+              <strong>这条关系</strong>
+              <p className={styles.edgeDetailLabel}>
+                <span data-strength={selectedEdge.strength ?? "medium"}>
+                  {selectedEdge.label}
+                </span>
+              </p>
+              <p className={styles.edgeDetailWhy}>
+                {selectedEdge.why ||
+                  selectedEdge.evidenceSentence ||
+                  "已连接两个节点。"}
+              </p>
+              <div className={styles.edgeDetailActions}>
+                <button
+                  type="button"
+                  onClick={() => onFocus(selectedEdge.source)}
+                >
+                  打开起点
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onFocus(selectedEdge.target)}
+                >
+                  打开终点
+                </button>
+                <button type="button" onClick={() => setSelectedEdge(null)}>
+                  关闭
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {snapshot.focus.kind !== "project" ? (
+            <button
+              type="button"
+              className={styles.canvasReturnProject}
+              data-testid="canvas-return-project"
+              onClick={() =>
+                onFocus({ kind: "project", id: snapshot.project.id })
+              }
+            >
+              回到项目中心
+            </button>
+          ) : null}
+        </aside>
+      ) : null}
+
+      <div className={styles.canvasTopControls} data-no-pan>
         <div
-          className={styles.projectNow}
-          data-testid="project-now"
-          data-status={snapshot.projectNow?.status ?? "empty"}
+          className={styles.edgeFilterBar}
+          data-testid="canvas-view-preset"
         >
-          <div className={styles.agentAttentionHeader}>
-            <Sparkles size={14} aria-hidden="true" />
-            <strong data-testid="project-now-label">现在怎样</strong>
-          </div>
-          <p
-            data-testid="project-now-judgment"
-            className={styles.projectNowJudgment}
+          {VIEW_PRESETS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              data-active={viewPreset === f.id ? "true" : "false"}
+              data-testid={`canvas-view-preset-${f.id}`}
+              onClick={() => setViewPreset(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            data-testid="canvas-auto-layout"
+            title="用 Dagre 层次布局重排节点"
+            onClick={() => {
+              setLayoutEpoch((n) => n + 1);
+            }}
           >
-            {snapshot.projectNow?.judgment ??
-              "还没材料，还谈不上理解项目局面。"}
-          </p>
-          {snapshot.projectNow?.nextStep ? (
-            <p data-testid="project-now-next" className={styles.projectNowNext}>
-              建议：{snapshot.projectNow.nextStep}
-            </p>
-          ) : null}
-          {evidenceItems.length > 0 ? (
-            <ul
-              data-testid="project-now-evidence"
-              className={styles.agentAttentionList}
-            >
-              {evidenceItems.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    data-testid={`project-now-evidence-${item.id}`}
-                    onClick={() => onFocus({ kind: "card", id: item.id })}
-                    title={item.label}
-                  >
-                    <FileText size={12} aria-hidden="true" />
-                    <span>依据：{displayLabel(item.label)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : snapshot.projectNow?.status === "empty" ? (
-            <p
-              className={styles.agentAttentionEmpty}
-              data-testid="project-now-empty"
-            >
-              没有可点开的材料依据。
-            </p>
-          ) : null}
+            自动布局
+          </button>
+          <button
+            type="button"
+            data-testid="canvas-layout-direction"
+            data-active={layoutDirection}
+            title="切换自上而下 / 从左到右"
+            onClick={() => {
+              setLayoutDirection((d) => (d === "TB" ? "LR" : "TB"));
+              setLayoutEpoch((n) => n + 1);
+            }}
+          >
+            {layoutDirection === "TB" ? "↓ 纵向" : "→ 横向"}
+          </button>
         </div>
 
-        {attentionItems.length > 0 ? (
-          <>
-            <div className={styles.agentAttentionHeader}>
-              <ListChecks size={14} aria-hidden="true" />
-              <strong data-testid="agent-attention-primary-label">
-                当前请先看
-              </strong>
-            </div>
-            <ul className={styles.agentAttentionList}>
-              {attentionItems.map((item, index) => (
-                <li key={`${item.target.kind}:${item.target.id}`}>
-                  <button
-                    type="button"
-                    data-testid={
-                      index === 0
-                        ? "canvas-attention-primary"
-                        : `canvas-attention-${item.target.kind}-${item.target.id}`
-                    }
-                    data-primary={index === 0 ? "true" : "false"}
-                    onClick={() => onFocus(item.target)}
-                  >
-                    <span>{item.reason}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {snapshot.attention.length > 1 ? (
-              <button
-                type="button"
-                className={styles.agentAttentionMore}
-                data-testid="agent-attention-more"
-                onClick={() => setShowAllAttention((value) => !value)}
-              >
-                {showAllAttention
-                  ? "只保留一条"
-                  : `还有 ${snapshot.attention.length - 1} 条`}
-              </button>
-            ) : null}
-          </>
-        ) : (
-          <p className={styles.agentAttentionEmpty}>
-            点节点进摘要 · 双击同样进入 · 拖邻居记住位置 · 空白平移 · 滚轮缩放。
-          </p>
-        )}
-        {selectedEdge ? (
-          <div
-            className={styles.edgeDetail}
-            data-testid="canvas-edge-detail"
-          >
-            <div className={styles.agentAttentionHeader}>
-              <strong>这条关系</strong>
-            </div>
-            <p className={styles.edgeDetailLabel}>
-              <span data-strength={selectedEdge.strength ?? "medium"}>
-                {selectedEdge.label}
-              </span>
-            </p>
-            <p className={styles.edgeDetailWhy}>
-              {selectedEdge.why ||
-                selectedEdge.evidenceSentence ||
-                "已连接两个节点。"}
-            </p>
-            <div className={styles.edgeDetailActions}>
-              <button
-                type="button"
-                onClick={() => onFocus(selectedEdge.source)}
-              >
-                打开起点
-              </button>
-              <button
-                type="button"
-                onClick={() => onFocus(selectedEdge.target)}
-              >
-                打开终点
-              </button>
-              <button type="button" onClick={() => setSelectedEdge(null)}>
-                关闭
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {snapshot.focus.kind !== "project" ? (
-          <button
-            type="button"
-            className={styles.agentAttentionMore}
-            data-testid="canvas-return-project"
-            onClick={() =>
-              onFocus({ kind: "project", id: snapshot.project.id })
-            }
-          >
-            回到项目中心
-          </button>
-        ) : null}
-        <p className={styles.canvasHint}>
-          悬停高亮邻边 · 点边看原因 · 中心固定、邻居可拖 · 弱边默认隐藏
-        </p>
-      </aside>
-
-      <div
-        className={styles.edgeFilterBar}
-        data-testid="canvas-view-preset"
-        data-no-pan
-      >
-        {VIEW_PRESETS.map((f) => (
-          <button
-            key={f.id}
-            type="button"
-            data-active={viewPreset === f.id ? "true" : "false"}
-            data-testid={`canvas-view-preset-${f.id}`}
-            onClick={() => setViewPreset(f.id)}
-          >
-            {f.label}
-          </button>
-        ))}
-        <button
-          type="button"
-          data-testid="canvas-auto-layout"
-          title="用 Dagre 层次布局重排节点"
-          onClick={() => {
-            setLayoutEpoch((n) => n + 1);
-          }}
+        <div
+          className={styles.canvasStatsBar}
+          data-testid="canvas-stats-bar"
         >
-          自动布局
-        </button>
-        <button
-          type="button"
-          data-testid="canvas-layout-direction"
-          data-active={layoutDirection}
-          title="切换自上而下 / 从左到右"
-          onClick={() => {
-            setLayoutDirection((d) => (d === "TB" ? "LR" : "TB"));
-            setLayoutEpoch((n) => n + 1);
-          }}
-        >
-          {layoutDirection === "TB" ? "↓ 纵向" : "→ 横向"}
-        </button>
-      </div>
-
-      <div
-        className={styles.canvasStatsBar}
-        data-testid="canvas-stats-bar"
-        data-no-pan
-      >
-        <span>
-          <b>{snapshot.nodes.length}</b> 节点
-        </span>
-        <span>
-          <b>{snapshot.edges.length}</b> 关系
-        </span>
-        <span>
-          <b>
-            {
-              snapshot.nodes.filter(
-                (n) => n.ref.kind === "card" || n.ref.kind === "work_item",
-              ).length
-            }
-          </b>{" "}
-          材料/工作
-        </span>
-        <span data-live={agentLive?.toolReceipts?.length ? "true" : "false"}>
-          <b>{agentLive?.toolReceipts?.length ?? 0}</b> Agent 步骤
-        </span>
-        {agentLive?.runStatus === "running" ||
-        agentLive?.runStatus === "queued" ? (
-          <em className={styles.canvasStatsLive} data-testid="canvas-agent-live">
-            Live
-          </em>
-        ) : null}
+          <span>
+            <b>{snapshot.nodes.length}</b> 节点
+          </span>
+          <span>
+            <b>{snapshot.edges.length}</b> 关系
+          </span>
+          <span>
+            <b>
+              {
+                snapshot.nodes.filter(
+                  (n) => n.ref.kind === "card" || n.ref.kind === "work_item",
+                ).length
+              }
+            </b>{" "}
+            材料/工作
+          </span>
+          <span data-live={agentLive?.toolReceipts?.length ? "true" : "false"}>
+            <b>{agentLive?.toolReceipts?.length ?? 0}</b> Agent 步骤
+          </span>
+          {agentLive?.runStatus === "running" ||
+          agentLive?.runStatus === "queued" ? (
+            <em className={styles.canvasStatsLive} data-testid="canvas-agent-live">
+              Live
+            </em>
+          ) : null}
+        </div>
       </div>
 
       <div className={styles.rfStage}>
