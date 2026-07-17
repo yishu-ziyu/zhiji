@@ -414,10 +414,18 @@ export function prepareDesktopBundle() {
   fs.rmSync(desktopStage, { recursive: true, force: true });
   copyRecursive(desktopSrc, desktopStage);
 
+  const rootPkg = JSON.parse(
+    fs.readFileSync(path.join(root, "package.json"), "utf8"),
+  );
+  const appVersion =
+    typeof rootPkg.version === "string" && rootPkg.version.trim()
+      ? rootPkg.version.trim()
+      : "0.0.0";
+
   const stagePkg = {
     name: "zhiji-desktop",
     productName: "知几",
-    version: "0.1.0",
+    version: appVersion,
     private: true,
     main: "desktop/main.cjs",
   };
