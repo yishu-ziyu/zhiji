@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "name": "project-intelligence-metrics",
   "suite": "offline-v0",
-  "ranAt": "2026-07-17T16:31:29.352Z",
+  "ranAt": "2026-07-17T16:38:59.446Z",
   "git": {
-    "commit": "05b6a5aad21c04d8f614c3cf71fa98fc796f897b",
+    "commit": "dccbd4a0dc5f02722bab4742256707cef4fb1062",
     "dirty": true
   },
   "goals": {

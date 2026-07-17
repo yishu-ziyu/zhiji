@@ -1,5 +1,5 @@
 # Latest metrics run
 
-→ [runs/2026-07-17-offline-v0-05b6a5aa/REPORT.md](./runs/2026-07-17-offline-v0-05b6a5aa/REPORT.md)
+→ [runs/2026-07-17-offline-v0-dccbd4a0/REPORT.md](./runs/2026-07-17-offline-v0-dccbd4a0/REPORT.md)
 
-Commit: `05b6a5aad21c04d8f614c3cf71fa98fc796f897b` · 2026-07-17T16:31:29.352Z
+Commit: `dccbd4a0dc5f02722bab4742256707cef4fb1062` · 2026-07-17T16:38:59.446Z

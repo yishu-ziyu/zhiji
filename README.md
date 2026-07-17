@@ -160,9 +160,9 @@ npm run dev
 
 ### 桌面客户端
 
-**预构建安装包（Apple Silicon）：** [Release v0.1.0](https://github.com/yishu-ziyu/zhiji/releases/tag/v0.1.0)
+**预构建安装包（Apple Silicon）：** [Release v0.1.1](https://github.com/yishu-ziyu/zhiji/releases/tag/v0.1.1)
 
-1. 下载 `Zhiji-0.1.0-darwin-arm64.zip` 并解压得到 `知几.app`
+1. 下载 `Zhiji-0.1.1-darwin-arm64.zip` 并解压得到 `知几.app`
 2. 首次打开若被拦截：右键 → 打开（未签名比赛包）
 3. 在应用内填写你自己的模型 API Key（包内不含密钥）
 

@@ -14,12 +14,12 @@ goal → define metrics → measure → compare versions → adjust → re-measu
 
 ## Latest published run
 
-- **Slug:** `2026-07-17-offline-v0-05b6a5aa`
-- **When:** 2026-07-17T16:31:29.352Z
-- **Git:** `05b6a5aad21c04d8f614c3cf71fa98fc796f897b`
+- **Slug:** `2026-07-17-offline-v0-dccbd4a0`
+- **When:** 2026-07-17T16:38:59.446Z
+- **Git:** `dccbd4a0dc5f02722bab4742256707cef4fb1062`
 - **Bench:** 54/54
-- **Report:** [runs/2026-07-17-offline-v0-05b6a5aa/REPORT.md](./runs/2026-07-17-offline-v0-05b6a5aa/REPORT.md)
-- **Raw JSON:** [runs/2026-07-17-offline-v0-05b6a5aa/snapshot.json](./runs/2026-07-17-offline-v0-05b6a5aa/snapshot.json)
+- **Report:** [runs/2026-07-17-offline-v0-dccbd4a0/REPORT.md](./runs/2026-07-17-offline-v0-dccbd4a0/REPORT.md)
+- **Raw JSON:** [runs/2026-07-17-offline-v0-dccbd4a0/snapshot.json](./runs/2026-07-17-offline-v0-dccbd4a0/snapshot.json)
 - **Log:** [EXPERIMENT_LOG.md](./EXPERIMENT_LOG.md)
 
 ### Primary (latest)

@@ -1,0 +1,96 @@
+{
+  "slug": "2026-07-17-offline-v0-dccbd4a0",
+  "ranAt": "2026-07-17T16:38:59.446Z",
+  "git": {
+    "commit": "dccbd4a0dc5f02722bab4742256707cef4fb1062",
+    "dirty": true
+  },
+  "suite": "offline-v0",
+  "metrics": [
+    {
+      "id": "overall_pass_rate",
+      "name": "全量场景通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 54,
+      "denominator": 54
+    },
+    {
+      "id": "structure_pass_rate",
+      "name": "结构契约通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 13,
+      "denominator": 13
+    },
+    {
+      "id": "search_intent_pass_rate",
+      "name": "检索意图通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 23,
+      "denominator": 23
+    },
+    {
+      "id": "honesty_pass_rate",
+      "name": "诚实/安全通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 6,
+      "denominator": 6
+    },
+    {
+      "id": "noise_pass_rate",
+      "name": "噪声不升格通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 3,
+      "denominator": 3
+    }
+  ],
+  "byFamily": {
+    "structure": {
+      "total": 13,
+      "passed": 13
+    },
+    "search": {
+      "total": 20,
+      "passed": 20
+    },
+    "decision": {
+      "total": 3,
+      "passed": 3
+    },
+    "reentry": {
+      "total": 3,
+      "passed": 3
+    },
+    "conflict": {
+      "total": 3,
+      "passed": 3
+    },
+    "refuse": {
+      "total": 3,
+      "passed": 3
+    },
+    "noise": {
+      "total": 3,
+      "passed": 3
+    },
+    "quick": {
+      "total": 3,
+      "passed": 3
+    },
+    "safety": {
+      "total": 3,
+      "passed": 3
+    }
+  },
+  "scenarioCount": 54,
+  "failedScenarioIds": []
+}
