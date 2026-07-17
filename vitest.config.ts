@@ -9,6 +9,8 @@ export default defineConfig({
       "tests/unit/**/*.test.ts",
       "tests/security/**/*.test.ts",
       "tests/integration/**/*.test.ts",
+      "tests/bench/**/*.test.ts",
+      "tests/bench/**/*.bench.test.ts",
     ],
     // Live LLM tests require secrets; never part of default CI unit path.
     exclude: [

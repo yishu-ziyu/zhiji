@@ -31,6 +31,8 @@ jobs:
         run: npm run test:unit
       - name: Security tests
         run: npm run test:security
+      - name: Project Intelligence Bench
+        run: npm run test:bench
       - name: Build
         run: npm run build
       - name: Upload logs on failure

@@ -14,6 +14,7 @@
     "test": "vitest run --exclude '**/*live*.test.ts' --exclude '**/*.live.test.ts'",
     "test:unit": "vitest run --exclude '**/*live*.test.ts' --exclude '**/*.live.test.ts'",
     "test:security": "vitest run tests/security shared/project-memory/grant-fs shared/project-memory/safe-git --exclude '**/*live*'",
+    "test:bench": "vitest run tests/bench/project-intelligence/",
     "test:live": "vitest run '**/*live*.test.ts' '**/*.live.test.ts'",
     "test:integration": "vitest run tests/integration --exclude '**/*live*'",
     "test:e2e": "playwright test",

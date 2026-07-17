@@ -602,7 +602,9 @@ export function extractOwnerSearchQueries(ownerUtterance?: string): string[] {
   }
   if (/业务逻辑|业务流程|业务闭环/i.test(utterance)) addQuery("业务流程");
   if (/证据|evidence|依据|引用/i.test(utterance)) addQuery("证据");
-  if (/现在怎样|态势|进度|状态|现状/i.test(utterance)) {
+  if (
+    /现在怎样|现在.*怎样|态势|进度|状态|现状|项目怎样/i.test(utterance)
+  ) {
     addQuery("进度");
     addQuery("TODO");
   }
