@@ -175,6 +175,21 @@ npm run desktop:package   # 生成 macOS .app
 
 桌面模型配置不会打进 `.app`，演示机可按 [`docs/product/DESKTOP_ENV_SETUP.md`](docs/product/DESKTOP_ENV_SETUP.md) 配置。
 
+## 公开实验数据与指标
+
+知几用固定题集 + 主键指标判断「进步还是只是更漂亮」：
+
+- **指标规范：** [`docs/product/PROJECT_INTELLIGENCE_METRICS.md`](docs/product/PROJECT_INTELLIGENCE_METRICS.md)
+- **公开实验档案：** [`docs/metrics/`](docs/metrics/)（每次 `metrics:publish` 写入 run 明细，入仓公开）
+- **实验日志：** [`docs/metrics/EXPERIMENT_LOG.md`](docs/metrics/EXPERIMENT_LOG.md)
+
+```bash
+npm run test:bench
+npm run metrics:measure
+npm run metrics:compare
+npm run metrics:publish   # 生成 docs/metrics/runs/<slug>/ 并应提交到 GitHub
+```
+
 ## 信任边界
 
 - **先授权，后读取**：没有明确 Source Grant，不读取正文；

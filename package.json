@@ -18,6 +18,7 @@
     "metrics:measure": "node scripts/bench-metrics.mjs measure",
     "metrics:compare": "node scripts/bench-metrics.mjs compare",
     "metrics:baseline": "node scripts/bench-metrics.mjs baseline",
+    "metrics:publish": "node scripts/bench-metrics.mjs publish",
     "test:live": "vitest run '**/*live*.test.ts' '**/*.live.test.ts'",
     "test:integration": "vitest run tests/integration --exclude '**/*live*'",
     "test:e2e": "playwright test",

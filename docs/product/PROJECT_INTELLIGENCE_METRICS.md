@@ -69,26 +69,36 @@ Agent 的**输出契约、检索意图、诚实拒答、噪声/安全边界**在
 ## 3. 测量结果（Measure）
 
 ```bash
-# 跑 Bench + 写出指标快照
+# 跑 Bench + 写出指标快照（本地 reports/，gitignore）
 npm run metrics:measure
 
 # 仅跑题集（无写文件）
 npm run test:bench
+
+# 公开归档：详细 JSON + 全场景 REPORT，写入 docs/metrics/（应 commit 并 push）
+npm run metrics:publish
 ```
 
-快照默认写入：
+| 产物 | 路径 | 是否入仓公开 |
+|---|---|---|
+| 本地 latest | `tests/bench/project-intelligence/reports/latest.json` | 否（gitignore） |
+| CI 基线 | `tests/bench/project-intelligence/baselines/offline-v0.json` | **是** |
+| 公开 run | `docs/metrics/runs/<date>-offline-v0-<sha>/` | **是** |
+| 实验日志 | `docs/metrics/EXPERIMENT_LOG.md` | **是** |
+| 公开索引 | `docs/metrics/README.md` | **是** |
 
-`tests/bench/project-intelligence/reports/latest.json`
+公开 run 至少包含：
 
-可选带 git 短哈希：
+- `snapshot.json` — 全量指标 + **逐题 checks**
+- `index.json` — 摘要
+- `REPORT.md` — 人读报告（目标、M1–M5、分族、逐题明细）
 
-`tests/bench/project-intelligence/reports/<gitShort>-<timestamp>.json`
-
-快照字段（摘要）：
+快照字段：
 
 - `goals` / `metrics[]`（id, value, threshold, pass）
 - `bench`（total/passed/failed/byFamily）
 - `diagnostics`（by check kind）
+- `scenarios[]`（publish 必带：id/family/title/pass/checks）
 - `git`（commit, dirty）
 - `ranAt`
 

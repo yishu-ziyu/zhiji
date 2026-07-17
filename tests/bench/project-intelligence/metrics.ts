@@ -92,6 +92,18 @@ export type MetricsSnapshot = {
   };
   /** Failed scenario ids for quick triage. */
   failedScenarioIds: string[];
+  /**
+   * Full per-scenario results for public experiment archives.
+   * Optional on slim snapshots; publish always includes this.
+   */
+  scenarios?: Array<{
+    id: string;
+    family: string;
+    difficulty: string;
+    title: string;
+    pass: boolean;
+    checks: Array<{ kind: string; pass: boolean; detail: string }>;
+  }>;
 };
 
 export function rateForFamilies(
@@ -163,9 +175,10 @@ export function scoreDiagnostics(report: BenchReport): DiagnosticScore[] {
 export function buildMetricsSnapshot(
   report: BenchReport,
   git?: MetricsSnapshot["git"],
+  options?: { includeScenarios?: boolean },
 ): MetricsSnapshot {
   const metrics = scorePrimaryMetrics(report);
-  return {
+  const snap: MetricsSnapshot = {
     schemaVersion: 1,
     name: "project-intelligence-metrics",
     suite: "offline-v0",
@@ -187,15 +200,127 @@ export function buildMetricsSnapshot(
     },
     failedScenarioIds: report.results.filter((r) => !r.pass).map((r) => r.id),
   };
+  if (options?.includeScenarios) {
+    snap.scenarios = report.results.map((r) => ({
+      id: r.id,
+      family: r.family,
+      difficulty: r.difficulty,
+      title: r.title,
+      pass: r.pass,
+      checks: r.checks.map((c) => ({
+        kind: c.kind,
+        pass: c.pass,
+        detail: c.detail,
+      })),
+    }));
+  }
+  return snap;
 }
 
 /** Run catalog + score (no fs). */
-export function measureOfflineMetrics(git?: MetricsSnapshot["git"]): MetricsSnapshot {
+export function measureOfflineMetrics(
+  git?: MetricsSnapshot["git"],
+  options?: { includeScenarios?: boolean },
+): MetricsSnapshot {
   const report = runBench(PROJECT_INTELLIGENCE_BENCH, {
     name: "project-intelligence-bench",
     version: "0.1.0",
   });
-  return buildMetricsSnapshot(report, git);
+  return buildMetricsSnapshot(report, git, options);
+}
+
+/** Human-readable report for public GitHub docs. */
+export function formatPublicExperimentMarkdown(
+  snap: MetricsSnapshot,
+  meta?: { slug?: string; notes?: string },
+): string {
+  const lines: string[] = [];
+  lines.push(`# Experiment · ${meta?.slug ?? snap.suite}`);
+  lines.push("");
+  lines.push(`- **ranAt:** ${snap.ranAt}`);
+  lines.push(
+    `- **git:** \`${snap.git?.commit ?? "unknown"}\`${snap.git?.dirty ? " (dirty tree at measure)" : ""}`,
+  );
+  lines.push(`- **suite:** ${snap.suite}`);
+  lines.push(
+    `- **bench:** ${snap.bench.passed}/${snap.bench.total} passed`,
+  );
+  lines.push("");
+  lines.push("## Goals");
+  lines.push("");
+  lines.push(`- **Product:** ${snap.goals.product}`);
+  lines.push(`- **Engineering:** ${snap.goals.engineering}`);
+  if (meta?.notes) {
+    lines.push("");
+    lines.push("## Notes");
+    lines.push("");
+    lines.push(meta.notes);
+  }
+  lines.push("");
+  lines.push("## Primary metrics (M1–M5)");
+  lines.push("");
+  lines.push("| ID | Name | Value | Threshold | Pass | n/N |");
+  lines.push("|---|---|---:|---:|---|---:|");
+  for (const m of snap.metrics) {
+    lines.push(
+      `| ${m.id} | ${m.name} | ${(m.value * 100).toFixed(1)}% | ${(m.threshold * 100).toFixed(0)}% | ${m.pass ? "yes" : "NO"} | ${m.numerator}/${m.denominator} |`,
+    );
+  }
+  lines.push("");
+  lines.push("## By family");
+  lines.push("");
+  lines.push("| Family | Passed | Total | Rate |");
+  lines.push("|---|---:|---:|---:|");
+  for (const [family, slot] of Object.entries(snap.bench.byFamily).sort()) {
+    const rate = slot.total === 0 ? 0 : slot.passed / slot.total;
+    lines.push(
+      `| ${family} | ${slot.passed} | ${slot.total} | ${(rate * 100).toFixed(1)}% |`,
+    );
+  }
+  lines.push("");
+  lines.push("## Diagnostics (check kinds)");
+  lines.push("");
+  lines.push("| Kind | Passed | Total | Rate |");
+  lines.push("|---|---:|---:|---:|");
+  for (const d of snap.diagnostics) {
+    lines.push(
+      `| \`${d.kind}\` | ${d.numerator} | ${d.denominator} | ${(d.value * 100).toFixed(1)}% |`,
+    );
+  }
+  if (snap.scenarios?.length) {
+    lines.push("");
+    lines.push("## All scenarios");
+    lines.push("");
+    lines.push("| ID | Family | Diff | Pass | Title |");
+    lines.push("|---|---|---|---|---|");
+    for (const s of snap.scenarios) {
+      lines.push(
+        `| \`${s.id}\` | ${s.family} | ${s.difficulty} | ${s.pass ? "pass" : "FAIL"} | ${s.title.replace(/\|/g, "/")} |`,
+      );
+    }
+    lines.push("");
+    lines.push("## Scenario check detail");
+    lines.push("");
+    for (const s of snap.scenarios) {
+      lines.push(`### \`${s.id}\` · ${s.title}`);
+      lines.push("");
+      lines.push(`- family: ${s.family} · difficulty: ${s.difficulty}`);
+      lines.push(`- result: **${s.pass ? "pass" : "FAIL"}**`);
+      for (const c of s.checks) {
+        lines.push(
+          `  - [${c.pass ? "x" : " "}] \`${c.kind}\` — ${c.detail.replace(/\n/g, " ")}`,
+        );
+      }
+      lines.push("");
+    }
+  }
+  lines.push("---");
+  lines.push("");
+  lines.push(
+    "Generated by Project Intelligence Metrics. See `docs/product/PROJECT_INTELLIGENCE_METRICS.md`.",
+  );
+  lines.push("");
+  return lines.join("\n");
 }
 
 export type MetricDelta = {
