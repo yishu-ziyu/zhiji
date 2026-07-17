@@ -160,6 +160,28 @@ describe("agent-tools", () => {
     );
   });
 
+  it("快捷问句「只看决策 / 冲突 / 重进」驱动检索词", async () => {
+    const { extractOwnerSearchQueries, planBootstrapToolCalls: plan } =
+      await import("./agent-tools");
+    expect(extractOwnerSearchQueries("只看决策")).toEqual(
+      expect.arrayContaining(["决策"]),
+    );
+    expect(extractOwnerSearchQueries("冲突在哪")).toEqual(
+      expect.arrayContaining(["冲突"]),
+    );
+    expect(extractOwnerSearchQueries("重进后变化")).toEqual(
+      expect.arrayContaining(["变化"]),
+    );
+    const calls = plan({
+      eventRevisionIds: [],
+      ownerUtterance: "只看决策",
+    });
+    const queries = calls.flatMap((call) =>
+      call.name === "search_text" ? [call.input.query] : [],
+    );
+    expect(queries).toEqual(expect.arrayContaining(["决策"]));
+  });
+
   it("refuses path escape for search via root resolve", async () => {
     const root = tempFixture();
     const result = await executeProjectAgentTool(

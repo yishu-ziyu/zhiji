@@ -491,6 +491,10 @@ export type AgentLoopContext = {
   budget: AgentRunBudget;
   /** Dual memory: session dialogue + user prefs (never replaces evidence). */
   chat?: AgentChatContextPack;
+  /** Analysis trigger — owner_question gets answer-first prompt. */
+  trigger?: AnalysisRun["trigger"];
+  /** Raw owner question for this run (also mirrored in chat.ownerUtterance). */
+  ownerUtterance?: string;
 };
 
 export type AgentRunView = {

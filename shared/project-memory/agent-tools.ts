@@ -561,6 +561,110 @@ function scoreDocPath(p: string): number {
   return 40;
 }
 
+/**
+ * Turn Owner natural language into search queries.
+ * Prefer question-derived terms so chat does not only hit fixed demo words.
+ */
+export function extractOwnerSearchQueries(ownerUtterance?: string): string[] {
+  const utterance = ownerUtterance?.trim() ?? "";
+  if (!utterance) return [];
+
+  const queries: string[] = [];
+  const addQuery = (query: string) => {
+    const q = query.trim();
+    if (!q || q.length < 2) return;
+    if (queries.includes(q) || queries.length >= 5) return;
+    queries.push(q);
+  };
+
+  // Intent shortcuts (match right-rail quick chips + common product questions)
+  if (/只看决策|决策|拍板|决定什么|next decision/i.test(utterance)) {
+    addQuery("决策");
+    addQuery("决定");
+  }
+  if (/冲突|矛盾|不一致|conflict/i.test(utterance)) {
+    addQuery("冲突");
+    addQuery("矛盾");
+  }
+  if (/重进|回来|变化|变更|delta|diff|上次/i.test(utterance)) {
+    addQuery("变化");
+    addQuery("变更");
+  }
+  if (/阻塞|卡点|blocker|blocked/i.test(utterance)) addQuery("阻塞");
+  if (/定价|计费|订阅|商业化|revenue/i.test(utterance)) {
+    addQuery("定价");
+    addQuery("商业化");
+  }
+  if (/数据集|dataset/i.test(utterance)) addQuery("数据集");
+  if (/评测|测验|测试|验证|evaluation|benchmark/i.test(utterance)) {
+    addQuery("评测");
+    addQuery("evaluation");
+  }
+  if (/业务逻辑|业务流程|业务闭环/i.test(utterance)) addQuery("业务流程");
+  if (/证据|evidence|依据|引用/i.test(utterance)) addQuery("证据");
+  if (/现在怎样|态势|进度|状态|现状/i.test(utterance)) {
+    addQuery("进度");
+    addQuery("TODO");
+  }
+
+  // Chinese 2–4 char chunks (skip pure function words)
+  const stop = new Set([
+    "这个",
+    "那个",
+    "什么",
+    "怎么",
+    "如何",
+    "是否",
+    "可以",
+    "我们",
+    "你们",
+    "他们",
+    "一个",
+    "一下",
+    "一下",
+    "问题",
+    "告诉",
+    "给我",
+    "看看",
+    "还有",
+    "或者",
+    "以及",
+    "关于",
+    "因为",
+    "所以",
+    "如果",
+    "已经",
+    "没有",
+    "不是",
+    "就是",
+    "还是",
+    "需要",
+    "进行",
+    "通过",
+    "目前",
+    "现在",
+    "项目",
+    "里面",
+    "有没有",
+  ]);
+  const zhChunks = utterance.match(/[\u4e00-\u9fff]{2,4}/g) ?? [];
+  for (const chunk of zhChunks) {
+    if (stop.has(chunk)) continue;
+    addQuery(chunk);
+  }
+
+  // English tokens
+  const en = utterance.match(/[A-Za-z][A-Za-z0-9_-]{2,}/g) ?? [];
+  for (const w of en) {
+    if (/^(the|and|for|with|from|this|that|what|how|please)$/i.test(w)) {
+      continue;
+    }
+    addQuery(w);
+  }
+
+  return queries;
+}
+
 /** Deterministic first-wave: map → high-signal reads → light search. */
 export function planBootstrapToolCalls(input: {
   eventRevisionIds: Array<{ revisionId: string; relativePath: string }>;
@@ -597,30 +701,26 @@ export function planBootstrapToolCalls(input: {
   // Few high-value searches only (map→search→follow-up read). Owner
   // questions must influence retrieval; otherwise a follow-up about evaluation
   // can accidentally be answered from README alone.
-  const utterance = input.ownerUtterance?.trim() ?? "";
   const queries: string[] = [];
   const addQuery = (query: string) => {
-    if (query && !queries.includes(query) && queries.length < 4) {
+    if (query && !queries.includes(query) && queries.length < 5) {
       queries.push(query);
     }
   };
-  if (/数据集|dataset/i.test(utterance)) addQuery("数据集");
-  if (/评测|测验|测试|验证|evaluation|benchmark/i.test(utterance)) {
-    addQuery("评测");
-    addQuery("evaluation");
+  for (const q of extractOwnerSearchQueries(input.ownerUtterance)) {
+    addQuery(q);
   }
-  if (/业务逻辑|业务流程|业务闭环/i.test(utterance)) {
-    addQuery("业务流程");
-  }
-  if (/证据|evidence/i.test(utterance)) addQuery("证据");
-  for (const fallback of ["README", "Demo", "下一步", "路演"]) {
-    addQuery(fallback);
+  // Baseline anchors when utterance empty or too thin
+  if (queries.length < 2) {
+    for (const fallback of ["README", "TODO", "决策", "下一步"]) {
+      addQuery(fallback);
+    }
   }
   for (const q of queries) {
     calls.push({
-      id: `t-search-${q}`,
+      id: `t-search-${q.slice(0, 24)}`,
       name: "search_text",
-      input: { query: q, limit: 8 },
+      input: { query: q, limit: 10 },
     });
   }
   return calls;

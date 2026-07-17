@@ -169,13 +169,33 @@ export function createProjectAgentModelLoop(options?: {
       const finishHint = groundedReadComplete
         ? "地图、搜索、读取已完成闭环：本轮必须直接输出 kind=finish，禁止继续请求 tools。"
         : "若仍缺地图、搜索或读取，再请求最少的必要工具。";
+      const ownerQ =
+        input.ownerUtterance?.trim() ||
+        input.chat?.ownerUtterance?.trim() ||
+        "";
+      const isOwnerQuestion =
+        input.trigger === "owner_question" || Boolean(ownerQ);
+      const ownerQuestionBlock = isOwnerQuestion
+        ? [
+            "## Owner 本轮问题（最高优先级）",
+            ownerQ
+              ? `ownerUtterance=${JSON.stringify(ownerQ)}`
+              : "（有 owner_question 触发但无文本，按“项目现在怎样”处理）",
+            "回答契约（finish 时必须满足）：",
+            "1) now.text = 直接回答该问题的 1—2 句结论（先答问题，再补态势）；禁止答非所问的材料罗列。",
+            "2) why = 最多 3 条会改变判断的事实；supported 必须带 toolReceipts 里的 revisionId+relativePath+quote。",
+            "3) nextDecision = 一个具体的 Owner 拍板问题（动作+取舍），且必须服务本轮问题。",
+            "4) 证据不足：proposedStop=unknown，now.gaps 写清缺什么；禁止编造路径/原文。",
+            "5) 快捷意图：只看决策→聚焦决策与 nextDecision；冲突在哪→写 conflicts + 对立材料；重进后变化→用 then/changed 对比上次。",
+          ].join("\n")
+        : "";
       const prompt = [
-        "你是「项目理解」Agent：只能使用已授权文件夹内的工具结果，禁止编造路径与原文。",
+        "你是「知几」项目情报 Agent：只能使用已授权文件夹内的工具结果，禁止编造路径与原文。",
         "只输出一个 JSON 对象，且 kind 只能是 tools | finish | confirmation_required。",
         'A) {"kind":"tools","calls":[{"id":"t1","name":"project_map|read_revision|read_path|search_text|query_project_memory|git_status|git_log|set_canvas_view","input":{...}}]}',
         'B) {"kind":"finish","proposedStop":"evidence_sufficient|unknown","body":{...UnderstandingBody}}',
         'C) {"kind":"confirmation_required","reason":"expand_scope|sensitive_source|write_action","summary":"..."}',
-        "UnderstandingBody 必填: now{text,evidence}, then{text,evidence}, changed[], why[{text,status,evidence}], depends[], evidenceRevisionIds[], nextDecision{text,evidence}。",
+        "UnderstandingBody 必填: now{text,evidence,gaps,conflicts}, then{text,at,evidence}, changed[], why[{text,status,evidence}], depends[], evidenceRevisionIds[], nextDecision（字符串）。",
         "中文写 now/why/nextDecision。why[].status=supported 时 evidence 必须含 revisionId+relativePath+quote+lastVerifiedAt（来自 toolReceipts）。",
         "工具已读到材料时优先 finish；证据不足就 proposedStop=unknown，并诚实说明不知道什么。",
         "finish 时 now.evidence / why[].evidence 必须引用 toolReceipts 里真实读到的文件，禁止空 evidence 装懂。",
@@ -187,9 +207,12 @@ export function createProjectAgentModelLoop(options?: {
         "画布：若 Owner 在问「现在怎样/证据/阻塞/关系类型/昨天项目」，必须先 tools 调用 set_canvas_view（view=now|by_kind|decision|evidence，可选 focus/highlightNodeKeys/reason/intentId）；禁止只口述图不调工具。",
         "若有 ownerUtterance 或 recentDialogue，优先回答其中的问题，仍须用工具证据。",
         "若有 ownerStatements：那是人对项目的说法，必须进入 now/depends；与文件冲突写 conflicts，禁止当没听见。",
+        "能力：优先 project_map → search_text（用问题关键词）→ read_revision/read_path；必要时 query_project_memory / git_log；禁止空转 tools。",
+        ownerQuestionBlock,
         finishHint,
         styleHint,
         `projectId=${input.projectId} matterId=${input.matterId} grantId=${input.grantId}`,
+        `trigger=${input.trigger ?? "source_change"}`,
         `eventIds=${JSON.stringify(input.eventIds)}`,
         `toolReceipts=${JSON.stringify(input.toolReceiptSummaries)}`,
         `budgetRemainingTurns≈${input.budget.maxModelTurns}`,
@@ -867,12 +890,17 @@ export function createProjectAgentRuntime(
         }
 
         // Force map→search→read closure: read files that search hit but bootstrap skipped.
+        // Owner chat gets a slightly higher follow-up budget so questions aren't answered from map alone.
+        const ownerFollowBudget = input.ownerUtterance?.trim() ? 8 : 4;
         const followReads = planReadFollowupsFromSearch({
           searchRelativePaths: searchHitPaths,
           pathByRevisionId: pathByRev,
           alreadyReadRevisionIds,
           alreadyReadPaths,
-          maxReads: Math.min(4, Math.max(0, budget.maxFilesRead - filesRead)),
+          maxReads: Math.min(
+            ownerFollowBudget,
+            Math.max(0, budget.maxFilesRead - filesRead),
+          ),
         });
         for (const call of followReads) {
           if (toolCalls >= budget.maxToolCalls) break;
@@ -979,6 +1007,8 @@ export function createProjectAgentRuntime(
           toolReceiptSummaries: promptReceiptSummaries,
           budget,
           chat: chatPack,
+          trigger: input.trigger,
+          ownerUtterance: input.ownerUtterance,
         };
         let step: {
           decision: AgentLoopDecision;
@@ -1384,20 +1414,17 @@ export function createProjectAgentRuntime(
             });
           sessionId = open.id;
         }
-        const nextDecisionText =
-          typeof finalBody.nextDecision === "string"
-            ? finalBody.nextDecision
-            : "";
-        const agentText = [
-          finalBody.now?.text?.trim() || "已整理一段项目理解，请确认。",
-          nextDecisionText ? `下一步：${nextDecisionText}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
+        const { formatAgentDialogueReply } = await import(
+          "./agent-dialogue-reply"
+        );
+        const agentText = formatAgentDialogueReply(finalBody, {
+          ownerUtterance: input.ownerUtterance,
+          maxChars: 1600,
+        });
         const agentMsg = dialogue.appendDialogueMessage({
           sessionId,
           role: "agent",
-          content: agentText.slice(0, 1200),
+          content: agentText.slice(0, 1600),
           analysisRunId: run.id,
           milestone: true,
         });

@@ -111,7 +111,7 @@ export function formatAgentChatContextForPrompt(
   }
 
   lines.push(
-    "规则：1) Owner 陈述是项目真源的一部分，不是可丢弃闲聊；2) 文件证据仍须 toolReceipts；3) writingStyle 管语气；4) confirmStyle=always 时不要自称已确认。",
+    "规则：1) Owner 陈述是项目真源的一部分，不是可丢弃闲聊；2) 文件证据仍须 toolReceipts；3) writingStyle 管语气；4) confirmStyle=always 时不要自称已确认；5) 有 ownerUtterance 时 now/nextDecision 必须直接服务该问题。",
   );
   return lines.join("\n");
 }
