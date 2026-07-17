@@ -276,6 +276,11 @@ export function buildModelPrompt(
     "面向用户的内容使用简体中文：now/then 的 text、gaps、conflicts，changed 的 before/after，why.text，depends.reason，nextDecision。",
     "原文引用保留来源语言：evidence[].quote、文件路径和 ID 不翻译。",
     "不要在面向用户的内容中出现 Owner、candidate、accepted、revision、matter、evidence 等内部字段名。",
+    "这是给刚回到项目、需要马上做决定的负责人看的，不是工程审计报告。",
+    "now.text 只写 1—2 句：项目现在到了哪一步、真正还差什么；不要堆内部实现名或测试数字。",
+    "why 最多 3 条，只保留会改变负责人判断的事实；不要把整段 README 或数据集介绍当结论。",
+    "nextDecision 只给一个具体问题，写清动作和取舍，不要重复当前判断。",
+    "若工程已完成但真人演示/验收未完成，明确区分“工程可用”和“已经验收”，优先建议完成真实闭环。",
     `projectId=${input.projectId} matterId=${input.matterId}`,
     `events=${JSON.stringify(input.events)}`,
     `accepted=${JSON.stringify(input.accepted?.body ?? null)}`,
@@ -333,32 +338,62 @@ function coerceModelBody(
 /** Default live completion via shared/llm/adapter. */
 export async function completeUnderstandingViaLlm(
   input: MatterStateReconstructionInput,
+  llmSnapshot?: import("@/shared/llm/types").LlmConnectionSnapshot,
 ): Promise<UnderstandingBody> {
   const text = await complete(
     buildModelPrompt(input),
     "你是项目理解 Agent。只输出 JSON。所有解释使用简体中文，原文引用保留来源语言。",
-    { maxRetries: 1, timeout: 15000 },
+    {
+      maxRetries: 1,
+      timeout: 15000,
+      snapshot: llmSnapshot,
+    },
   );
   return coerceModelBody(extractJson(text), input);
 }
 
 export type AgentModelLoopOptions = {
   /**
-   * Default `model`: attempt complete (llm adapter or inject), fall back deterministic on failure.
-   * `deterministic` forces template path (tests).
+   * Default `model`: attempt complete (llm adapter or inject).
+   * Deterministic shell only when mode=deterministic or allowDeterministicFallback=true.
    */
   mode?: "deterministic" | "model";
   complete?: (
     input: MatterStateReconstructionInput,
   ) => Promise<UnderstandingBody>;
+  /** Frozen connection for this Run — required for model mode product paths. */
+  llmSnapshot?: import("@/shared/llm/types").LlmConnectionSnapshot;
+  /**
+   * Product default false. Only true for tests / explicit AGENT_ALLOW_DETERMINISTIC_FALLBACK=1.
+   * When false, any LLM failure rethrows (caller marks Run failed, no Candidate).
+   */
+  allowDeterministicFallback?: boolean;
 };
+
+/** Deterministic inject allowed only in explicit modes — never silent product fallback. */
+export function resolveAllowDeterministicFallback(
+  mode: "model" | "deterministic",
+  explicit?: boolean,
+): boolean {
+  if (mode === "deterministic") return true;
+  if (typeof explicit === "boolean") return explicit;
+  return process.env.AGENT_ALLOW_DETERMINISTIC_FALLBACK === "1";
+}
 
 export function createAgentModelLoop(
   options: AgentModelLoopOptions = {},
 ): AgentModelLoop {
-  // PRD: attempt model by default; never silent-template under "model".
+  // PRD: attempt model by default; never silent-template under product "model".
   const mode = options.mode ?? "model";
-  const completeFn = options.complete ?? completeUnderstandingViaLlm;
+  const allowFallback = resolveAllowDeterministicFallback(
+    mode,
+    options.allowDeterministicFallback,
+  );
+  const snap = options.llmSnapshot;
+  const completeFn =
+    options.complete ??
+    ((input: MatterStateReconstructionInput) =>
+      completeUnderstandingViaLlm(input, snap));
   return {
     async propose(input) {
       if (mode === "deterministic") {
@@ -366,7 +401,12 @@ export function createAgentModelLoop(
       }
       try {
         return sanitizeModelBody(await completeFn(input), input);
-      } catch {
+      } catch (err) {
+        // Product model mode: any LLM failure is terminal (auth/network/5xx/timeout/invalid).
+        if (!allowFallback) {
+          throw err instanceof Error ? err : new Error(String(err));
+        }
+        // Explicit allow only: deterministic shell with honest marker.
         const fallback = buildDeterministicUnderstandingBody(input);
         return {
           ...fallback,

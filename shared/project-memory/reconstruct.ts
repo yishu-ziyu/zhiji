@@ -211,11 +211,44 @@ export function filterEventsForMatter(
   return out;
 }
 
+export type RunStateReconstructionOptions = {
+  /** Frozen Run connection for modelReceipt identity (never re-read env). */
+  llmSnapshot?: import("@/shared/llm/types").LlmConnectionSnapshot;
+};
+
+/** Classify LLM failure for modelReceipt.errorClass (no secrets). */
+export function classifyLlmFailureClass(
+  err: unknown,
+): NonNullable<
+  Extract<
+    NonNullable<AnalysisRun["modelReceipt"]>["fallback"],
+    { used: true }
+  >["errorClass"]
+> {
+  const name = err instanceof Error ? err.name : "";
+  const msg = err instanceof Error ? err.message : String(err);
+  if (name === "InvalidLlmResponseError" || /invalid_response/i.test(msg)) {
+    return "invalid_response";
+  }
+  if (/timeout|abort/i.test(msg)) return "timeout";
+  if (/401|403|auth|unauthorized/i.test(msg)) return "auth";
+  if (/429|rate/i.test(msg)) return "rate_limit";
+  if (/4\d\d/.test(msg)) return "provider_4xx";
+  if (/5\d\d|500|502|503|504/.test(msg)) return "provider_5xx";
+  if (/network|fetch|ECONN|ENOTFOUND|EAI_AGAIN/i.test(msg)) return "network";
+  if (/JSON|No valid/i.test(msg)) return "invalid_response";
+  return "unknown";
+}
+
 export async function runStateReconstruction(
   service: AgentMemoryService,
   model: AgentModelLoop,
   input: RunAnalysisInput,
-): Promise<{ run: AnalysisRun; candidate: UnderstandingRevision }> {
+  options?: RunStateReconstructionOptions,
+): Promise<{
+  run: AnalysisRun;
+  candidate: UnderstandingRevision | null;
+}> {
   assertAgentServiceShape(service);
 
   let state: MatterState;
@@ -317,22 +350,60 @@ export async function runStateReconstruction(
       status: "awaiting_owner",
       updatedAt: new Date().toISOString(),
     };
-  } else try {
-    body = sanitizeModelBody(await model.propose(reconInput), reconInput);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "model failed";
-    body = buildDeterministicUnderstandingBody(reconInput);
-    body = {
-      ...body,
-      now: { ...body.now, text: `${body.now.text}（模型失败）` },
-      nextDecision: "暂时无法进一步分析。你可以稍后再试，或直接修改这段理解。",
-    };
-    run = {
-      ...run,
-      status: "awaiting_owner",
-      error: message,
-      updatedAt: new Date().toISOString(),
-    };
+  } else {
+    try {
+      body = sanitizeModelBody(await model.propose(reconInput), reconInput);
+    } catch (err) {
+      // Product fail-closed: never mint Candidate / awaiting_owner after LLM failure.
+      const message = err instanceof Error ? err.message : "model failed";
+      const errorClass = classifyLlmFailureClass(err);
+      let receiptMeta: {
+        provider: string;
+        connectionKind?: string;
+        protocol?: string;
+        model: string;
+        requestedModel?: string;
+        baseHost?: string;
+        profileFingerprint?: string;
+      };
+      try {
+        const { getLlmReceiptFields } = await import("@/shared/llm/adapter");
+        receiptMeta = getLlmReceiptFields(options?.llmSnapshot);
+      } catch {
+        receiptMeta = {
+          provider: process.env.LLM_PROVIDER || "unknown",
+          model: process.env.LLM_MODEL || "",
+          requestedModel: process.env.LLM_MODEL || "",
+        };
+      }
+      run = {
+        ...run,
+        status: "failed",
+        stopReason: "error",
+        error: message,
+        progressSummary: "模型不可用，已拒绝假装读懂",
+        modelReceipt: {
+          provider: receiptMeta.provider,
+          connectionKind: receiptMeta.connectionKind,
+          protocol: receiptMeta.protocol,
+          model: receiptMeta.model,
+          requestedModel: receiptMeta.requestedModel,
+          baseHost: receiptMeta.baseHost,
+          // Profile identity only — never credential fingerprint.
+          profileFingerprint: receiptMeta.profileFingerprint,
+          effort: "high",
+          calls: 1,
+          fallback: {
+            used: true,
+            kind: "deterministic",
+            errorClass,
+          },
+        },
+        candidateRevisionId: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      return { run, candidate: null };
+    }
   }
 
   const pathByRev = new Map<string, string>();

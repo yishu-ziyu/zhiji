@@ -74,4 +74,21 @@ describe("Owner-visible Agent process (8 steps)", () => {
     expect(view.statuses.persist).toBe("done");
     expect(view.statuses.observe).toBe("done");
   });
+
+  it("failed run does not treat leftover candidate as owner success", () => {
+    const view = resolveProcessStatuses({
+      pipelinePhase: null,
+      memory: {
+        candidate: { body: { now: { text: "old candidate" } } },
+        accepted: null,
+        events: [{ id: "e1" }],
+        head: { reviewState: "current" },
+      },
+      connected: true,
+      run: { status: "failed", progressSummary: "model error" },
+      toolNames: ["project_map", "search_text"],
+    });
+    expect(view.active).not.toBe("owner");
+    expect(view.caption).toMatch(/失败|不沿用/);
+  });
 });

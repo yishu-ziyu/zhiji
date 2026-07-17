@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Per-claim accept / reject. Must call onResolve (server) — never fake local accept.
+ * Per-claim accept / accept_edited / reject / defer.
+ * Must call onResolve (server) — never fake local accept.
  */
 import { useEffect, useMemo, useState } from "react";
 import type {
@@ -15,23 +16,25 @@ import type {
 import { applyOwnerResolution } from "@/shared/project-memory/claims/claim-service";
 import {
   claimReviewActionsEnabled,
+  isFinalizingClaimDecision,
   planClaimReviewAction,
 } from "@/shared/project-memory/claims/claim-review-policy";
 import styles from "./claim-review-panel.module.css";
+
+export type ClaimReviewDecision = Extract<
+  OwnerResolutionDecision,
+  "accept" | "accept_edited" | "reject" | "defer"
+>;
 
 export type ClaimReviewPanelProps = {
   claims: Claim[];
   anchors?: PreciseEvidenceAnchor[];
   links?: ClaimEvidenceLink[];
-  /** Hydrate from GET after refresh */
   initialResolutions?: OwnerResolution[];
-  /**
-   * Required for real accept/reject. Without it buttons stay disabled
-   * and handle() refuses to mark done.
-   */
   onResolve?: (
     claim: Claim,
-    decision: Extract<OwnerResolutionDecision, "accept" | "reject">,
+    decision: ClaimReviewDecision,
+    editedText?: string,
   ) => void | Promise<void | OwnerResolution>;
   title?: string;
   emptyLabel?: string;
@@ -56,15 +59,28 @@ function statusLabel(status: ClaimSupportStatus): string {
   }
 }
 
+function decisionLabel(decision: OwnerResolutionDecision): string {
+  switch (decision) {
+    case "accept":
+      return "已接受";
+    case "accept_edited":
+      return "已修改并接受";
+    case "reject":
+      return "已拒绝";
+    case "defer":
+      return "已暂缓";
+    default:
+      return decision;
+  }
+}
+
 function applyResolutionsToClaims(
   claims: Claim[],
   resolutions: OwnerResolution[],
 ): Claim[] {
   return claims.map((claim) => {
-    const res = resolutions.find(
-      (r) => r.claimId === claim.id && r.decision !== "defer",
-    );
-    if (!res) return claim;
+    const res = resolutions.find((r) => r.claimId === claim.id);
+    if (!res || res.decision === "defer") return claim;
     const applied = applyOwnerResolution(claim, res.decision, {
       projectId: claim.projectId,
       editedText: res.editedText,
@@ -93,6 +109,8 @@ export function ClaimReviewPanel({
     useState<OwnerResolution[]>(initialResolutions);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
 
   useEffect(() => {
     setResolutions(initialResolutions);
@@ -101,26 +119,25 @@ export function ClaimReviewPanel({
 
   const pending = useMemo(
     () =>
-      claims.filter(
-        (c) =>
-          !resolutions.some(
-            (r) => r.claimId === c.id && r.decision !== "defer",
-          ),
-      ),
+      claims.filter((c) => {
+        const d = resolutions.find((r) => r.claimId === c.id)?.decision;
+        return !isFinalizingClaimDecision(d);
+      }),
     [claims, resolutions],
   );
 
   async function handle(
     claim: Claim,
-    decision: Extract<OwnerResolutionDecision, "accept" | "reject">,
+    decision: ClaimReviewDecision,
+    editedText?: string,
   ) {
     setError(null);
+    const existing = resolutions.find((r) => r.claimId === claim.id);
     const plan = planClaimReviewAction({
       hasOnResolve: canPersist,
       decision,
-      alreadyResolved: resolutions.some(
-        (r) => r.claimId === claim.id && r.decision !== "defer",
-      ),
+      alreadyResolved: isFinalizingClaimDecision(existing?.decision),
+      editedText,
     });
     if (!plan.ok) {
       setError(plan.reason);
@@ -129,10 +146,10 @@ export function ClaimReviewPanel({
 
     setBusyId(claim.id);
     try {
-      // Server first — never mark local accept before persistence succeeds.
-      const persisted = await onResolve!(claim, decision);
+      const persisted = await onResolve!(claim, decision, editedText);
       const result = applyOwnerResolution(claim, decision, {
         projectId: claim.projectId,
+        editedText,
         id: persisted && "id" in persisted ? persisted.id : undefined,
         resolvedAt:
           persisted && "resolvedAt" in persisted
@@ -154,9 +171,10 @@ export function ClaimReviewPanel({
         ...prev.filter((r) => r.claimId !== claim.id),
         resolution,
       ]);
+      setEditingId(null);
+      setEditText("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "确认失败");
-      // Do not write local accept on failure
     } finally {
       setBusyId(null);
     }
@@ -178,7 +196,7 @@ export function ClaimReviewPanel({
       <header className={styles.header}>
         <h2 className={styles.title}>{title}</h2>
         <span className={styles.meta}>
-          {pending.length}/{claims.length} 待处理
+          {pending.length}/{claims.length} 待终裁
         </span>
       </header>
       {!canPersist && (
@@ -193,28 +211,48 @@ export function ClaimReviewPanel({
       )}
       <ul className={styles.list}>
         {claims.map((claim) => {
-          const done = resolutions.find(
-            (r) => r.claimId === claim.id && r.decision !== "defer",
-          );
+          const done = resolutions.find((r) => r.claimId === claim.id);
+          const finalized = isFinalizingClaimDecision(done?.decision);
+          const deferred = done?.decision === "defer";
           const busy = busyId === claim.id;
-          const disabled = !canPersist || busy || Boolean(done);
+          const disabled = !canPersist || busy || finalized;
           const evidence = links
             .filter(
               (link) =>
                 link.claimId === claim.id && link.relation === "supports",
             )
-            .map((link) => anchors.find((anchor) => anchor.id === link.anchorId))
-            .filter((anchor): anchor is PreciseEvidenceAnchor => Boolean(anchor));
+            .map((link) =>
+              anchors.find((anchor) => anchor.id === link.anchorId),
+            )
+            .filter((anchor): anchor is PreciseEvidenceAnchor =>
+              Boolean(anchor),
+            );
+          const isEditing = editingId === claim.id;
           return (
             <li key={claim.id} className={styles.item}>
               <div className={styles.itemMain}>
-                <p className={styles.claimText}>{claim.text}</p>
+                {isEditing ? (
+                  <textarea
+                    className={styles.editArea}
+                    data-testid={`claim-edit-${claim.id}`}
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    rows={3}
+                    disabled={busy}
+                  />
+                ) : (
+                  <p className={styles.claimText}>{claim.text}</p>
+                )}
                 <span className={styles.badge} data-status={claim.status}>
                   {statusLabel(claim.status)}
                 </span>
                 {done && (
-                  <span className={styles.resolved}>
-                    已{done.decision === "reject" ? "拒绝" : "接受"}
+                  <span
+                    className={styles.resolved}
+                    data-decision={done.decision}
+                    data-testid={`claim-resolved-${claim.id}`}
+                  >
+                    {decisionLabel(done.decision)}
                   </span>
                 )}
                 {evidence.length > 0 ? (
@@ -231,32 +269,68 @@ export function ClaimReviewPanel({
                 )}
               </div>
               <div className={styles.actions}>
-                <button
-                  type="button"
-                  className={styles.accept}
-                  disabled={disabled}
-                  title={
-                    canPersist
-                      ? undefined
-                      : "需要服务端确认，无法本地假装接受"
-                  }
-                  onClick={() => void handle(claim, "accept")}
-                >
-                  接受
-                </button>
-                <button
-                  type="button"
-                  className={styles.reject}
-                  disabled={disabled}
-                  title={
-                    canPersist
-                      ? undefined
-                      : "需要服务端确认，无法本地假装接受"
-                  }
-                  onClick={() => void handle(claim, "reject")}
-                >
-                  拒绝
-                </button>
+                {isEditing ? (
+                  <>
+                    <button
+                      type="button"
+                      className={styles.accept}
+                      disabled={disabled || !editText.trim()}
+                      data-testid={`claim-save-edit-${claim.id}`}
+                      onClick={() =>
+                        void handle(claim, "accept_edited", editText)
+                      }
+                    >
+                      保存修改并接受
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setEditingId(null);
+                        setEditText("");
+                      }}
+                    >
+                      取消
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className={styles.accept}
+                      disabled={disabled}
+                      onClick={() => void handle(claim, "accept")}
+                    >
+                      接受
+                    </button>
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => {
+                        setEditingId(claim.id);
+                        setEditText(claim.text);
+                      }}
+                    >
+                      修改
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.reject}
+                      disabled={disabled}
+                      onClick={() => void handle(claim, "reject")}
+                    >
+                      拒绝
+                    </button>
+                    <button
+                      type="button"
+                      disabled={disabled && !deferred}
+                      data-testid={`claim-defer-${claim.id}`}
+                      onClick={() => void handle(claim, "defer")}
+                    >
+                      暂缓
+                    </button>
+                  </>
+                )}
               </div>
             </li>
           );

@@ -114,6 +114,10 @@ export function deriveProcessFromRun(input: {
   hasCandidate?: boolean;
   hasAccepted?: boolean;
 }): AgentProcessStepId {
+  // Failed/interrupted must not jump to owner via leftover candidate (no fake success).
+  if (input.runStatus === "interrupted" || input.runStatus === "failed") {
+    return "tools";
+  }
   if (input.hasAccepted) return "persist";
   if (
     input.hasCandidate ||
@@ -121,9 +125,6 @@ export function deriveProcessFromRun(input: {
     input.runStatus === "confirmation_required"
   ) {
     return "owner";
-  }
-  if (input.runStatus === "interrupted" || input.runStatus === "failed") {
-    return "tools";
   }
   const tools = input.toolNames ?? [];
   // Real file open (revision or path) advances past search.
@@ -189,17 +190,23 @@ export function resolveProcessStatuses(input: {
   if (pipelinePhase && pipelinePhase !== "idle") {
     // Prefer real tool progress when receipts already exist mid-pipeline.
     if (toolNames && toolNames.length > 0 && pipelinePhase === "tools") {
+      const failed =
+        run?.status === "failed" || run?.status === "interrupted";
       const fromRun = deriveProcessFromRun({
         runStatus: run?.status ?? "running",
         progressSummary: run?.progressSummary,
         toolNames,
-        hasCandidate: Boolean(memory?.candidate?.body),
-        hasAccepted: Boolean(memory?.accepted?.body),
+        hasCandidate: failed ? false : Boolean(memory?.candidate?.body),
+        hasAccepted: failed ? false : Boolean(memory?.accepted?.body),
       });
       return {
         active: fromRun,
         statuses: statusesForActive(fromRun),
-        caption: run?.progressSummary?.trim() || "正在打开相关文件…",
+        caption: failed
+          ? run?.progressSummary?.trim()
+            ? `本轮失败：${run.progressSummary.trim()}（不沿用旧候选冒充成功）`
+            : "本轮失败：不沿用旧候选冒充成功。"
+          : run?.progressSummary?.trim() || "正在打开相关文件…",
       };
     }
     if (pipelinePhase === "persist") {
@@ -233,15 +240,22 @@ export function resolveProcessStatuses(input: {
   }
 
   if (run?.status || (toolNames && toolNames.length > 0)) {
+    const failed =
+      run?.status === "failed" || run?.status === "interrupted";
     const active = deriveProcessFromRun({
       runStatus: run?.status,
       progressSummary: run?.progressSummary,
       toolNames,
-      hasCandidate: Boolean(memory.candidate?.body),
-      hasAccepted: Boolean(memory.accepted?.body),
+      hasCandidate: failed ? false : Boolean(memory.candidate?.body),
+      hasAccepted: failed ? false : Boolean(memory.accepted?.body),
     });
     let caption = run?.progressSummary?.trim() || "进度在这里。";
-    if (active === "owner") {
+    if (failed) {
+      const detail = run?.progressSummary?.trim();
+      caption = detail
+        ? `本轮失败：${detail}（不沿用旧候选冒充成功）`
+        : "本轮失败：不沿用旧候选冒充成功。可再读一遍变化。";
+    } else if (active === "owner") {
       caption = run?.progressSummary?.trim() || "有一段理解等你确认。";
     }
     return {

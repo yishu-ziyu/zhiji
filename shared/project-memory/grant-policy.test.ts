@@ -38,4 +38,25 @@ describe("grant-policy preflight (PR-03)", () => {
     expect(report.blocked[0]?.relativePath).toBe(".env");
     expect(report.warnings.some((w) => /敏感/.test(w))).toBe(true);
   });
+
+  it("does not show unenforced corpus-size budgets as user warnings", () => {
+    const report = buildPreflightReport(
+      [
+        { relativePath: "one.md", sizeBytes: 8, isFile: true },
+        { relativePath: "two.md", sizeBytes: 8, isFile: true },
+      ],
+      {
+        version: "test",
+        maxFileBytes: 100,
+        maxTotalBytes: 10,
+        maxFiles: 1,
+        textExtensions: [".md"],
+        rules: [],
+      },
+    );
+
+    expect(report.eligibleFiles).toBe(2);
+    expect(report.eligibleBytes).toBe(16);
+    expect(report.warnings.join(" ")).not.toMatch(/超过上限|收紧范围/);
+  });
 });

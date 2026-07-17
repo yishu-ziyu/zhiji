@@ -17,5 +17,15 @@
     "paths": { "@/*": ["./*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts", "**/*.mts"],
-  "exclude": ["node_modules", "tmp", ".ship", "data"]
+  "exclude": [
+    "node_modules",
+    "tmp",
+    ".ship",
+    "data",
+    "out",
+    ".desktop-stage",
+    ".next",
+    "mcp-service",
+    "build"
+  ]
 }

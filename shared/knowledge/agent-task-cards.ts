@@ -4,12 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import type { ActionItem } from "@/shared/types/knowledge";
-import {
-  addAction,
-  getAction,
-  listActions,
-  patchWorkItem,
-} from "@/shared/knowledge/repository";
+import { listActions, patchWorkItem } from "@/shared/knowledge/repository";
 
 export type AgentTaskDraft = {
   /** Stable key within project (not full id). */
@@ -155,7 +150,9 @@ export function renumberOpenWorkTitles(projectId: string): ActionItem[] {
 }
 
 /**
- * Upsert Agent task drafts into knowledge work items, then renumber 01/02…
+ * Competition contract: do NOT auto-create formal Work Items from Agent drafts.
+ * Drafts remain pure builders for future explicit Owner adopt.
+ * Existing agent-t-* items are not deleted; no new addAction.
  */
 export function writeAgentTaskCardsToKnowledge(input: {
   projectId: string;
@@ -164,54 +161,10 @@ export function writeAgentTaskCardsToKnowledge(input: {
   const projectId = input.projectId?.trim();
   if (!projectId) return { workItemIds: [], created: 0, updated: 0 };
 
-  let created = 0;
-  let updated = 0;
-  const workItemIds: string[] = [];
+  // Stable ids for observability only — never materialize as todo.
+  const workItemIds = input.drafts
+    .slice(0, 5)
+    .map((draft) => agentTaskWorkItemId(projectId, draft.key));
 
-  for (const draft of input.drafts.slice(0, 5)) {
-    const id = agentTaskWorkItemId(projectId, draft.key);
-    workItemIds.push(id);
-    const existing = getAction(id);
-    if (!existing) {
-      try {
-        addAction({
-          id,
-          projectId,
-          title: draft.title,
-          description: draft.description.slice(0, 500) || draft.title,
-          nextStep: draft.nextStep.slice(0, 200) || "推进并确认",
-          status: "todo",
-          assignee: "自己",
-          deadline: "待确认",
-          verificationCriteria: "你确认后，画布上保留为已跟进任务",
-          evidenceIds: draft.evidenceIds ?? [],
-        });
-        created += 1;
-      } catch {
-        /* race */
-      }
-    } else if (
-      existing.status !== "done" &&
-      existing.status !== "cancelled"
-    ) {
-      try {
-        patchWorkItem(
-          id,
-          {
-            title: draft.title,
-            description: draft.description.slice(0, 500),
-            nextStep: draft.nextStep.slice(0, 200),
-          },
-          "agent:folder-reader",
-          { projectId },
-        );
-        updated += 1;
-      } catch {
-        /* */
-      }
-    }
-  }
-
-  renumberOpenWorkTitles(projectId);
-  return { workItemIds, created, updated };
+  return { workItemIds, created: 0, updated: 0 };
 }

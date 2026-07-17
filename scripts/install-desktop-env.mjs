@@ -24,7 +24,7 @@ const PRODUCT_USER_DATA = path.join(
   os.homedir(),
   "Library",
   "Application Support",
-  "FC-OPC iBot",
+  "知几",
 );
 
 function parseArgs(argv) {

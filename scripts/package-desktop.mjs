@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { ensureElectronZipDir, ZIP_NAME } from "./ensure-electron-zip.mjs";
+import { resolveDesktopPackageOutDir } from "./desktop-package-out.mjs";
 
 const require = createRequire(import.meta.url);
 const { packager } = require("@electron/packager");
@@ -15,7 +16,11 @@ const { packager } = require("@electron/packager");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const stageDir = path.join(root, ".desktop-stage");
-const outDir = path.join(root, "out");
+/** Resolved via resolveDesktopPackageOutDir — refuses out/ when fallback exists. */
+const outDir = resolveDesktopPackageOutDir({
+  root,
+  packageOutEnv: process.env.DESKTOP_PACKAGE_OUT,
+});
 
 const ELECTRON_VERSION = "43.1.1";
 
@@ -113,6 +118,8 @@ async function main() {
   }
   assertNoEnvInTree(stageDir, "staging");
 
+  // outDir already validated by resolveDesktopPackageOutDir (throws if out/ would overwrite fallback).
+
   const electronZipDir = await Promise.resolve(ensureElectronZipDir());
   const zipPath = path.join(electronZipDir, ZIP_NAME);
   if (!fs.existsSync(zipPath)) {
@@ -123,11 +130,12 @@ async function main() {
 
   const paths = await packager({
     dir: stageDir,
-    name: "FC-OPC iBot",
+    name: "知几",
     platform: "darwin",
     arch: "arm64",
     electronVersion: ELECTRON_VERSION,
     out: outDir,
+    icon: path.join(root, "build", "zhiji.icns"),
     overwrite: true,
     prune: false,
     asar: false,

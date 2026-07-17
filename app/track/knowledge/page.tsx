@@ -9,17 +9,13 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  type CanvasViewId,
-  parseCanvasCommand,
-} from "@/shared/knowledge/canvas-command";
+import { type CanvasViewId } from "@/shared/knowledge/canvas-command";
 import {
   Bell,
   Bot,
   ChevronDown,
   FilePlus2,
   Filter,
-  KeyRound,
   Plus,
   Search,
   Sparkles,
@@ -52,14 +48,17 @@ import {
   type FolderAuthorizeSession,
 } from "./components/LocalFolderEntry";
 import type { AgentSession } from "./components/AgentPresenceRail";
-import { ClaimReviewPanel } from "./components/ClaimReviewPanel";
 import {
-  ByokMissingBanner,
-  ByokSettingsPanel,
-  type ByokStatusView,
-} from "./components/ByokSettingsPanel";
+  ModelConnector,
+  ModelConnectorMissingBanner,
+  type ModelConnectorStatus,
+  type ModelPresetView,
+} from "./components/ModelConnector";
 import { createMvpApi } from "./lib/folder-connection-api";
-import type { UnderstandingBody } from "./lib/folder-connection-api";
+import type {
+  ChangeEventView,
+  UnderstandingBody,
+} from "./lib/folder-connection-api";
 import {
   mergeProjectsForA6Enter,
   pickA6EnterProjectId,
@@ -75,6 +74,12 @@ import {
   formatUploadProgress,
   resolveCopilotIntent,
 } from "./lib/copilot-intent";
+import { agentSessionNeedsHydration } from "./lib/onboarding-folder-choice";
+import {
+  buildProjectIntelligenceTimeline,
+  selectNewIncrementalChanges,
+} from "./lib/project-intelligence-timeline";
+import { canvasCommandFromReceipt } from "./lib/canvas-view-receipt";
 import { readDataTransferItems } from "./read-drop-entries";
 import {
   candidateClaimsFromBody,
@@ -197,11 +202,12 @@ export default function KnowledgePage() {
   const [projectJumpOpen, setProjectJumpOpen] = useState(false);
   const [projectJumpQuery, setProjectJumpQuery] = useState("");
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [folderAuthorizeOpen, setFolderAuthorizeOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectSummary, setNewProjectSummary] = useState("");
-  /** BYOK: in-app model key form (user fills; never packaged). */
-  const [byokOpen, setByokOpen] = useState(false);
-  const [byokStatus, setByokStatus] = useState<ByokStatusView | null>(null);
+  /** Model connector (BYOK + multi-provider). Keys never packaged. */
+  const [byokStatus, setByokStatus] = useState<ModelConnectorStatus | null>(null);
+  const [modelPresets, setModelPresets] = useState<ModelPresetView[]>([]);
   /** A3: files received before a project exists; ingested after create confirms. */
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -239,6 +245,24 @@ export default function KnowledgePage() {
       body: candidate.body as UnderstandingBody,
     });
   }, [serverClaims, agentSession, projectId]);
+  const intelligenceTimelineEvents = useMemo(
+    () =>
+      buildProjectIntelligenceTimeline({
+        projectId,
+        changes:
+          agentSession?.projectId === projectId
+            ? (agentSession.memory?.events ?? [])
+            : [],
+        candidate:
+          agentSession?.projectId === projectId
+            ? agentSession.memory?.candidate
+            : null,
+        run: agentSession?.projectId === projectId ? agentSession.run : null,
+        claims: reviewClaims,
+        resolutions: claimResolutions,
+      }),
+    [agentSession, claimResolutions, projectId, reviewClaims],
+  );
   const folderApiRef = useRef(
     typeof window !== "undefined" &&
       new URL(window.location.href).searchParams.get("fixture") === "1"
@@ -258,6 +282,10 @@ export default function KnowledgePage() {
   const navigationRequestRef = useRef(0);
   const mutationRequestRef = useRef(0);
   const activeProjectIdRef = useRef("");
+  const observedChangeProjectRef = useRef("");
+  const observedChangeIdsRef = useRef<Set<string>>(new Set());
+  const changePollInFlightRef = useRef(false);
+  const autoChangeRunInFlightRef = useRef(false);
 
   const loadSnapshot = useCallback(
     async (nextProjectId: string, focus?: CanvasNodeRef) => {
@@ -434,10 +462,16 @@ export default function KnowledgePage() {
     let active = true;
     void (async () => {
       try {
-        const byok = await apiJson<{ status: ByokStatusView }>("/api/llm/byok");
-        if (active) setByokStatus(byok.status);
+        const byok = await apiJson<{
+          status: ModelConnectorStatus;
+          presets?: ModelPresetView[];
+        }>("/api/llm/byok");
+        if (active) {
+          setByokStatus(byok.status);
+          if (byok.presets?.length) setModelPresets(byok.presets);
+        }
       } catch {
-        /* status optional; panel can still open */
+        /* status optional; connector can still open */
       }
     })();
     return () => {
@@ -497,6 +531,157 @@ export default function KnowledgePage() {
       active = false;
     };
   }, [loadFootprint, loadMyOpenWork, loadProjectCards, loadProjectMaterials, loadSnapshot]);
+
+  // Cold start, refresh and project switch must restore the persisted grant.
+  // Project summary/materials are not the authorization source of truth.
+  useEffect(() => {
+    if (!projectId) {
+      setAgentSession(null);
+      return;
+    }
+    if (!agentSessionNeedsHydration(projectId, agentSession)) return;
+    void hydrateFolderAgentSession(projectId);
+  }, [projectId, agentSession?.projectId, agentSession?.matterId]);
+
+  // Demo vertical slice: observe only changes that arrive after this project
+  // session is open. Existing history becomes the baseline and never causes a
+  // surprise rerun. The watcher and every read remain inside the persisted grant.
+  useEffect(() => {
+    if (
+      !projectId ||
+      agentSession?.projectId !== projectId ||
+      !agentSession.matterId
+    ) {
+      return;
+    }
+
+    if (observedChangeProjectRef.current !== projectId) {
+      observedChangeProjectRef.current = projectId;
+      observedChangeIdsRef.current = new Set(
+        (agentSession.memory?.events ?? []).map((event) => event.id),
+      );
+    }
+
+    let cancelled = false;
+    const checkForProjectChanges = async () => {
+      if (
+        cancelled ||
+        document.hidden ||
+        changePollInFlightRef.current ||
+        autoChangeRunInFlightRef.current ||
+        activeProjectIdRef.current !== projectId
+      ) {
+        return;
+      }
+      changePollInFlightRef.current = true;
+      try {
+        const data = await apiJson<{
+          session: {
+            projectId: string;
+            matterId: string;
+            grantId?: string;
+            folderName?: string;
+            memory: AgentSession["memory"];
+            toolReceipts?: AgentSession["toolReceipts"];
+            run?: AgentSession["run"];
+          } | null;
+        }>(
+          `/api/knowledge/projects/${encodeURIComponent(projectId)}/agent-session`,
+        );
+        if (
+          cancelled ||
+          !data.session?.matterId ||
+          activeProjectIdRef.current !== projectId
+        ) {
+          return;
+        }
+
+        const polled: AgentSession = {
+          projectId: data.session.projectId,
+          matterId: data.session.matterId,
+          grantId: data.session.grantId,
+          folderName: data.session.folderName,
+          memory: data.session.memory,
+          toolReceipts: data.session.toolReceipts ?? [],
+          run: data.session.run ?? null,
+        };
+        setAgentSession(polled);
+
+        const changes = (polled.memory?.events ?? []) as ChangeEventView[];
+        const newChanges = selectNewIncrementalChanges(
+          changes,
+          observedChangeIdsRef.current,
+        );
+        const runActive =
+          polled.run?.status === "queued" || polled.run?.status === "running";
+        if (newChanges.length === 0 || runActive) return;
+
+        // Claim these concrete event ids before running. A failed real Run is
+        // visible as failure and must not loop into repeated model calls.
+        for (const event of changes) {
+          observedChangeIdsRef.current.add(event.id);
+        }
+        autoChangeRunInFlightRef.current = true;
+        startBusy("检测到项目变化，知几正在判断…");
+        const changeList = newChanges
+          .map((event) => `${event.kind}:${event.relativePath}`)
+          .join("、");
+        const analysis = await folderApiRef.current.runAnalysis(
+          polled.projectId,
+          polled.matterId,
+          newChanges.map((event) => event.id),
+          {
+            trigger: "source_change",
+            ownerUtterance:
+              `刚检测到这些项目文件变化：${changeList}。` +
+              "请先读取发生变化的文件，再比较它与当前项目目标和已确认判断是否相关；若无关，明确说明不影响当前项目，并只给出忽略或移出项目夹的建议，等待我决定。",
+          },
+        );
+        const nextMemory = await folderApiRef.current.getMemory(
+          polled.projectId,
+          polled.matterId,
+        );
+        if (cancelled || activeProjectIdRef.current !== projectId) return;
+        setAgentSession({
+          ...polled,
+          memory: {
+            ...nextMemory,
+            watchSet: nextMemory.watchSet ?? polled.memory?.watchSet,
+          } as AgentSession["memory"],
+          toolReceipts: analysis.toolReceipts ?? [],
+          run: analysis.run ?? null,
+        });
+        setAgentResolutionMessage(null);
+        setNotice(
+          analysis.run?.status === "failed"
+            ? "项目变化已记录，但模型判断失败"
+            : "知几已判断这次项目变化，请看时间线与右侧简报",
+        );
+      } catch (nextError) {
+        if (!cancelled && activeProjectIdRef.current === projectId) {
+          setError(
+            nextError instanceof Error
+              ? nextError.message
+              : "项目变化已记录，但自动判断失败",
+          );
+        }
+      } finally {
+        changePollInFlightRef.current = false;
+        if (autoChangeRunInFlightRef.current) {
+          autoChangeRunInFlightRef.current = false;
+          if (!cancelled && activeProjectIdRef.current === projectId) endBusy();
+        }
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      void checkForProjectChanges();
+    }, 2_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [projectId, agentSession?.projectId, agentSession?.matterId]);
 
   useEffect(() => {
     function handlePopState() {
@@ -708,8 +893,6 @@ export default function KnowledgePage() {
     ) {
       return;
     }
-    void hydrateFolderAgentSession(id);
-
     // M1: A6 enter project must NOT force-open materials panel.
     // Materials stay available via manual openMaterialsPanel.
   }
@@ -721,7 +904,9 @@ export default function KnowledgePage() {
   function startBusy(message: string) {
     setBusy(true);
     setBusyMessage(message);
-    setNotice(message);
+    // The blue busy banner is the single source of truth while work is running.
+    // Do not mirror the same text into the green dismissible notice.
+    setNotice(null);
     setError(null);
   }
 
@@ -1286,8 +1471,7 @@ export default function KnowledgePage() {
   }
 
   /**
-   * Apply canvas-menu-v1 command from Agent tool receipt (set_canvas_view).
-   * Receipt summary embeds JSON detail after first newline.
+   * Apply canvas-menu-v1 command from the actual set_canvas_view receipt.
    */
   useEffect(() => {
     const receipts = agentSession?.toolReceipts;
@@ -1298,22 +1482,14 @@ export default function KnowledgePage() {
     const key = `${last.sequence}:${last.summary}`;
     if (lastCanvasReceiptRef.current === key) return;
     lastCanvasReceiptRef.current = key;
-    const nl = last.summary.indexOf("\n");
-    const jsonPart =
-      nl >= 0 ? last.summary.slice(nl + 1).trim() : last.summary.trim();
-    try {
-      const raw = JSON.parse(jsonPart) as unknown;
-      const parsed = parseCanvasCommand(raw);
-      if (!parsed.ok) return;
-      setCanvasView(parsed.command.view);
-      if (parsed.command.highlightNodeKeys?.length) {
-        setCanvasHighlightOverride(parsed.command.highlightNodeKeys);
-      }
-      if (parsed.command.focus) {
-        void handleFocus(parsed.command.focus);
-      }
-    } catch {
-      /* ignore non-JSON receipts */
+    const command = canvasCommandFromReceipt(last);
+    if (!command) return;
+    setCanvasView(command.view);
+    if (command.highlightNodeKeys?.length) {
+      setCanvasHighlightOverride(command.highlightNodeKeys);
+    }
+    if (command.focus) {
+      void handleFocus(command.focus);
     }
   }, [agentSession?.toolReceipts]);
 
@@ -1497,7 +1673,6 @@ export default function KnowledgePage() {
       loadMyOpenWork(id),
       loadFootprint({ projectId: id }),
     ]);
-    void hydrateFolderAgentSession(id);
   }
 
   async function handleSearch(event: FormEvent) {
@@ -1889,6 +2064,48 @@ export default function KnowledgePage() {
     setNewMenuOpen(false);
   }
 
+  async function handleFolderAuthorized(
+    project: Project,
+    session?: FolderAuthorizeSession,
+  ) {
+    try {
+      if (session) {
+        setAgentSession({
+          projectId: project.id,
+          matterId: session.matterId,
+          grantId: session.grantId,
+          folderName: session.folderName,
+          memory: session.memory,
+          toolReceipts: session.toolReceipts,
+          run: session.run,
+        });
+        setAgentResolutionMessage(null);
+      }
+      const data = await apiJson<{ projects: Project[] }>(
+        "/api/knowledge/projects",
+      );
+      const found = data.projects.find((item) => item.id === project.id);
+      if (found) {
+        setProjects(data.projects);
+        await enterProjectAfterImport(found);
+      } else {
+        // Server ensure may race; still enter with bootstrap identity.
+        setProjects([project, ...data.projects]);
+        await enterProjectAfterImport(project);
+      }
+      setFolderAuthorizeOpen(false);
+      setNotice(
+        session?.memory?.candidate
+          ? `已进入「${project.name}」· 有一段理解待你确认`
+          : `已进入「${project.name}」`,
+      );
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error ? nextError.message : "进入项目失败",
+      );
+    }
+  }
+
   const isEmptyWorkspace = !loading && projects.length === 0;
   /**
    * Empty project → place-materials guide.
@@ -1971,7 +2188,7 @@ export default function KnowledgePage() {
         }}
         onFocusAttention={focusCurrentAttention}
         onOpenAgentCopilot={() => void openFolderAgentCopilot()}
-        onCreateWork={() => setCreateWorkOpen(true)}
+        onCreateProject={() => setCreateProjectOpen(true)}
         onOpenMaterials={() => void openMaterialsPanel()}
         onFocus={(ref) => void handleFocus(ref)}
         collapsed={navCollapsed}
@@ -2024,25 +2241,19 @@ export default function KnowledgePage() {
           ) : null}
         </form>
         <div className={styles.topbarActions}>
-          <button
-            type="button"
-            className={styles.iconButton}
-            data-testid="byok-settings-open"
-            aria-label="模型密钥设置"
-            title={
-              byokStatus?.configured
-                ? "模型密钥已配置 · 点击修改"
-                : "填写你的模型密钥（Bring Your Own Key）"
-            }
-            onClick={() => setByokOpen(true)}
-            style={
-              byokStatus && !byokStatus.configured
-                ? { color: "#ff9500" }
-                : undefined
-            }
-          >
-            <KeyRound size={18} />
-          </button>
+          <ModelConnector
+            status={byokStatus}
+            presets={modelPresets}
+            requestJson={apiJson}
+            onStatusChange={(status) => {
+              setByokStatus(status);
+              setNotice(
+                status.connected
+                  ? "模型已连接，仅影响新的 Agent Run"
+                  : "模型配置已保存",
+              );
+            }}
+          />
           <button
             type="button"
             className={styles.iconButton}
@@ -2119,11 +2330,16 @@ export default function KnowledgePage() {
             ) : null}
           </div>
         </div>
-        {byokStatus !== null && !byokStatus.configured ? (
+        {byokStatus !== null && !byokStatus.connected ? (
           <div style={{ flexBasis: "100%", width: "100%", marginTop: 4 }}>
-            <ByokMissingBanner
+            <ModelConnectorMissingBanner
               visible
-              onOpen={() => setByokOpen(true)}
+              onOpen={() => {
+                const el = document.querySelector(
+                  '[data-testid="model-connector-capsule"]',
+                );
+                if (el instanceof HTMLElement) el.click();
+              }}
             />
           </div>
         ) : null}
@@ -2137,46 +2353,7 @@ export default function KnowledgePage() {
           style={{ display: "flex", flexDirection: "column", gap: 16, overflow: "auto" }}
         >
           <LocalFolderEntry
-            onAuthorized={async (project, session?: FolderAuthorizeSession) => {
-              try {
-                if (session) {
-                  setAgentSession({
-                    projectId: project.id,
-                    matterId: session.matterId,
-                    grantId: session.grantId,
-                    folderName: session.folderName,
-                    memory: session.memory,
-                    toolReceipts: session.toolReceipts,
-                    run: session.run,
-                  });
-                  setAgentResolutionMessage(null);
-                }
-                const data = await apiJson<{ projects: Project[] }>(
-                  "/api/knowledge/projects",
-                );
-                const list = data.projects;
-                const found = list.find((p) => p.id === project.id);
-                if (found) {
-                  setProjects(list);
-                  await enterProjectAfterImport(found);
-                } else {
-                  // Server ensure may race; still enter with bootstrap identity.
-                  setProjects([project, ...list]);
-                  await enterProjectAfterImport(project);
-                }
-                setNotice(
-                  session?.memory?.candidate
-                    ? `已进入「${project.name}」· 有一段理解待你确认`
-                    : `已进入「${project.name}」`,
-                );
-              } catch (nextError) {
-                setError(
-                  nextError instanceof Error
-                    ? nextError.message
-                    : "进入项目失败",
-                );
-              }
-            }}
+            onAuthorized={handleFolderAuthorized}
             onError={(message) => setError(message)}
           />
           <div
@@ -2277,7 +2454,6 @@ export default function KnowledgePage() {
               onFocus={handleFocus}
               highlightNodeIds={canvasHighlightIds}
               viewPreset={canvasView}
-              onViewPresetChange={setCanvasView}
               agentLive={
                 agentSession?.projectId === projectId
                   ? {
@@ -2309,6 +2485,74 @@ export default function KnowledgePage() {
               agentSession?.projectId === projectId ? agentSession : null
             }
             agentResolutionMessage={agentResolutionMessage}
+            reviewClaims={reviewClaims}
+            claimAnchors={claimAnchors}
+            claimLinks={claimLinks}
+            claimResolutions={claimResolutions}
+            onResolveClaim={async (claim, decision, editedText) => {
+              const matterId = agentSession?.matterId;
+              const candidateRevisionId =
+                agentSession?.memory?.candidate?.id;
+              if (!matterId || !candidateRevisionId || !projectId) {
+                throw new Error("缺少 matterId 或 candidateRevisionId");
+              }
+              const data = await apiJson<{
+                resolution: OwnerResolution;
+                finalized: boolean;
+                remaining: number;
+              }>(
+                `/api/knowledge/projects/${encodeURIComponent(projectId)}/claim-resolutions`,
+                {
+                  method: "POST",
+                  body: JSON.stringify({
+                    claimId: claim.id,
+                    decision,
+                    matterId,
+                    candidateRevisionId,
+                    editedText,
+                  }),
+                },
+              );
+              setClaimResolutions((prev) => [
+                ...prev.filter((r) => r.claimId !== claim.id),
+                data.resolution,
+              ]);
+              try {
+                const nextMemory = await folderApiRef.current.getMemory(
+                  projectId,
+                  matterId,
+                );
+                setAgentSession((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        memory: {
+                          ...nextMemory,
+                          watchSet:
+                            nextMemory.watchSet ?? prev.memory?.watchSet,
+                        } as AgentSession["memory"],
+                      }
+                    : prev,
+                );
+              } catch {
+                /* resolution already stored */
+              }
+              setNotice(
+                data.finalized
+                  ? decision === "reject"
+                    ? "已记录该判断；整份候选已完成裁决"
+                    : "已确认该判断；整份候选已写入项目记忆"
+                  : `已记录这条判断，另有 ${data.remaining} 条待确认`,
+              );
+              setAgentResolutionMessage(
+                data.finalized
+                  ? decision === "reject"
+                    ? "候选已完成逐条裁决"
+                    : "已确认并记住"
+                  : null,
+              );
+              return data.resolution;
+            }}
             onResolveUnderstanding={async (decision, editedBody) => {
               if (!agentSession?.memory?.candidate) return;
               startBusy(
@@ -2456,94 +2700,13 @@ export default function KnowledgePage() {
                 endBusy();
               }
             }}
+            onAuthorizeFolder={() => setFolderAuthorizeOpen(true)}
           />
-          {hasReviewableClaims(reviewClaims) &&
-          agentSession?.matterId &&
-          agentSession?.memory?.candidate?.id ? (
-            <div
-              className={styles.claimReviewSlot}
-              data-testid="claim-review-slot"
-            >
-              <ClaimReviewPanel
-                claims={reviewClaims}
-                anchors={claimAnchors}
-                links={claimLinks}
-                initialResolutions={claimResolutions}
-                title="逐条确认判断"
-                onResolve={async (claim, decision) => {
-                  const matterId = agentSession.matterId;
-                  const candidateRevisionId =
-                    agentSession.memory?.candidate?.id;
-                  if (!matterId || !candidateRevisionId) {
-                    throw new Error("缺少 matterId 或 candidateRevisionId");
-                  }
-                  // Server loads candidate body; never send claimText/status as truth.
-                  const data = await apiJson<{
-                    resolution: OwnerResolution;
-                    finalized: boolean;
-                    remaining: number;
-                    understanding?: {
-                      accepted?: unknown;
-                      head?: unknown;
-                    };
-                  }>(
-                    `/api/knowledge/projects/${encodeURIComponent(projectId)}/claim-resolutions`,
-                    {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        claimId: claim.id,
-                        decision,
-                        matterId,
-                        candidateRevisionId,
-                      }),
-                    },
-                  );
-                  setClaimResolutions((prev) => [
-                    ...prev.filter((r) => r.claimId !== claim.id),
-                    data.resolution,
-                  ]);
-                  // Refresh memory so accepted head is visible (truth path).
-                  try {
-                    const nextMemory = await folderApiRef.current.getMemory(
-                      projectId,
-                      matterId,
-                    );
-                    setAgentSession((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            memory: {
-                              ...nextMemory,
-                              watchSet:
-                                nextMemory.watchSet ?? prev.memory?.watchSet,
-                            } as AgentSession["memory"],
-                          }
-                        : prev,
-                    );
-                  } catch {
-                    /* panel already has resolution */
-                  }
-                  setNotice(
-                    data.finalized
-                      ? decision === "reject"
-                        ? "已记录该判断；整份候选已完成裁决"
-                        : "已确认该判断；整份候选已写入项目记忆"
-                      : `已记录这条判断，另有 ${data.remaining} 条待确认`,
-                  );
-                  setAgentResolutionMessage(
-                    data.finalized
-                      ? decision === "reject"
-                        ? "候选已完成逐条裁决"
-                        : "已确认并记住"
-                      : null,
-                  );
-                  return data.resolution;
-                }}
-              />
-            </div>
-          ) : null}
-          <ProjectTimeline snapshot={snapshot} onFocus={handleFocus} />
+          <ProjectTimeline
+            snapshot={snapshot}
+            onFocus={handleFocus}
+            intelligenceEvents={intelligenceTimelineEvents}
+          />
         </>
       )}
 
@@ -2566,16 +2729,32 @@ export default function KnowledgePage() {
         </div>
       ) : null}
 
-      <ByokSettingsPanel
-        open={byokOpen}
-        onClose={() => setByokOpen(false)}
-        initialStatus={byokStatus}
-        requestJson={apiJson}
-        onSaved={(status) => {
-          setByokStatus(status);
-          setNotice("模型密钥已保存，本机即时生效");
-        }}
-      />
+      {folderAuthorizeOpen ? (
+        <div
+          className={styles.modalBackdrop}
+          role="dialog"
+          aria-modal="true"
+          aria-label="授权项目文件夹"
+          data-testid="folder-authorize-modal"
+        >
+          <div className={styles.folderAuthorizeModal}>
+            <header className={styles.folderAuthorizeModalHeader}>
+              <h2>授权项目文件夹</h2>
+              <button
+                type="button"
+                aria-label="关闭授权文件夹"
+                onClick={() => setFolderAuthorizeOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <LocalFolderEntry
+              onAuthorized={handleFolderAuthorized}
+              onError={(message) => setError(message)}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {createProjectOpen ? (
         <div className={styles.modalBackdrop} role="presentation">

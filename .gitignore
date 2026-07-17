@@ -3,6 +3,7 @@ node_modules/
 .next/
 out/
 dist/
+build/
 .desktop-stage/
 .electron-zip/
 tsconfig.tsbuildinfo
@@ -13,6 +14,7 @@ test-results/
 playwright-report/
 coverage/
 .tmp/
+tmp/
 ui-test.mjs
 
 # --- env & secrets (never publish) ---
@@ -37,6 +39,7 @@ ui-test.mjs
 .review/
 .scratch/
 .superpowers/
+.superdesign/
 .no-mistakes/
 skills-lock.json
 

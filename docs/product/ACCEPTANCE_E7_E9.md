@@ -100,7 +100,7 @@
 ## 文末：单测入口
 
 ```bash
-cd /Users/mahaoxuan/Desktop/黑客松/fc-opc-ibot
+cd /Users/mahaoxuan/Desktop/黑客松/zhiji
 ./node_modules/.bin/vitest run \
   shared/knowledge/canvas-material-rank.test.ts \
   shared/knowledge/project-canvas.test.ts \

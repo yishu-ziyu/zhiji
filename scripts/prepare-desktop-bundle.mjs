@@ -226,7 +226,7 @@ export function assertStagingStructure(stage) {
   if (pkg.main !== "desktop/main.cjs") {
     throw new Error("staging package.json main must be desktop/main.cjs");
   }
-  if (pkg.name !== "fc-opc-ibot-desktop") {
+  if (pkg.name !== "zhiji-desktop") {
     throw new Error("staging package name mismatch");
   }
 }
@@ -415,8 +415,8 @@ export function prepareDesktopBundle() {
   copyRecursive(desktopSrc, desktopStage);
 
   const stagePkg = {
-    name: "fc-opc-ibot-desktop",
-    productName: "FC-OPC iBot",
+    name: "zhiji-desktop",
+    productName: "知几",
     version: "0.1.0",
     private: true,
     main: "desktop/main.cjs",

@@ -24,6 +24,8 @@ type Filter = "all" | "now" | "history" | "decision" | "agent";
 type Props = {
   snapshot: ProjectCanvasSnapshot | null;
   onFocus: (ref: CanvasNodeRef) => void;
+  /** Project Memory milestones projected for display only; never persisted here. */
+  intelligenceEvents?: CanvasTimelineEvent[];
 };
 
 const filters: Array<{ id: Filter; label: string }> = [
@@ -62,6 +64,13 @@ function eventLabel(event: CanvasTimelineEvent) {
   return "项目记录";
 }
 
+function eventDisplayLabel(event: CanvasTimelineEvent) {
+  if (event.workItemId.startsWith("project-intelligence:")) {
+    return event.body;
+  }
+  return eventLabel(event);
+}
+
 type ActorLane = {
   actorKey: string;
   actorName: string;
@@ -94,14 +103,27 @@ function buildLanes(events: CanvasTimelineEvent[]): ActorLane[] {
   });
 }
 
-export function ProjectTimeline({ snapshot, onFocus }: Props) {
+export function ProjectTimeline({
+  snapshot,
+  onFocus,
+  intelligenceEvents = [],
+}: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [scale, setScale] = useState(100);
   const events = useMemo(() => {
-    if (!snapshot) return [];
-    const all = [...snapshot.timeline.now, ...snapshot.timeline.history];
-    if (filter === "now") return snapshot.timeline.now;
-    if (filter === "history") return snapshot.timeline.history;
+    const timelineNow = [
+      ...(snapshot?.timeline.now ?? []),
+      ...intelligenceEvents.filter((event) => event.phase === "now"),
+    ];
+    const timelineHistory = [
+      ...(snapshot?.timeline.history ?? []),
+      ...intelligenceEvents.filter((event) => event.phase === "history"),
+    ];
+    const all = [...timelineNow, ...timelineHistory].filter(
+      (event, index, rows) => rows.findIndex((row) => row.id === event.id) === index,
+    );
+    if (filter === "now") return timelineNow;
+    if (filter === "history") return timelineHistory;
     if (filter === "decision") {
       return all.filter((event) => event.type === "decision");
     }
@@ -109,7 +131,7 @@ export function ProjectTimeline({ snapshot, onFocus }: Props) {
       return all.filter((event) => event.actor.startsWith("agent:"));
     }
     return all;
-  }, [filter, snapshot]);
+  }, [filter, intelligenceEvents, snapshot]);
 
   const lanes = useMemo(() => buildLanes(events), [events]);
 
@@ -212,6 +234,11 @@ export function ProjectTimeline({ snapshot, onFocus }: Props) {
                       key={event.id}
                       className={styles.timelineLaneEvent}
                       data-color={color}
+                      data-intelligence={
+                        event.workItemId.startsWith("project-intelligence:")
+                          ? "true"
+                          : "false"
+                      }
                       data-testid={`timeline-event-${event.id}`}
                       style={{ left: `${left}%` }}
                       title={`${eventLabel(event)} · ${shortTime(at, true)}\n${event.body}`}
@@ -222,7 +249,7 @@ export function ProjectTimeline({ snapshot, onFocus }: Props) {
                       ) : (
                         <Circle size={10} fill="currentColor" />
                       )}
-                      <span>{eventLabel(event)}</span>
+                      <span>{eventDisplayLabel(event)}</span>
                     </button>
                   );
                 })}

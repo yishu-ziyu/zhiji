@@ -119,6 +119,47 @@ describe("agent-tools", () => {
     ).toBe(true);
   });
 
+  it("Demo 首轮优先读项目入口，不让 .ship 和深层样例抢占简报", async () => {
+    const { planForceReadsFromMap } = await import("./agent-tools");
+    const calls = planForceReadsFromMap({
+      mapRelativePaths: [
+        ".ship/tasks/review/README.md",
+        "Chinese_Rumor_Dataset/CED_Dataset/README.md",
+        "docs/product/产品清单.md",
+        "README.md",
+        "todo.md",
+      ],
+      pathByRevisionId: new Map(),
+      alreadyReadRevisionIds: new Set(),
+      alreadyReadPaths: new Set(),
+      maxReads: 3,
+    });
+
+    const paths = calls.flatMap((call) =>
+      call.name === "read_path" ? [call.input.relativePath] : [],
+    );
+    expect(paths).toEqual([
+      "README.md",
+      "todo.md",
+      "docs/product/产品清单.md",
+    ]);
+  });
+
+  it("用 Owner 的问题补充首轮检索，而不是只搜固定的 Demo 词", () => {
+    const calls = planBootstrapToolCalls({
+      eventRevisionIds: [],
+      ownerUtterance:
+        "仓库里的数据集究竟只是存在，还是真的参与了评测？请查证据。",
+    });
+
+    const queries = calls.flatMap((call) =>
+      call.name === "search_text" ? [call.input.query] : [],
+    );
+    expect(queries).toEqual(
+      expect.arrayContaining(["数据集", "评测", "evaluation"]),
+    );
+  });
+
   it("refuses path escape for search via root resolve", async () => {
     const root = tempFixture();
     const result = await executeProjectAgentTool(
@@ -149,6 +190,7 @@ describe("agent-tools", () => {
       { projectId: "proj-1", grant: grant(root), reader: noopReader },
     );
     expect(ok.outcome).toBe("ok");
+    expect(ok.summary).toContain("\n{");
     expect(ok.detail).toContain('"view":"evidence"');
     expect(ok.detail).toContain("canvas-menu-v1");
 

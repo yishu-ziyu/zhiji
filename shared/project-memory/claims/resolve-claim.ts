@@ -117,11 +117,13 @@ export type ResolveClaimDecisionInput = {
   matterId: string;
   candidateRevisionId: string;
   claimId: string;
-  decision: "accept" | "reject";
+  decision: "accept" | "accept_edited" | "reject" | "defer";
   reader: ProjectMemoryReader;
   writer: OwnerDecisionWriter;
   decisionStore: ClaimDecisionStore;
   note?: string;
+  /** Required when decision is accept_edited. */
+  editedText?: string;
 };
 
 export type ClaimDecisionStore = {
@@ -151,10 +153,16 @@ export type ResolveClaimDecisionResult = {
   remaining: number;
 };
 
+const FINALIZING_DECISIONS = new Set([
+  "accept",
+  "accept_edited",
+  "reject",
+]);
+
 /**
  * Persist one claim decision. The candidate head advances only after every
- * claim has a durable decision; rejected rows are excluded from the accepted
- * projection instead of rejecting/accepting the whole candidate on first click.
+ * claim has a finalizing decision (accept / accept_edited / reject).
+ * defer is durable and refresh-visible but does not finalize the whole body.
  */
 export async function resolveClaimDecision(
   input: ResolveClaimDecisionInput,
@@ -166,8 +174,11 @@ export async function resolveClaimDecision(
   if (!projectId || !matterId || !candidateRevisionId || !claimId) {
     throw new Error("projectId、matterId、candidateRevisionId、claimId 均必填");
   }
-  if (input.decision !== "accept" && input.decision !== "reject") {
-    throw new Error("decision 仅支持 accept | reject");
+  const allowed = ["accept", "accept_edited", "reject", "defer"] as const;
+  if (!allowed.includes(input.decision as (typeof allowed)[number])) {
+    throw new Error(
+      "decision 仅支持 accept | accept_edited | reject | defer",
+    );
   }
 
   const state = await input.reader.getMatterState(projectId, matterId);
@@ -201,6 +212,7 @@ export async function resolveClaimDecision(
   const applied = applyOwnerResolution(claim, input.decision, {
     projectId,
     note: input.note,
+    editedText: input.editedText,
     id: `ores-claim:${randomUUID()}`,
   });
   if (!applied.ok) throw new Error(applied.reason);
@@ -219,7 +231,11 @@ export async function resolveClaimDecision(
     { candidateRevisionId },
   );
   const decisionByClaim = new Map(decisions.map((row) => [row.claimId, row]));
-  const remaining = claims.filter((row) => !decisionByClaim.has(row.id)).length;
+  // defer counts as persisted but not finalizing — still remaining for Accepted.
+  const remaining = claims.filter((row) => {
+    const d = decisionByClaim.get(row.id)?.decision;
+    return !d || !FINALIZING_DECISIONS.has(d);
+  }).length;
   if (remaining > 0) {
     return {
       claim: applied.claim,
@@ -230,10 +246,21 @@ export async function resolveClaimDecision(
   }
 
   const acceptedIndexes = claims
-    .map((row, index) =>
-      decisionByClaim.get(row.id)?.decision === "accept" ? index : -1,
-    )
+    .map((row, index) => {
+      const d = decisionByClaim.get(row.id)?.decision;
+      return d === "accept" || d === "accept_edited" ? index : -1;
+    })
     .filter((index) => index >= 0);
+
+  const whyForAccepted = acceptedIndexes.map((index) => {
+    const row = candidate.body.why[index]!;
+    const decision = decisionByClaim.get(claims[index]!.id);
+    if (decision?.decision === "accept_edited" && decision.editedText?.trim()) {
+      return { ...row, text: decision.editedText.trim() };
+    }
+    return row;
+  });
+
   const resolveInput: ResolveInput = {
     projectId,
     matterId,
@@ -248,13 +275,29 @@ export async function resolveClaimDecision(
       acceptedIndexes.length > 0 && acceptedIndexes.length < claims.length
         ? {
             ...candidate.body,
-            why: candidate.body.why.filter((_, index) =>
-              acceptedIndexes.includes(index),
-            ),
+            why: whyForAccepted,
           }
-        : undefined,
+        : acceptedIndexes.length === claims.length &&
+            decisions.some((d) => d.decision === "accept_edited")
+          ? {
+              ...candidate.body,
+              why: whyForAccepted,
+            }
+          : undefined,
     actor: "owner",
   };
+  // When all accepted but some accept_edited, still need edited body for text.
+  if (
+    resolveInput.decision === "accept" &&
+    decisions.some((d) => d.decision === "accept_edited")
+  ) {
+    resolveInput.decision = "edit_accept";
+    resolveInput.editedBody = {
+      ...candidate.body,
+      why: whyForAccepted,
+    };
+  }
+
   const understanding = await resolveUnderstanding(
     input.writer,
     input.reader,

@@ -8,7 +8,7 @@
  */
 
 export const ANYSEARCH_MCP_URL = "https://api.anysearch.com/mcp";
-export const ANYSEARCH_CLIENT_HEADER = "app/fc-opc-ibot/0.1.0";
+export const ANYSEARCH_CLIENT_HEADER = "app/zhiji/0.1.0";
 
 export const ANYSEARCH_DOMAINS = [
   "general",

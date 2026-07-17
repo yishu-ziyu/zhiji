@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { matterIdForLocalGrant } from "@/shared/project-memory/grants";
+import {
+  getDefaultSourceGrantManager,
+  matterIdForLocalGrant,
+} from "@/shared/project-memory/grants";
 import {
   getMemoryView,
   getProjectMemoryReader,
@@ -25,6 +28,15 @@ export async function GET(_req: Request, ctx: Ctx) {
     if (!grant) {
       return NextResponse.json({ session: null, projectId });
     }
+
+    // A desktop process restart restores grants from durable storage, but the
+    // process-local watcher must be mounted again. Start is idempotent and the
+    // observer still enforces this grant's canonical root before every read.
+    const grantManager = getDefaultSourceGrantManager();
+    grantManager.register(grant);
+    void grantManager.start(grant).catch(() => {
+      /* Session restore remains readable; explicit reconcile/rerun can recover. */
+    });
 
     const matterId = matterIdForLocalGrant(projectId, grant.id);
     const reader = getProjectMemoryReader();
@@ -58,6 +70,10 @@ export async function GET(_req: Request, ctx: Ctx) {
       id: string;
       status: string;
       progressSummary?: string;
+      candidateRevisionId?: string;
+      eventIds: string[];
+      createdAt: string;
+      updatedAt: string;
     } | null = null;
 
     if (latest) {
@@ -65,6 +81,10 @@ export async function GET(_req: Request, ctx: Ctx) {
         id: latest.id,
         status: latest.status,
         progressSummary: latest.progressSummary,
+        candidateRevisionId: latest.candidateRevisionId,
+        eventIds: latest.eventIds,
+        createdAt: latest.createdAt,
+        updatedAt: latest.updatedAt,
       };
       try {
         const runtime = createProjectAgentRuntime();

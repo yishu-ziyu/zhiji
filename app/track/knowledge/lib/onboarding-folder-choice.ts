@@ -48,6 +48,19 @@ export const FIRST_USE_PROGRESS_LABELS: Record<FirstUseProgressStep, string> = {
   reconstruct: "整理当前理解",
 };
 
+/**
+ * A project with no matching hydrated session must restore its persisted grant.
+ * This keeps cold start / refresh aligned with the server's real authorization.
+ */
+export function agentSessionNeedsHydration(
+  projectId: string,
+  session: { projectId: string; matterId?: string | null } | null,
+): boolean {
+  const id = projectId.trim();
+  if (!id) return false;
+  return session?.projectId !== id || !session.matterId;
+}
+
 export function folderNameFromPath(rootPath: string): string {
   const normalized = rootPath.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = normalized.split("/").filter(Boolean);

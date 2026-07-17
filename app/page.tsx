@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowRight, BookOpen } from "lucide-react";
 
 export default function HomePage() {
@@ -6,10 +7,22 @@ export default function HomePage() {
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b border-border sticky top-0 z-20 bg-background">
         <div className="max-w-6xl mx-auto px-6 py-4">
-          <div className="font-hand text-[28px] leading-none text-foreground">
-            FC-OPC
+          <div className="flex items-center gap-3">
+            <Image
+              src="/brand/zhiji-mark.png"
+              alt="知几"
+              width={40}
+              height={40}
+              className="rounded-xl"
+              priority
+            />
+            <div>
+              <div className="font-hand text-[28px] leading-none text-foreground">
+                知几
+              </div>
+              <p className="mono-label mt-1">Project Intelligence</p>
+            </div>
           </div>
-          <p className="mono-label mt-1">Knowledge work</p>
         </div>
       </header>
 

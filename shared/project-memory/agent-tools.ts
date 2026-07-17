@@ -542,14 +542,22 @@ export async function executeProjectAgentTool(
 function scoreDocPath(p: string): number {
   const n = p.replace(/\\/g, "/").toLowerCase();
   const base = n.split("/").pop() || n;
+  const parts = n.split("/");
+  const depth = Math.max(0, parts.length - 1);
   // Skip hidden / fixture seed noise (same spirit as materialize).
-  if (base.startsWith(".") || /fixture[-_]?seed/i.test(base)) return 99;
-  if (/(^|\/)readme(\.|$)/i.test(n)) return 0;
-  if (/(^|\/)todo(\.|$)/i.test(n)) return 1;
-  if (/(^|\/)notes?(\.|$)/i.test(n)) return 2;
+  if (
+    parts.some((part) => part.startsWith(".")) ||
+    /fixture[-_]?seed/i.test(base)
+  ) {
+    return 99;
+  }
+  // Root project entry files beat README files buried in examples/datasets.
+  if (/(^|\/)readme(\.|$)/i.test(n)) return depth === 0 ? 0 : 12 + depth;
+  if (/(^|\/)todo(\.|$)/i.test(n)) return depth === 0 ? 1 : 11 + depth;
+  if (/(^|\/)notes?(\.|$)/i.test(n)) return depth === 0 ? 2 : 11 + depth;
   if (/(^|\/)decisions?(\.|$)/i.test(n) || /decision/i.test(n)) return 3;
-  if (n.endsWith(".md")) return 10;
-  if (n.endsWith(".txt")) return 15;
+  if (n.endsWith(".md")) return 10 + Math.min(depth, 8);
+  if (n.endsWith(".txt")) return 15 + Math.min(depth, 8);
   return 40;
 }
 
@@ -557,6 +565,7 @@ function scoreDocPath(p: string): number {
 export function planBootstrapToolCalls(input: {
   eventRevisionIds: Array<{ revisionId: string; relativePath: string }>;
   folderHints?: string[];
+  ownerUtterance?: string;
 }): ProjectAgentToolCall[] {
   const calls: ProjectAgentToolCall[] = [
     {
@@ -578,15 +587,36 @@ export function planBootstrapToolCalls(input: {
     if (scoreDocPath(tip.relativePath) > 15) continue;
     seen.add(tip.revisionId);
     i += 1;
-    if (i > 6) break;
+    if (i > 4) break;
     calls.push({
       id: `t-read-${i}`,
       name: "read_revision",
       input: { revisionId: tip.revisionId, startLine: 1, endLine: 80 },
     });
   }
-  // Few high-value searches only (map→search→follow-up read).
-  for (const q of ["TODO", "README", "下一步"]) {
+  // Few high-value searches only (map→search→follow-up read). Owner
+  // questions must influence retrieval; otherwise a follow-up about evaluation
+  // can accidentally be answered from README alone.
+  const utterance = input.ownerUtterance?.trim() ?? "";
+  const queries: string[] = [];
+  const addQuery = (query: string) => {
+    if (query && !queries.includes(query) && queries.length < 4) {
+      queries.push(query);
+    }
+  };
+  if (/数据集|dataset/i.test(utterance)) addQuery("数据集");
+  if (/评测|测验|测试|验证|evaluation|benchmark/i.test(utterance)) {
+    addQuery("评测");
+    addQuery("evaluation");
+  }
+  if (/业务逻辑|业务流程|业务闭环/i.test(utterance)) {
+    addQuery("业务流程");
+  }
+  if (/证据|evidence/i.test(utterance)) addQuery("证据");
+  for (const fallback of ["README", "Demo", "下一步", "路演"]) {
+    addQuery(fallback);
+  }
+  for (const q of queries) {
     calls.push({
       id: `t-search-${q}`,
       name: "search_text",
@@ -667,7 +697,13 @@ export function planReadFollowupsFromSearch(input: {
   const calls: ProjectAgentToolCall[] = [];
   const seenPath = new Set<string>();
   let i = 0;
-  for (const raw of input.searchRelativePaths) {
+  const rankedPaths = [...input.searchRelativePaths]
+    .map((path) => path.replace(/\\/g, "/"))
+    .filter((path) => scoreDocPath(path) < 99)
+    .sort(
+      (a, b) => scoreDocPath(a) - scoreDocPath(b) || a.localeCompare(b),
+    );
+  for (const raw of rankedPaths) {
     const rel = raw.replace(/\\/g, "/");
     if (!rel || seenPath.has(rel) || alreadyPaths.has(rel)) continue;
     seenPath.add(rel);

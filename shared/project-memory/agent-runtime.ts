@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import {
   buildDeterministicUnderstandingBody,
   createAgentModelLoop,
+  resolveAllowDeterministicFallback,
   sanitizeModelBody,
 } from "./agent-model-loop";
 import {
@@ -18,7 +19,17 @@ import {
   planForceReadsFromMap,
   planReadFollowupsFromSearch,
 } from "./agent-tools";
-import { complete, extractJson } from "@/shared/llm/adapter";
+import {
+  complete,
+  extractJson,
+  getLlmReceiptFields,
+  captureLlmSnapshot,
+  requireVerifiedLlmSnapshot,
+  UnverifiedConnectionError,
+  UNVERIFIED_CONNECTION_MESSAGE,
+} from "@/shared/llm/adapter";
+import type { LlmConnectionSnapshot } from "@/shared/llm/types";
+import { safeErrorMessage } from "@/shared/llm/redact";
 import {
   filterEventsForMatter,
   runStateReconstruction,
@@ -56,16 +67,9 @@ export type CreateProjectAgentRuntimeOptions = {
   allowDeterministicFallback?: boolean;
   /** Injection seam for tests (e.g. forced gateway failure). */
   modelLoop?: ProjectAgentModelLoop;
+  /** Optional frozen connection; default captures at each Run start. */
+  llmSnapshot?: LlmConnectionSnapshot;
 };
-
-function resolveAllowDeterministicFallback(
-  modelMode: "model" | "deterministic",
-  explicit?: boolean,
-): boolean {
-  if (modelMode === "deterministic") return true;
-  if (typeof explicit === "boolean") return explicit;
-  return process.env.AGENT_ALLOW_DETERMINISTIC_FALLBACK === "1";
-}
 
 function mergeBudget(partial?: Partial<AgentRunBudget>): AgentRunBudget {
   return { ...BUDGET_DEFAULT, ...partial };
@@ -74,13 +78,19 @@ function mergeBudget(partial?: Partial<AgentRunBudget>): AgentRunBudget {
 function classifyLlmError(err: unknown): NonNullable<
   Extract<AgentModelCallReceipt["fallback"], { used: true }>["errorClass"]
 > {
+  // Shared classifier lives on reconstruct (legacy + tool paths).
+  // Inline re-export keeps agent-runtime free of circular import at module init.
   const msg = err instanceof Error ? err.message : String(err);
+  const name = err instanceof Error ? err.name : "";
+  if (name === "InvalidLlmResponseError" || /invalid_response/i.test(msg)) {
+    return "invalid_response";
+  }
   if (/timeout|abort/i.test(msg)) return "timeout";
-  if (/401|403|auth/i.test(msg)) return "auth";
+  if (/401|403|auth|unauthorized/i.test(msg)) return "auth";
   if (/429|rate/i.test(msg)) return "rate_limit";
   if (/4\d\d/.test(msg)) return "provider_4xx";
-  if (/5\d\d/.test(msg)) return "provider_5xx";
-  if (/network|fetch|ECONN/i.test(msg)) return "network";
+  if (/5\d\d|500|502|503|504/.test(msg)) return "provider_5xx";
+  if (/network|fetch|ECONN|ENOTFOUND|EAI_AGAIN/i.test(msg)) return "network";
   if (/JSON|No valid/i.test(msg)) return "invalid_response";
   return "unknown";
 }
@@ -92,20 +102,30 @@ function classifyLlmError(err: unknown): NonNullable<
 export function createProjectAgentModelLoop(options?: {
   mode?: "model" | "deterministic";
   allowDeterministicFallback?: boolean;
+  /** Frozen at Run start — all model calls use this snapshot. */
+  llmSnapshot?: LlmConnectionSnapshot;
 }): ProjectAgentModelLoop {
   const mode = options?.mode ?? "model";
   const allowFallback = resolveAllowDeterministicFallback(
     mode,
     options?.allowDeterministicFallback,
-  );
+  ); // shared with legacy propose loop
+  // Capture once at loop construction if not provided.
+  const llmSnapshot = options?.llmSnapshot ?? captureLlmSnapshot();
   return {
     async nextStep(input, signal) {
       if (signal.aborted) {
         throw new Error("aborted");
       }
+      const llmMeta = getLlmReceiptFields(llmSnapshot);
       const receiptBase: AgentModelCallReceipt = {
-        provider: "stepfun",
-        model: process.env.LLM_MODEL || "step-3.7-flash",
+        provider: llmMeta.provider,
+        connectionKind: llmMeta.connectionKind,
+        protocol: llmMeta.protocol,
+        model: llmMeta.model,
+        requestedModel: llmMeta.requestedModel,
+        baseHost: llmMeta.baseHost,
+        profileFingerprint: llmMeta.profileFingerprint,
         effort: "high",
         calls: 1,
         fallback: { used: false },
@@ -139,6 +159,16 @@ export function createProjectAgentModelLoop(options?: {
         input.chat?.writingStyle === "detailed"
           ? "回答偏好：detailed（可稍展开，仍须有证据）。"
           : "回答偏好：concise（短句优先）。";
+      const receiptTools = new Set(
+        input.toolReceiptSummaries.map((receipt) => receipt.tool),
+      );
+      const groundedReadComplete =
+        receiptTools.has("project_map") &&
+        receiptTools.has("search_text") &&
+        (receiptTools.has("read_revision") || receiptTools.has("read_path"));
+      const finishHint = groundedReadComplete
+        ? "地图、搜索、读取已完成闭环：本轮必须直接输出 kind=finish，禁止继续请求 tools。"
+        : "若仍缺地图、搜索或读取，再请求最少的必要工具。";
       const prompt = [
         "你是「项目理解」Agent：只能使用已授权文件夹内的工具结果，禁止编造路径与原文。",
         "只输出一个 JSON 对象，且 kind 只能是 tools | finish | confirmation_required。",
@@ -149,9 +179,15 @@ export function createProjectAgentModelLoop(options?: {
         "中文写 now/why/nextDecision。why[].status=supported 时 evidence 必须含 revisionId+relativePath+quote+lastVerifiedAt（来自 toolReceipts）。",
         "工具已读到材料时优先 finish；证据不足就 proposedStop=unknown，并诚实说明不知道什么。",
         "finish 时 now.evidence / why[].evidence 必须引用 toolReceipts 里真实读到的文件，禁止空 evidence 装懂。",
+        "这份结果是给刚回到项目、需要马上做决定的负责人看的，不是工程审计报告。",
+        "now.text 只写 1—2 句：项目现在到了哪一步、真正还差什么；先说业务状态，再说必要的工程事实。",
+        "why 最多 3 条，每条只保留会改变负责人判断的事实；不要把整段 README、数据集介绍、测试指标或内部实现名当成项目结论。",
+        "nextDecision 只能有一个具体问题，写清动作和取舍；不要重复 now.text，也不要使用 Owner、Candidate、Claim、Revision、DAG 等内部词。",
+        "若材料表明工程已完成但仍缺真人演示/验收，应明确区分“工程可用”和“已经验收”，并把完成真实闭环放在继续加功能之前。",
         "画布：若 Owner 在问「现在怎样/证据/阻塞/关系类型/昨天项目」，必须先 tools 调用 set_canvas_view（view=now|by_kind|decision|evidence，可选 focus/highlightNodeKeys/reason/intentId）；禁止只口述图不调工具。",
         "若有 ownerUtterance 或 recentDialogue，优先回答其中的问题，仍须用工具证据。",
         "若有 ownerStatements：那是人对项目的说法，必须进入 now/depends；与文件冲突写 conflicts，禁止当没听见。",
+        finishHint,
         styleHint,
         `projectId=${input.projectId} matterId=${input.matterId} grantId=${input.grantId}`,
         `eventIds=${JSON.stringify(input.eventIds)}`,
@@ -166,7 +202,11 @@ export function createProjectAgentModelLoop(options?: {
         const text = await complete(
           prompt,
           "只输出一个 JSON 对象（AgentLoopDecision），不要 Markdown 围栏，不要解释。",
-          { maxRetries: 2, timeout: 60_000 },
+          {
+            maxRetries: 2,
+            timeout: 60_000,
+            snapshot: llmSnapshot,
+          },
         );
         if (signal.aborted) throw new Error("aborted");
         const raw = extractJson(text) as Record<string, unknown>;
@@ -426,16 +466,81 @@ export function createProjectAgentRuntime(
     modelMode,
     options.allowDeterministicFallback,
   );
-  const modelLoop =
-    options.modelLoop ??
-    createProjectAgentModelLoop({
-      mode: modelMode,
-      allowDeterministicFallback,
-    });
-  const legacyLoop = createAgentModelLoop({ mode: modelMode });
-
   return {
     async start(input) {
+      // Freeze LLM connection once for this Run (all paths share it).
+      // Product model mode requires server-verified profile — no HTTP if not.
+      let llmSnapshot: LlmConnectionSnapshot;
+      try {
+        if (options.llmSnapshot) {
+          llmSnapshot = options.llmSnapshot;
+        } else if (modelMode === "deterministic" || options.modelLoop) {
+          // Tests / deterministic: no live network gate.
+          llmSnapshot = captureLlmSnapshot();
+        } else {
+          llmSnapshot = requireVerifiedLlmSnapshot();
+        }
+      } catch (err) {
+        if (err instanceof UnverifiedConnectionError) {
+          const now = new Date().toISOString();
+          const failed: AnalysisRun = {
+            id: input.runId?.trim() || randomUUID(),
+            projectId: input.projectId,
+            matterId: input.matterId,
+            trigger: input.trigger,
+            eventIds: input.eventIds ?? [],
+            status: "failed",
+            stopReason: "error",
+            error: UNVERIFIED_CONNECTION_MESSAGE,
+            progressSummary: UNVERIFIED_CONNECTION_MESSAGE,
+            attempt: 1,
+            createdAt: now,
+            updatedAt: now,
+            modelReceipt: {
+              provider: "unverified",
+              protocol: undefined,
+              model: process.env.LLM_MODEL || "",
+              requestedModel: process.env.LLM_MODEL || "",
+              effort: "high",
+              calls: 0,
+              fallback: { used: false },
+            },
+          };
+          try {
+            const store = getSharedProjectMemoryStore();
+            if (input.runId?.trim()) {
+              const existing = await store.getRun(
+                input.projectId,
+                input.runId.trim(),
+              );
+              if (existing) {
+                return await store.updateRun({
+                  ...existing,
+                  ...failed,
+                  id: existing.id,
+                });
+              }
+            }
+            return await store.createRun(failed);
+          } catch {
+            return failed;
+          }
+        }
+        throw err;
+      }
+
+      const modelLoop =
+        options.modelLoop ??
+        createProjectAgentModelLoop({
+          mode: modelMode,
+          allowDeterministicFallback,
+          llmSnapshot,
+        });
+      const legacyLoop = createAgentModelLoop({
+        mode: modelMode,
+        llmSnapshot,
+        allowDeterministicFallback,
+      });
       const store = getSharedProjectMemoryStore();
       const service = getSharedAgentMemoryService();
       const budget = mergeBudget(input.budget);
@@ -447,29 +552,61 @@ export function createProjectAgentRuntime(
         throw new Error("事项不存在");
       }
 
+      const attachLegacyReceipt = (
+        legacyRun: AnalysisRun,
+        calls: number,
+      ): AnalysisRun => {
+        const meta = getLlmReceiptFields(llmSnapshot);
+        return {
+          ...legacyRun,
+          modelReceipt: legacyRun.modelReceipt ?? {
+            provider: meta.provider,
+            connectionKind: meta.connectionKind,
+            protocol: meta.protocol,
+            model: meta.model,
+            requestedModel: meta.requestedModel,
+            baseHost: meta.baseHost,
+            profileFingerprint: meta.profileFingerprint,
+            effort: "high" as const,
+            calls,
+            fallback: { used: false as const },
+          },
+        };
+      };
+
       const grantId =
         state.watchSet?.grantId ||
         (await service.listEvents(input.projectId))[0]?.grantId;
       if (!grantId) {
-        // Fall back to legacy reconstruction (no grant yet)
-        const legacy = await runStateReconstruction(service, legacyLoop, {
-          projectId: input.projectId,
-          matterId: input.matterId,
-          eventIds: input.eventIds,
-          trigger: input.trigger,
-        });
-        return legacy.run;
+        // Fall back to legacy reconstruction (no grant yet) — same frozen snapshot.
+        const legacy = await runStateReconstruction(
+          service,
+          legacyLoop,
+          {
+            projectId: input.projectId,
+            matterId: input.matterId,
+            eventIds: input.eventIds,
+            trigger: input.trigger,
+          },
+          { llmSnapshot },
+        );
+        return attachLegacyReceipt(legacy.run, 1);
       }
 
       const grant = store.getGrant(input.projectId, grantId);
       if (!grant) {
-        const legacy = await runStateReconstruction(service, legacyLoop, {
-          projectId: input.projectId,
-          matterId: input.matterId,
-          eventIds: input.eventIds,
-          trigger: input.trigger,
-        });
-        return legacy.run;
+        const legacy = await runStateReconstruction(
+          service,
+          legacyLoop,
+          {
+            projectId: input.projectId,
+            matterId: input.matterId,
+            eventIds: input.eventIds,
+            trigger: input.trigger,
+          },
+          { llmSnapshot },
+        );
+        return attachLegacyReceipt(legacy.run, 1);
       }
 
       const allEvents = await service.listEvents(input.projectId);
@@ -673,6 +810,7 @@ export function createProjectAgentRuntime(
 
       if (toolsEnabled) {
         const bootstrap = planBootstrapToolCalls({
+          ownerUtterance: input.ownerUtterance,
           eventRevisionIds: tipEvents.flatMap((e) => {
             const rel = e.relativePath.replace(/\\/g, "/");
             // Skip VCS noise; agent still can search/git tools if needed.
@@ -716,7 +854,7 @@ export function createProjectAgentRuntime(
           pathByRevisionId: pathByRev,
           alreadyReadRevisionIds,
           alreadyReadPaths,
-          maxReads: Math.max(0, budget.maxFilesRead - filesRead),
+          maxReads: Math.min(8, Math.max(0, budget.maxFilesRead - filesRead)),
         });
         for (const call of forceReads) {
           if (toolCalls >= budget.maxToolCalls) break;
@@ -734,7 +872,7 @@ export function createProjectAgentRuntime(
           pathByRevisionId: pathByRev,
           alreadyReadRevisionIds,
           alreadyReadPaths,
-          maxReads: Math.max(0, budget.maxFilesRead - filesRead),
+          maxReads: Math.min(4, Math.max(0, budget.maxFilesRead - filesRead)),
         });
         for (const call of followReads) {
           if (toolCalls >= budget.maxToolCalls) break;
@@ -824,6 +962,13 @@ export function createProjectAgentRuntime(
         } catch {
           chatPack = undefined;
         }
+        const promptReceiptSummaries =
+          receiptSummaries.length <= 16
+            ? receiptSummaries
+            : [
+                ...receiptSummaries.slice(0, 10),
+                ...receiptSummaries.slice(-6),
+              ];
         const ctx: AgentLoopContext = {
           projectId: input.projectId,
           matterId: input.matterId,
@@ -831,7 +976,7 @@ export function createProjectAgentRuntime(
           runId: run.id,
           eventIds: events.map((e) => e.id),
           accepted: state.accepted,
-          toolReceiptSummaries: receiptSummaries.slice(-16),
+          toolReceiptSummaries: promptReceiptSummaries,
           budget,
           chat: chatPack,
         };
@@ -842,10 +987,16 @@ export function createProjectAgentRuntime(
         try {
           step = await modelLoop.nextStep(ctx, abort.signal);
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          const llmMeta = getLlmReceiptFields(llmSnapshot);
           modelReceipt = {
-            provider: "stepfun",
-            model: process.env.LLM_MODEL || "step-3.7-flash",
+            provider: llmMeta.provider,
+            connectionKind: llmMeta.connectionKind,
+            protocol: llmMeta.protocol,
+            model: llmMeta.model,
+            requestedModel: llmMeta.requestedModel,
+            baseHost: llmMeta.baseHost,
+            profileFingerprint: llmMeta.profileFingerprint,
             effort: "high",
             calls: modelTurns,
             fallback: {
@@ -858,7 +1009,9 @@ export function createProjectAgentRuntime(
             ...run,
             status: "failed",
             stopReason: "error",
-            error: msg,
+            error: safeErrorMessage(rawMsg, {
+              secrets: [llmSnapshot.apiKey].filter(Boolean),
+            }),
             progressSummary: "模型不可用，已拒绝假装读懂",
             modelReceipt,
             candidateRevisionId: undefined,
@@ -1354,16 +1507,8 @@ export async function runToolAugmentedAnalysis(
     }
   }
 
-  // Only fall back to legacy when tools ran but no candidate was saved
-  // (e.g. empty grant path edge cases) — still surface tool receipts.
-  if (toolReceipts.length === 0) {
-    const legacy = await runStateReconstruction(
-      service,
-      createAgentModelLoop({ mode: options?.modelMode ?? "model" }),
-      input,
-    );
-    return { ...legacy, toolReceipts };
-  }
-
+  // Runtime already finished without a candidate for this run.
+  // Never mint a second model call (and never re-read process.env for a new loop).
+  // Fail-closed: surface the Run as-is; product model mode must not invent Candidate.
   return { run, candidate: null, toolReceipts };
 }

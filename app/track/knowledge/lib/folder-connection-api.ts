@@ -237,6 +237,10 @@ export type AnalysisRunResult = {
     id?: string;
     progressSummary?: string;
     status?: string;
+    candidateRevisionId?: string;
+    eventIds?: string[];
+    createdAt?: string;
+    updatedAt?: string;
   };
   toolReceipts: AgentToolReceiptSummary[];
 };
@@ -248,6 +252,9 @@ export type AgentRunViewResult = {
     progressSummary?: string;
     stopReason?: string;
     candidateRevisionId?: string;
+    eventIds?: string[];
+    createdAt?: string;
+    updatedAt?: string;
   };
   toolReceipts: AgentToolReceiptSummary[];
   candidate: UnderstandingRevision | null;
@@ -1116,6 +1123,10 @@ function createHttpApi(): ContractApi {
           id?: string;
           progressSummary?: string;
           status?: string;
+          candidateRevisionId?: string;
+          eventIds?: string[];
+          createdAt?: string;
+          updatedAt?: string;
         };
         toolReceipts?: Array<{
           sequence: number;

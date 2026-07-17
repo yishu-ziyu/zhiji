@@ -1,4 +1,4 @@
-# 开发日志 - FC-OPC iBot 2026
+# 开发日志 - 知几 2026
 
 > 项目启动：2026-07-03 | 黑客松时间：2026-07-11 ~ 2026-07-12
 
@@ -6,7 +6,7 @@
 
 ## 2026-07-03 凌晨：项目立项
 
-**来源**：fc-opc-ibot 海报 + 初芯 OPC 社区微信公众号
+**来源**：zhiji 海报 + 初芯 OPC 社区微信公众号
 
 ### 项目定义
 - **赛事**：FC-OPC Next iBot 2026 杭州 AIAGENT 黑客松
@@ -17,8 +17,8 @@
 ### 我的选择
 - 双赛道并行（不选一送一）
 - 主办方鼓励"一人公司"叙事 → 这是我的核心 story
-- 项目地址：`~/Desktop/黑客松/fc-opc-ibot/`
-- 仓库地址：https://github.com/yishu-ziyu/fc-opc-ibot
+- 项目地址：`~/Desktop/黑客松/zhiji/`
+- 仓库地址：https://github.com/yishu-ziyu/zhiji
 
 ---
 
@@ -143,8 +143,8 @@
 ## 备份状态
 
 - 本地：仓库根目录
-- GitHub：https://github.com/yishu-ziyu/fc-opc-ibot
-- PR：https://github.com/yishu-ziyu/fc-opc-ibot/pull/1
+- GitHub：https://github.com/yishu-ziyu/zhiji
+- PR：https://github.com/yishu-ziyu/zhiji/pull/1
 - 分支：`feature/ai-agent-platform`
 
 ---

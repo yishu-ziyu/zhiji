@@ -933,27 +933,27 @@
 .agentProcessPanel,
 .agentProcessCompact {
   margin: 0 0 16px;
-  padding: 16px 18px;
-  border: 1px solid #d5e2f6;
+  padding: 18px;
+  border: 1px solid #e1e6ed;
   border-radius: 14px;
-  background: linear-gradient(180deg, #f6f9ff 0%, #fff 72%);
+  background: linear-gradient(180deg, #fbfdff 0%, #fff 72%);
 }
 .agentProcessCompact { max-width: 640px; margin-bottom: 18px; }
 .agentProcessHeader .kicker { display: inline-flex; align-items: center; gap: 6px; }
 .agentProcessHeader h2 {
-  margin: 8px 0 0;
-  font-size: 18px;
+  margin: 7px 0 0;
+  font-size: 17px;
   letter-spacing: -.03em;
   color: #1f2430;
 }
 .agentProcessFolder {
   display: block;
-  margin-top: 8px;
-  font-size: 15px;
+  margin-top: 7px;
+  font-size: 14px;
   color: var(--blue, #245fcf);
 }
 .agentProcessHeader p {
-  margin: 8px 0 0;
+  margin: 7px 0 0;
   color: #5e6a7a;
   font-size: 12px;
   line-height: 1.55;
@@ -963,14 +963,14 @@
   margin: 14px 0 0;
   padding: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 .agentProcessList li {
   display: grid;
   grid-template-columns: 22px 1fr;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  padding: 9px 10px;
+  border-radius: 9px;
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.7);
 }
@@ -1026,11 +1026,11 @@
 .agentProcessStepDone .agentProcessStatusLabel { color: #2f6a3a; }
 .agentToolReceipts,
 .agentLiveFeed {
-  margin-top: 12px;
-  padding: 10px 12px;
+  margin-top: 14px;
+  padding: 12px;
   border-radius: 10px;
-  border: 1px solid rgba(210, 210, 215, 0.9);
-  background: rgba(248, 249, 251, 0.95);
+  border: 1px solid #e6e8eb;
+  background: #fafafa;
 }
 .agentLiveFeed[data-live="true"] {
   border-color: rgba(0, 122, 255, 0.28);

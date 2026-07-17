@@ -106,10 +106,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
     const body = (await req.json()) as {
       claimId?: string;
-      decision?: "accept" | "reject";
+      decision?: "accept" | "accept_edited" | "reject" | "defer";
       matterId?: string;
       candidateRevisionId?: string;
       note?: string;
+      editedText?: string;
       // Explicitly ignored if present — not trusted as truth:
       claimText?: string;
       claimStatus?: string;
@@ -127,9 +128,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     if (!body.claimId?.trim()) {
       return NextResponse.json({ error: "claimId 必填" }, { status: 400 });
     }
-    if (body.decision !== "accept" && body.decision !== "reject") {
+    const allowed = ["accept", "accept_edited", "reject", "defer"] as const;
+    if (!body.decision || !allowed.includes(body.decision)) {
       return NextResponse.json(
-        { error: "decision 仅支持 accept | reject" },
+        {
+          error:
+            "decision 仅支持 accept | accept_edited | reject | defer",
+        },
         { status: 400 },
       );
     }
@@ -145,6 +150,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         writer: getOwnerDecisionWriter(),
         decisionStore: getSharedProjectMemoryStore(),
         note: body.note,
+        editedText: body.editedText,
       });
 
       return NextResponse.json(

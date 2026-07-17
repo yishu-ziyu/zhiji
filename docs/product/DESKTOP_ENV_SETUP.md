@@ -6,7 +6,7 @@
 配置只存在于本机 Electron `userData`：
 
 ```text
-~/Library/Application Support/FC-OPC iBot/.env.local
+~/Library/Application Support/知几/.env.local
 ```
 
 ## 允许字段（仅这些）
@@ -53,7 +53,7 @@ open -e "$(node scripts/install-desktop-env.mjs --print-path)"
 日志（只显示是否已配置，不显示值）：
 
 ```text
-~/Library/Application Support/FC-OPC iBot/logs/desktop.log
+~/Library/Application Support/知几/logs/desktop.log
 ```
 
 - 已填：`LLM_API_KEY=configured` 等

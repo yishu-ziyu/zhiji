@@ -2,7 +2,7 @@
 
 export type KnowledgeSource = "meeting" | "email" | "chat" | "doc" | "manual";
 
-export const DEFAULT_PROJECT_ID = "project-fc-opc-ibot";
+export const DEFAULT_PROJECT_ID = "project-zhiji";
 
 export type ProjectStatus = "active" | "paused" | "archived";
 

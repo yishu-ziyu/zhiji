@@ -190,10 +190,11 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       { projectId, matterId, eventIds: [] },
     );
     // 0 事件路径应跳过 model，直接中文；即使传入假 model 也不应英文。
-    expect(dirty.candidate.body.now.text).toBe("目前还没有可核对的文件变化。");
-    expect(dirty.candidate.body.then.text).toBe("还没有已确认的先前理解");
-    expect(dirty.candidate.body.nextDecision).toMatch(/再读一遍变化/);
-    expect(JSON.stringify(dirty.candidate.body)).not.toMatch(/No current state/i);
+    expect(dirty.candidate).not.toBeNull();
+    expect(dirty.candidate!.body.now.text).toBe("目前还没有可核对的文件变化。");
+    expect(dirty.candidate!.body.then.text).toBe("还没有已确认的先前理解");
+    expect(dirty.candidate!.body.nextDecision).toMatch(/再读一遍变化/);
+    expect(JSON.stringify(dirty.candidate!.body)).not.toMatch(/No current state/i);
   });
 
   function resolveArgs(
@@ -246,10 +247,11 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       createAgentModelLoop({ mode: "deterministic" }),
       { projectId, matterId },
     );
-    expect(candidate.kind).toBe("candidate");
-    expect(candidate.body.evidenceRevisionIds).toEqual([rev!.id]);
-    expect(candidate.body.why[0]?.status).toBe("unknown");
-    expect(candidate.body.why[0]?.text).toBe(WHY_UNKNOWN);
+    expect(candidate).not.toBeNull();
+    expect(candidate!.kind).toBe("candidate");
+    expect(candidate!.body.evidenceRevisionIds).toEqual([rev!.id]);
+    expect(candidate!.body.why[0]?.status).toBe("unknown");
+    expect(candidate!.body.why[0]?.text).toBe(WHY_UNKNOWN);
   });
 
   it("supported why needs path+quote bytes; false quote downgrades without failing run", async () => {
@@ -263,7 +265,8 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       createAgentModelLoop({ mode: "deterministic" }),
       { projectId, matterId, whySourceQuotes: [`  ${quote}  `] },
     );
-    const w = candidate.body.why[0]!;
+    expect(candidate).not.toBeNull();
+    const w = candidate!.body.why[0]!;
     expect(w.status).toBe("supported");
     expect(isFullySupportedAnchor(w)).toBe(true);
     expect(w.evidence[0]?.revisionId).toBe(rev!.id);
@@ -279,14 +282,52 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       },
     );
     expect(run.status).toBe("awaiting_owner");
-    expect(bad.kind).toBe("candidate");
-    expect(bad.body.why[0]?.status).toBe("unknown");
+    expect(bad).not.toBeNull();
+    expect(bad!.kind).toBe("candidate");
+    expect(bad!.body.why[0]?.status).toBe("unknown");
   });
 
-  it("model failure falls back to deterministic changed/evidence", async () => {
-    const { revision: rev } = await seedChange("src/g.md", "content-g");
+  it("model failure fail-closed: failed + null candidate + no save", async () => {
+    await seedChange("src/g.md", "content-g");
+    let saveCalls = 0;
+    const base = agent();
+    const counting = {
+      ...base,
+      saveCandidate: async (
+        ...args: Parameters<typeof base.saveCandidate>
+      ) => {
+        saveCalls += 1;
+        return base.saveCandidate(...args);
+      },
+    };
     const model = createAgentModelLoop({
       mode: "model",
+      allowDeterministicFallback: false,
+      complete: async () => {
+        throw new Error("upstream timeout");
+      },
+    });
+    const { candidate, run } = await runStateReconstruction(
+      counting,
+      model,
+      { projectId, matterId },
+    );
+    expect(candidate).toBeNull();
+    expect(run.status).toBe("failed");
+    expect(run.candidateRevisionId).toBeUndefined();
+    expect(run.modelReceipt?.fallback).toMatchObject({
+      used: true,
+      kind: "deterministic",
+      errorClass: "timeout",
+    });
+    expect(saveCalls).toBe(0);
+  });
+
+  it("explicit allowDeterministicFallback still yields candidate shell", async () => {
+    const { revision: rev } = await seedChange("src/g2.md", "content-g2");
+    const model = createAgentModelLoop({
+      mode: "model",
+      allowDeterministicFallback: true,
       complete: async () => {
         throw new Error("upstream timeout");
       },
@@ -295,9 +336,9 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       projectId,
       matterId,
     });
-    expect(candidate.body.evidenceRevisionIds).toContain(rev!.id);
-    expect(candidate.body.now.text).toContain("暂时无法进一步分析");
-    expect(candidate.body.now.text).not.toMatch(/changed|evidence|Owner/i);
+    expect(candidate).not.toBeNull();
+    expect(candidate!.body.evidenceRevisionIds).toContain(rev!.id);
+    expect(candidate!.body.now.text).toContain("暂时无法进一步分析");
     expect(run.status).toBe("awaiting_owner");
   });
 
@@ -308,16 +349,17 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       createAgentModelLoop({ mode: "deterministic" }),
       { projectId, matterId },
     );
+    expect(candidate).not.toBeNull();
     await expect(
-      resolveArgs(candidate.id, "accept", { actor: "agent" }),
+      resolveArgs(candidate!.id, "accept", { actor: "agent" }),
     ).rejects.toBeInstanceOf(OwnerOnlyResolutionError);
 
     await expect(
-      resolveArgs(candidate.id, "edit_accept"),
+      resolveArgs(candidate!.id, "edit_accept"),
     ).rejects.toBeInstanceOf(ResolveValidationError);
 
     await expect(
-      resolveArgs(candidate.id, "accept", { projectId: "other" }),
+      resolveArgs(candidate!.id, "accept", { projectId: "other" }),
     ).rejects.toBeInstanceOf(ResolveValidationError);
   });
 
@@ -328,11 +370,12 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       createAgentModelLoop({ mode: "deterministic" }),
       { projectId, matterId },
     );
-    const first = await resolveArgs(candidate.id, "accept");
-    expect(first.accepted?.id).not.toBe(candidate.id);
+    expect(candidate).not.toBeNull();
+    const first = await resolveArgs(candidate!.id, "accept");
+    expect(first.accepted?.id).not.toBe(candidate!.id);
     expect(first.accepted?.kind).toBe("accepted");
 
-    const second = await resolveArgs(candidate.id, "accept");
+    const second = await resolveArgs(candidate!.id, "accept");
     expect(second.resolution.id).toBe(first.resolution.id);
     expect(second.accepted?.id).toBe(first.accepted?.id);
     expect(second.head.acceptedRevisionId).toBe(first.head.acceptedRevisionId);
@@ -345,16 +388,17 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       createAgentModelLoop({ mode: "deterministic" }),
       { projectId, matterId },
     );
+    expect(candidate).not.toBeNull();
     const edited: UnderstandingBody = {
-      ...candidate.body,
-      now: { ...candidate.body.now, text: "Owner 编辑后的当前理解" },
+      ...candidate!.body,
+      now: { ...candidate!.body.now, text: "Owner 编辑后的当前理解" },
       evidenceRevisionIds: [rev!.id],
     };
-    const result = await resolveArgs(candidate.id, "edit_accept", {
+    const result = await resolveArgs(candidate!.id, "edit_accept", {
       editedBody: edited,
     });
     expect(result.accepted?.body.now.text).toBe("Owner 编辑后的当前理解");
-    expect(result.accepted?.id).not.toBe(candidate.id);
+    expect(result.accepted?.id).not.toBe(candidate!.id);
   });
 
   it("memory view excludes resolved candidates", async () => {
@@ -364,7 +408,8 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
       createAgentModelLoop({ mode: "deterministic" }),
       { projectId, matterId },
     );
-    await resolveArgs(candidate.id, "accept");
+    expect(candidate).not.toBeNull();
+    await resolveArgs(candidate!.id, "accept");
 
     const view = await getMemoryView(store, projectId, matterId, {
       isCandidateResolved: (id) => store.isCandidateResolved(id),
@@ -373,6 +418,6 @@ describe("MVP Task4 follow-up (runtime + relevance + resolve rules)", () => {
     expect(view?.candidate).toBeNull();
     // raw truth row remains immutable candidate
     const raw = await store.getMatterState(projectId, matterId);
-    expect(raw.candidate?.id).toBe(candidate.id);
+    expect(raw.candidate?.id).toBe(candidate!.id);
   });
 });

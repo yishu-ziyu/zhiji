@@ -281,16 +281,8 @@ export function buildPreflightReport(
   if (blockedFiles > 0) {
     warnings.push(`检测到 ${blockedFiles} 个可能敏感文件，默认不读取正文`);
   }
-  if (eligibleFiles > policy.maxFiles) {
-    warnings.push(
-      `可纳入文件 ${eligibleFiles} 超过上限 ${policy.maxFiles}，连接前需收紧范围`,
-    );
-  }
-  if (eligibleBytes > policy.maxTotalBytes) {
-    warnings.push(
-      `可纳入体积约 ${eligibleBytes} 字节超过上限 ${policy.maxTotalBytes}`,
-    );
-  }
+  // Keep corpus totals in the report for observability. Do not present the
+  // current soft budgets as warnings until connect enforces them as gates.
 
   return {
     policyVersion: policy.version,

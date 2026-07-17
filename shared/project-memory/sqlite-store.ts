@@ -2013,14 +2013,14 @@ private getRevision(id: string): OriginalRevision | null {
             .prepare(
               `SELECT * FROM analysis_runs
                WHERE project_id = ? AND matter_id = ?
-               ORDER BY created_at ASC, rowid ASC`,
+               ORDER BY created_at DESC, rowid DESC`,
             )
             .all(projectId, matterId)
         : this.db
             .prepare(
               `SELECT * FROM analysis_runs
                WHERE project_id = ?
-               ORDER BY created_at ASC, rowid ASC`,
+               ORDER BY created_at DESC, rowid DESC`,
             )
             .all(projectId)
     ) as AnalysisRunRow[];

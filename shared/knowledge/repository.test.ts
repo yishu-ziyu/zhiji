@@ -307,7 +307,7 @@ describe("knowledge repository persistence", () => {
     );
 
     const repo = await loadRepo();
-    expect(repo.DEFAULT_PROJECT_ID).toBe("project-fc-opc-ibot");
+    expect(repo.DEFAULT_PROJECT_ID).toBe("project-zhiji");
     // Missing projectId stays empty — excluded from project-scoped lists.
     expect(repo.getCard("legacy")?.projectId).toBe("");
     expect(repo.getAction("legacyAction")?.projectId).toBe("");

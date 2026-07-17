@@ -41,11 +41,14 @@ export function executeSetCanvasView(input: unknown): SetCanvasViewResult {
       detail: parsed.error,
     };
   }
+  const detail = JSON.stringify(parsed.command);
   return {
     outcome: "ok",
-    summary: `画布已切换为「${parsed.command.view}」`,
+    // ToolReceipt persists summary but not detail. Keep the normalized command
+    // after the human line so refresh can restore focus/highlights as well as view.
+    summary: `画布已切换为「${parsed.command.view}」\n${detail}`,
     command: parsed.command,
-    detail: JSON.stringify(parsed.command),
+    detail,
   };
 }
 

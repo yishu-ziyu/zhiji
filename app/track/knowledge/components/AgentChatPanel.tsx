@@ -25,6 +25,8 @@ type Props = {
   canSend?: boolean;
   /** Shown under header / empty state when canSend is false. */
   blockedHint?: string | null;
+  /** Opens the real folder picker + preflight confirmation flow. */
+  onAuthorize?: () => void;
   /** Bump to scroll this panel into view and focus the input. */
   focusKey?: number;
 };
@@ -88,6 +90,7 @@ export function AgentChatPanel({
   refreshKey,
   canSend = true,
   blockedHint = null,
+  onAuthorize,
   focusKey,
 }: Props) {
   const [turns, setTurns] = useState<AgentChatTurn[]>([]);
@@ -194,6 +197,18 @@ export function AgentChatPanel({
           ))
         )}
       </div>
+
+      {!canSend && onAuthorize ? (
+        <button
+          type="button"
+          className={styles.agentChatAuthorize}
+          data-testid="agent-chat-authorize"
+          onClick={onAuthorize}
+          disabled={busy || loading}
+        >
+          选择并授权文件夹
+        </button>
+      ) : null}
 
       {error ? (
         <p className={styles.agentChatError} data-testid="agent-chat-error">

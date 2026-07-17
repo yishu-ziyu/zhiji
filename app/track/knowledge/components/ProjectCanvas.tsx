@@ -66,7 +66,6 @@ type Props = {
   highlightNodeIds?: string[];
   /** canvas-menu-v1 presentation preset */
   viewPreset?: CanvasViewId;
-  onViewPresetChange?: (view: CanvasViewId) => void;
   /** Folder-Agent live work (map/search/read) — Canvasight Live Feed bridge */
   agentLive?: CanvasAgentLive | null;
 };
@@ -128,13 +127,6 @@ function writeSavedPositions(
     /* quota */
   }
 }
-
-const VIEW_PRESETS: Array<{ id: CanvasViewId; label: string }> = [
-  { id: "now", label: "现在怎样" },
-  { id: "by_kind", label: "类型一眼" },
-  { id: "decision", label: "决策通路" },
-  { id: "evidence", label: "证据网" },
-];
 
 function refKey(ref: CanvasNodeRef) {
   return `${ref.kind}:${ref.id}`;
@@ -282,9 +274,19 @@ function layoutFromSnapshot(
   const sortedNeighbors = [...neighbors].sort(
     (a, b) => strengthRank(b) - strengthRank(a),
   );
-  const visible = sortedNeighbors.slice(0, MAX_VISIBLE_NEIGHBORS);
+  const viewEdges = filterEdgesForView(snapshot.edges, view);
+  const viewNodeIds = new Set(
+    viewEdges.flatMap((edge) => [refKey(edge.source), refKey(edge.target)]),
+  );
+  // A view changes the graph itself, not merely the stroke on its edges.
+  // The project center stays visible; neighbors without a kept relation leave
+  // the canvas, making an Agent-directed decision/evidence view observable.
+  const viewNeighbors = sortedNeighbors.filter((node) =>
+    viewNodeIds.has(refKey(node.ref)),
+  );
+  const visible = viewNeighbors.slice(0, MAX_VISIBLE_NEIGHBORS);
   const overflow = [
-    ...sortedNeighbors.slice(MAX_VISIBLE_NEIGHBORS),
+    ...viewNeighbors.slice(MAX_VISIBLE_NEIGHBORS),
     ...snapshot.foldedNodes,
   ];
 
@@ -332,7 +334,11 @@ function layoutFromSnapshot(
   const n = Math.max(visible.length, 1);
   visible.forEach((node, index) => {
     const angle = -Math.PI / 2 + (index * 2 * Math.PI) / n;
-    const relation = edgesTouching(snapshot, node)[0];
+    const relation = viewEdges.find(
+      (edge) =>
+        (edge.source.kind === node.ref.kind && edge.source.id === node.ref.id) ||
+        (edge.target.kind === node.ref.kind && edge.target.id === node.ref.id),
+    );
     const id = refKey(node.ref);
     const defaultPos = {
       x: Math.cos(angle) * RADIUS_X - 90,
@@ -366,11 +372,11 @@ function layoutFromSnapshot(
   });
 
   const nodeIds = new Set(nodes.map((node) => node.id));
-  const visibleEdges = snapshot.edges.filter(
+  const visibleEdges = viewEdges.filter(
     (edge) =>
       nodeIds.has(refKey(edge.source)) && nodeIds.has(refKey(edge.target)),
   );
-  const canvasEdges = filterEdgesForView(visibleEdges, view);
+  const canvasEdges = visibleEdges;
   let edges: Edge[] = canvasEdges.map((edge) => {
     const strength = edge.strength ?? "medium";
     const showLabel = labelStrengths.has(strength);
@@ -899,19 +905,15 @@ export function ProjectCanvas({
   onFocus,
   highlightNodeIds,
   viewPreset: viewPresetProp,
-  onViewPresetChange,
   agentLive = null,
 }: Props) {
   const [selectedEdge, setSelectedEdge] = useState<CanvasEdge | null>(null);
-  const [localView, setLocalView] = useState<CanvasViewId>("now");
   const [layoutEpoch, setLayoutEpoch] = useState(0);
   const [layoutDirection, setLayoutDirection] =
     useState<LayoutDirection>("TB");
-  const viewPreset = viewPresetProp ?? localView;
-  const setViewPreset = (view: CanvasViewId) => {
-    if (onViewPresetChange) onViewPresetChange(view);
-    else setLocalView(view);
-  };
+  // The Agent chooses the presentation view from the owner's question.
+  // Keep its control out of the default recording surface.
+  const viewPreset = viewPresetProp ?? "now";
 
   useEffect(() => {
     setSelectedEdge(null);
@@ -928,7 +930,11 @@ export function ProjectCanvas({
   }
 
   return (
-    <section className={styles.canvasArea} data-testid="project-canvas">
+    <section
+      className={styles.canvasArea}
+      data-testid="project-canvas"
+      data-view={viewPreset}
+    >
       {selectedEdge || snapshot.focus.kind !== "project" ? (
         <aside className={styles.canvasContextActions} data-no-pan>
           {selectedEdge ? (
@@ -985,19 +991,8 @@ export function ProjectCanvas({
       <div className={styles.canvasTopControls} data-no-pan>
         <div
           className={styles.edgeFilterBar}
-          data-testid="canvas-view-preset"
+          data-testid="canvas-layout-controls"
         >
-          {VIEW_PRESETS.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              data-active={viewPreset === f.id ? "true" : "false"}
-              data-testid={`canvas-view-preset-${f.id}`}
-              onClick={() => setViewPreset(f.id)}
-            >
-              {f.label}
-            </button>
-          ))}
           <button
             type="button"
             data-testid="canvas-auto-layout"

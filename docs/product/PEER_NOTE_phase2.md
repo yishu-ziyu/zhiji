@@ -1,7 +1,7 @@
 # 互通 · 阶段 2 中心真节点（进行中）
 
 **谁：** 平级全栈 · 写此条的人在推进阶段 2  
-**唯一代码：** `/Users/mahaoxuan/Desktop/黑客松/fc-opc-ibot` · `main`  
+**唯一代码：** `/Users/mahaoxuan/Desktop/黑客松/zhiji` · `main`
 **试用：** http://127.0.0.1:3331/track/knowledge  
 
 ## 北极星（已写进 CONTEXT / 产品清单）

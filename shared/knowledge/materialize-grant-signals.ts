@@ -129,8 +129,8 @@ export function materializeGrantSignalsToProject(
     cardIds.push(card.id);
   }
 
-  // Policy A: drafts appear on canvas immediately after authorize / refresh.
-  // Always attempt seed (idempotent); covers continue when signals already materialised.
+  // Competition contract: materials must NOT auto-create formal todos.
+  // seedWorkItemsFromMaterials only cleans historical noise seed-* drafts.
   const seeded = seedWorkItemsFromMaterials(projectId);
 
   return {

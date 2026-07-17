@@ -9,7 +9,7 @@ import type { FootprintEvent, KnowledgeCard } from "@/shared/types/knowledge";
 const cards: KnowledgeCard[] = [
   {
     id: "a",
-    projectId: "project-fc-opc-ibot",
+    projectId: "project-zhiji",
     content: "a",
     source: "meeting",
     tags: [],
@@ -19,7 +19,7 @@ const cards: KnowledgeCard[] = [
   },
   {
     id: "b",
-    projectId: "project-fc-opc-ibot",
+    projectId: "project-zhiji",
     content: "b",
     source: "doc",
     tags: [],
@@ -29,7 +29,7 @@ const cards: KnowledgeCard[] = [
   },
   {
     id: "c",
-    projectId: "project-fc-opc-ibot",
+    projectId: "project-zhiji",
     content: "c",
     source: "meeting",
     tags: [],

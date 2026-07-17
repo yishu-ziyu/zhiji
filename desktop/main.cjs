@@ -1,5 +1,5 @@
 /**
- * FC-OPC iBot — competition Electron Main.
+ * 知几 — competition Electron Main.
  * Lifecycle only: loopback Next standalone + sandboxed BrowserWindow.
  */
 "use strict";
@@ -46,7 +46,7 @@ function appendLog(logFile, line) {
 function showFatalAndExit(message, logFile) {
   appendLog(logFile, `FATAL: ${message}`);
   try {
-    dialog.showErrorBox("FC-OPC iBot 无法启动", message);
+    dialog.showErrorBox("知几无法启动", message);
   } catch {
     console.error(message);
   }
@@ -110,7 +110,7 @@ async function startCapabilityServer(paths, allowedEnv, logFile) {
     cwd: paths.runtimeDir,
     env,
     stdio: "pipe",
-    serviceName: "FC-OPC Local Capability",
+    serviceName: "知几 Local Capability",
   });
 
   if (serverProcess.stdout) {

@@ -1,0 +1,28 @@
+{
+  "claim0": {
+    "id": "claim:2209de01-b101-4307-a588-371bf579804e:why:0:ed0b95a36d846823",
+    "decision": "accept_edited",
+    "editedText": "# FC-OPC iBot · 项目理解（知识工作台）\n\n授权本地项目文件夹后：在边界内真读材料 → 有出处的理解 → 你确认 → 画布上看得见结构与任务。\n\n> 入口唯一：`/track/knowledge`  \n> 不是全机监控，不是 Coding 网关，不是纯搜文档。\n\n## 克隆后怎么跑\n\n```bash\ngit clone https://github.com/yishu-ziyu/fc（Owner 补充：packaged/tested 不等于 accepted）",
+    "text": "# FC-OPC iBot · 项目理解（知识工作台）\n\n授权本地项目文件夹后：在边界内真读材料 → 有出处的理解 → 你确认 → 画布上看得见结构与任务。\n\n> 入口唯一：`/track/knowledge`  \n> 不是全机监控，不是 Coding 网关，不是纯搜文档。\n\n## 克隆后怎么跑\n\n```bash\ngit clone https://github.com/yishu-ziyu/fc"
+  },
+  "claim1": {
+    "id": "claim:2209de01-b101-4307-a588-371bf579804e:why:1:f5d1ed42c77c1222",
+    "decision": "defer"
+  },
+  "anchorsFromBody": [
+    {
+      "revisionId": "orev:9a9538b25050d8690559ebfc36613d116c910775dd439fc28bdf0a4410616206",
+      "relativePath": "README.md",
+      "quote": "# FC-OPC iBot · 项目理解（知识工作台）\n\n授权本地项目文件夹后：在边界内真读材料 → 有出处的理解 → 你确认 → 画布上看得见结构与任务。\n\n> 入口唯一：`/track/knowledge`  \n> 不是全机监控，不是 Coding 网关，不是纯搜文档。\n\n## 克隆后怎么跑\n\n```bash\ngit clone https://github.com/yishu-ziyu/fc"
+    }
+  ],
+  "evidenceRevisionIds": [
+    "orev:98e6e535189e9add51d90e0480a2bb99bcf5927216d75d9c3a0c5b643c6986c3",
+    "orev:9a9538b25050d8690559ebfc36613d116c910775dd439fc28bdf0a4410616206",
+    "orev:8d97c7c0412b4b9191f8e57ecb1b8306f58f73e21ebd0a7c3090f33d7fbbae7d",
+    "orev:ab46db9eecbb85b26cd342dce5b1b228100797e6220dee96f8c7f0098cabe3ad",
+    "orev:df3fdf504dc2d1385e16fa98279940f1cad461aba1ebb2741b2805047a645c4a",
+    "orev:c3c3b55b23021d7d2d747e69b0503e830fe26fc98013ba6edf91caf2b4beef24",
+    "orev:7b9aff6e96441edeea0b34b61a3423a69b4dd639a97f013d58f1a89e75c92c8e"
+  ]
+}

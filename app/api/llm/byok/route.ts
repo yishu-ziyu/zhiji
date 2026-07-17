@@ -1,74 +1,106 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifyAndActivate } from "@/shared/llm/activate";
 import {
   getByokStatus,
-  saveByokSecrets,
-  type ByokSecretsInput,
+  rejectClientVerifiedAt,
+  toPublicByokStatus,
 } from "@/shared/llm/byok";
+import { competitionPresets } from "@/shared/llm/presets";
+import { isLlmProvider } from "@/shared/llm/types";
+import { redactSecrets } from "@/shared/llm/redact";
 
 /**
- * BYOK status + save for the in-app model settings panel.
- * GET never returns secret values — only configured flags and non-secret fields.
+ * GET: public status + competition presets (no secrets).
+ * PUT: verify-and-activate — server probe then atomic save.
+ * Client verifiedAt is rejected.
  */
 export async function GET() {
   const status = getByokStatus();
   return NextResponse.json({
     ok: true,
-    status: {
-      configured: status.configured,
-      hasBaseUrl: status.hasBaseUrl,
-      hasApiKey: status.hasApiKey,
-      hasModel: status.hasModel,
-      baseUrl: status.baseUrl,
-      model: status.model,
-      // Do not expose full path with username if avoidable — still useful for desktop support
-      envFileHint: status.envFilePath.includes("Application Support")
-        ? "~/Library/Application Support/FC-OPC iBot/.env.local"
-        : pathBasenameHint(status.envFilePath),
-    },
+    status: toPublicByokStatus(status),
+    presets: competitionPresets().map((p) => ({
+      provider: p.provider,
+      displayName: p.displayName,
+      shortName: p.shortName,
+      connectionKind: p.connectionKind,
+      protocol: p.protocol,
+      authMode: p.authMode,
+      baseUrl: p.baseUrl,
+      logoSrc: p.logoSrc,
+      models: p.models,
+      competitionPrimary: p.competitionPrimary,
+    })),
   });
 }
 
 export async function PUT(req: NextRequest) {
   try {
-    const body = (await req.json()) as Partial<ByokSecretsInput>;
-    const input: ByokSecretsInput = {
-      llmBaseUrl: String(body.llmBaseUrl ?? ""),
-      llmApiKey: String(body.llmApiKey ?? ""),
-      llmModel: String(body.llmModel ?? ""),
-      anysearchApiKey:
-        body.anysearchApiKey === undefined
-          ? undefined
-          : String(body.anysearchApiKey),
-    };
-    const status = saveByokSecrets(input);
+    const body = (await req.json()) as Record<string, unknown>;
+
+    const reject = rejectClientVerifiedAt(body);
+    if (reject) {
+      return NextResponse.json({ error: reject, errorCode: "client_verified_at" }, { status: 400 });
+    }
+
+    if (!isLlmProvider(body.provider)) {
+      return NextResponse.json({ error: "无效的连接" }, { status: 400 });
+    }
+
+    const result = await verifyAndActivate({
+      provider: body.provider,
+      model: String(body.llmModel ?? body.model ?? ""),
+      apiKey:
+        body.llmApiKey !== undefined
+          ? String(body.llmApiKey)
+          : body.apiKey !== undefined
+            ? String(body.apiKey)
+            : undefined,
+      protocol: body.protocol as never,
+      authMode: body.authMode as never,
+      baseUrl:
+        body.llmBaseUrl !== undefined
+          ? String(body.llmBaseUrl)
+          : body.baseUrl !== undefined
+            ? String(body.baseUrl)
+            : undefined,
+    });
+
+    if (!result.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: redactSecrets(result.error, {
+            secrets: [String(body.llmApiKey ?? body.apiKey ?? "")].filter(
+              Boolean,
+            ) as string[],
+          }),
+          errorCode: result.errorCode,
+          diagnostic: result.diagnostic
+            ? redactSecrets(result.diagnostic)
+            : undefined,
+          status: result.status
+            ? toPublicByokStatus(result.status)
+            : toPublicByokStatus(getByokStatus()),
+        },
+        { status: 422 },
+      );
+    }
+
     return NextResponse.json({
       ok: true,
-      status: {
-        configured: status.configured,
-        hasBaseUrl: status.hasBaseUrl,
-        hasApiKey: status.hasApiKey,
-        hasModel: status.hasModel,
-        baseUrl: status.baseUrl,
-        model: status.model,
-        envFileHint: status.envFilePath.includes("Application Support")
-          ? "~/Library/Application Support/FC-OPC iBot/.env.local"
-          : pathBasenameHint(status.envFilePath),
-      },
-      message: "已保存。模型密钥仅在本机，即时生效。",
+      status: toPublicByokStatus(result.status),
+      verifiedAt: result.verifiedAt,
+      message: result.message,
     });
   } catch (error) {
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "保存模型配置失败",
+        error: redactSecrets(
+          error instanceof Error ? error.message : "保存模型配置失败",
+        ),
       },
       { status: 400 },
     );
   }
-}
-
-function pathBasenameHint(p: string): string {
-  // Avoid leaking full home path in JSON; show trailing two segments.
-  const parts = p.split(/[/\\]/).filter(Boolean);
-  if (parts.length <= 2) return p;
-  return `…/${parts.slice(-2).join("/")}`;
 }

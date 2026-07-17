@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-describe("seedWorkItemsFromMaterials (policy A)", () => {
+describe("seedWorkItemsFromMaterials (no auto formal todos)", () => {
   let dataDir: string;
   let previousDataDir: string | undefined;
   let previousSeedDemo: string | undefined;
@@ -30,20 +30,18 @@ describe("seedWorkItemsFromMaterials (policy A)", () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("creates draft work items from README/TODO/NOTES without Owner confirm", async () => {
+  it("authorize/materialize does not auto-create formal todos", async () => {
     const { materializeGrantSignalsToProject } = await import(
       "./materialize-grant-signals"
     );
     const repo = await import("./repository");
-    const { seedWorkItemsFromMaterials, seedWorkItemId } = await import(
-      "./seed-work-items-from-materials"
-    );
     repo.resetKnowledgeStoreForTests();
 
     const project = repo.addProject({
       name: "夹具项目",
-      summary: "policy A",
+      summary: "no auto todo",
     });
+    const before = repo.listActions({ projectId: project.id }).length;
     const result = materializeGrantSignalsToProject(project.id, [
       {
         relativePath: "README.md",
@@ -60,141 +58,46 @@ describe("seedWorkItemsFromMaterials (policy A)", () => {
         content: new TextEncoder().encode("meeting open questions"),
         kind: "reconciled",
       },
-      {
-        relativePath: "DECISIONS.md",
-        content: new TextEncoder().encode("chose real nodes"),
-        kind: "reconciled",
-      },
     ]);
 
-    expect(result.written).toBeGreaterThanOrEqual(3);
-    expect(result.workItemsCreated).toBeGreaterThanOrEqual(3);
-
-    const items = repo.listActions({ projectId: project.id });
-    expect(items.length).toBeGreaterThanOrEqual(3);
-    expect(items.every((item) => item.status === "todo")).toBe(true);
-    expect(items.every((item) => item.evidenceIds.length > 0)).toBe(true);
-    expect(items.some((item) => /目标|README|范围/i.test(item.title))).toBe(
-      true,
-    );
-    expect(items.some((item) => /待办|TODO/i.test(item.title))).toBe(true);
-
-    // Idempotent re-seed
-    const again = seedWorkItemsFromMaterials(project.id);
-    expect(again.created).toBe(0);
-    expect(again.skippedExisting).toBeGreaterThanOrEqual(3);
-
-    const readmeId = seedWorkItemId(project.id, "README.md");
-    expect(repo.getAction(readmeId)).toBeTruthy();
+    expect(result.written).toBeGreaterThanOrEqual(2);
+    expect(result.workItemsCreated).toBe(0);
+    expect(repo.listActions({ projectId: project.id }).length).toBe(before);
   });
 
-  it("creates zero work items when there are no seedable materials", async () => {
+  it("seedWorkItemsFromMaterials never increases todo count", async () => {
     const repo = await import("./repository");
     const { seedWorkItemsFromMaterials } = await import(
       "./seed-work-items-from-materials"
     );
     repo.resetKnowledgeStoreForTests();
     const project = repo.addProject({ name: "空", summary: "" });
+    const before = repo.listActions({ projectId: project.id }).length;
     const result = seedWorkItemsFromMaterials(project.id);
     expect(result.created).toBe(0);
-    expect(result.emptyReason).toMatch(/材料/);
+    expect(repo.listActions({ projectId: project.id }).length).toBe(before);
+    expect(result.emptyReason).toMatch(/不会自动|建议|采用/);
   });
 
-  it("syncs folder display name on ensureProject and hides old empty shells", async () => {
+  it("does not delete existing user tasks", async () => {
     const repo = await import("./repository");
-    repo.resetKnowledgeStoreForTests();
-
-    const a = repo.ensureProject({
-      id: "folder-id-1",
-      name: "tool-loop-live4-old",
-      summary: "已授权本地文件夹（只读边界内）",
-    });
-    expect(a.name).toBe("tool-loop-live4-old");
-
-    const synced = repo.ensureProject({
-      id: "folder-id-1",
-      name: "mvp-v0-g6-owner-project",
-      summary: "已授权本地文件夹（只读边界内）",
-      syncNameFromFolder: true,
-    });
-    expect(synced.name).toBe("mvp-v0-g6-owner-project");
-
-    // Old empty shell: backdate createdAt so listProjects hides it.
-    const shell = repo.addProject({ name: "MVP-V0-G6-fixture", summary: "" });
-    const projectsPath = path.join(dataDir, "projects.json");
-    const raw = JSON.parse(fs.readFileSync(projectsPath, "utf8")) as Record<
-      string,
-      { id: string; createdAt: string; updatedAt: string }
-    >;
-    raw[shell.id].createdAt = "2020-01-01T00:00:00.000Z";
-    raw[shell.id].updatedAt = "2020-01-01T00:00:00.000Z";
-    fs.writeFileSync(projectsPath, JSON.stringify(raw));
-    repo.resetKnowledgeStoreForTests();
-    // reload from disk without wipe - reset clears; re-write then reload via get
-    // Simpler: mutate in-memory after recreate
-    const shell2 = repo.addProject({ name: "old-empty", summary: "" });
-    // Directly patch via ensure without substance + force old by re-reading list filter
-    // projectHasWorkbenchSubstance false + age: use Date.now mock not available;
-    // instead assert projectHasWorkbenchSubstance and that brand-new empty still lists.
-    expect(repo.projectHasWorkbenchSubstance(shell2.id)).toBe(false);
-    expect(repo.listProjects().some((p) => p.id === shell2.id)).toBe(true);
-  });
-
-  it("skips fixture-seed / hidden files and cancels existing noise drafts", async () => {
-    const { materializeGrantSignalsToProject } = await import(
-      "./materialize-grant-signals"
-    );
-    const repo = await import("./repository");
-    const { seedWorkItemsFromMaterials, seedWorkItemId } = await import(
+    const { seedWorkItemsFromMaterials } = await import(
       "./seed-work-items-from-materials"
     );
     repo.resetKnowledgeStoreForTests();
-
-    const project = repo.addProject({ name: "夹具", summary: "" });
-    const result = materializeGrantSignalsToProject(project.id, [
-      {
-        relativePath: "README.md",
-        content: new TextEncoder().encode("# goal\nship center nodes"),
-        kind: "reconciled",
-      },
-      {
-        relativePath: ".fixture-seed-sha.txt",
-        content: new TextEncoder().encode("abc123deadbeef"),
-        kind: "reconciled",
-      },
-      {
-        relativePath: "TODO.md",
-        content: new TextEncoder().encode("- [ ] one"),
-        kind: "reconciled",
-      },
-    ]);
-
-    expect(result.written).toBe(2); // README + TODO only
-    const items = repo
-      .listActions({ projectId: project.id })
-      .filter((i) => i.status === "todo");
-    expect(items.some((i) => /fixture|seed-sha/i.test(i.title))).toBe(false);
-    expect(items.some((i) => /目标|范围|README/i.test(i.title))).toBe(true);
-    expect(items.some((i) => /待办|TODO/i.test(i.title))).toBe(true);
-
-    // Inject a legacy noise seed and ensure re-seed cancels it.
-    const noiseId = seedWorkItemId(project.id, ".fixture-seed-sha.txt");
-    const card = repo.listCards({ projectId: project.id })[0];
-    repo.addAction({
-      id: noiseId,
+    const project = repo.addProject({ name: "有任务", summary: "" });
+    const user = repo.addAction({
       projectId: project.id,
-      title: "审阅「.fixture-seed-sha.txt」",
-      description: "noise",
-      nextStep: "open",
+      title: "人手任务",
+      description: "keep",
+      nextStep: "go",
       status: "todo",
       assignee: "自己",
-      deadline: "待确认",
-      verificationCriteria: "x",
-      cardId: card?.id,
-      evidenceIds: card ? [card.id] : [],
+      deadline: "本周",
+      verificationCriteria: "ok",
+      evidenceIds: [],
     });
-    const cleaned = seedWorkItemsFromMaterials(project.id);
-    expect(cleaned.cancelledNoise).toBeGreaterThanOrEqual(1);
-    expect(repo.getAction(noiseId)?.status).toBe("cancelled");
+    seedWorkItemsFromMaterials(project.id);
+    expect(repo.getAction(user.id)?.title).toBe("人手任务");
   });
 });

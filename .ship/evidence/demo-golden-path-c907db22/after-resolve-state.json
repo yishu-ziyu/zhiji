@@ -1,0 +1,20 @@
+{
+  "hasCandidate": true,
+  "hasAccepted": false,
+  "head": {
+    "matterId": "matter-demo-reentry",
+    "reviewState": "current",
+    "reviewReasonEventIds": [],
+    "updatedAt": "2026-07-16T21:21:38.507Z"
+  },
+  "resolutions": [
+    {
+      "claimId": "claim:2209de01-b101-4307-a588-371bf579804e:why:0:ed0b95a36d846823",
+      "decision": "accept_edited"
+    },
+    {
+      "claimId": "claim:2209de01-b101-4307-a588-371bf579804e:why:1:f5d1ed42c77c1222",
+      "decision": "defer"
+    }
+  ]
+}

@@ -181,7 +181,7 @@ it("writes one candidate card for the Agent result without promoting project sta
     (event) =>
       event.type === "result" && event.actor === "agent:project-reviewer",
   )!;
-  const candidates = listCards({ projectId: "project-fc-opc-ibot" }).filter(
+  const candidates = listCards({ projectId: "project-zhiji" }).filter(
     (card) => card.identity === "candidate",
   );
 
@@ -189,13 +189,13 @@ it("writes one candidate card for the Agent result without promoting project sta
   expect(candidates[0]).toEqual(
     expect.objectContaining({
       identity: "candidate",
-      projectId: "project-fc-opc-ibot",
+      projectId: "project-zhiji",
       resultEventLocator: `event:${resultEvent.id}`,
       links: detail.item.evidenceIds,
     }),
   );
   expect(detail.item.status).toBe("doing");
-  expect(getLatestProjectCheckpoint("project-fc-opc-ibot")).toBeNull();
+  expect(getLatestProjectCheckpoint("project-zhiji")).toBeNull();
   expect(listRelations()).toEqual(relationsBefore);
   expect(
     detail.events.some(
@@ -240,7 +240,7 @@ it("derives the actor on every public work mutation", async () => {
       body: JSON.stringify({
         assignee: "新的负责人",
         actor: "agent:forged",
-        projectId: "project-fc-opc-ibot",
+        projectId: "project-zhiji",
       }),
     }),
     { params: Promise.resolve({ id: "ka-seed-1" }) },
@@ -249,13 +249,13 @@ it("derives the actor on every public work mutation", async () => {
 
   const linkResponse = await linkEvidencePost(
     new NextRequest(
-      "http://test/api/knowledge/work-items/ka-seed-1/evidence?projectId=project-fc-opc-ibot",
+      "http://test/api/knowledge/work-items/ka-seed-1/evidence?projectId=project-zhiji",
       {
         method: "POST",
         body: JSON.stringify({
           cardId: "kc-seed-4",
           actor: "agent:forged",
-          projectId: "project-fc-opc-ibot",
+          projectId: "project-zhiji",
         }),
       },
     ),
@@ -298,7 +298,7 @@ it("derives public relation, checkpoint, and search provenance on the server", a
       method: "POST",
       body: JSON.stringify({
         query: "检索",
-        filters: { projectId: "project-fc-opc-ibot" },
+        filters: { projectId: "project-zhiji" },
         actor: "agent:forged",
       }),
     }),
@@ -319,7 +319,7 @@ it("records why an Agent cannot start when the work item has no evidence", async
       body: JSON.stringify({
         title: "缺少依据",
         nextStep: "开始分析",
-        projectId: "project-fc-opc-ibot",
+        projectId: "project-zhiji",
       }),
     }),
   );

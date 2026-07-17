@@ -4,6 +4,7 @@ import {
   FIRST_USE_PROGRESS_LABELS,
   FIRST_USE_PROGRESS_STEPS,
   ONBOARDING_FORBIDDEN_FIELD_LABELS,
+  agentSessionNeedsHydration,
   connectPayloadForContinue,
   connectPayloadForNewSelection,
   extractUnderstandingLead,
@@ -24,6 +25,10 @@ import path from "node:path";
 // Product merge: business entry lives on the knowledge workbench, not /mvp.
 const pageSource = fs.readFileSync(
   path.join(process.cwd(), "app/track/knowledge/components/LocalFolderEntry.tsx"),
+  "utf8",
+);
+const agentChatSource = fs.readFileSync(
+  path.join(process.cwd(), "app/track/knowledge/components/AgentChatPanel.tsx"),
   "utf8",
 );
 
@@ -88,6 +93,27 @@ describe("D-50 onboarding folder choice contract", () => {
     expect(pageSource).toContain("DEFAULT_PERMISSION_COPY");
     expect(pageSource).toContain("folder-selection-review");
     expect(pageSource).toContain("recent-connection");
+  });
+
+  it("restores a persisted folder grant when a project opens", () => {
+    expect(agentSessionNeedsHydration("project-1", null)).toBe(true);
+    expect(
+      agentSessionNeedsHydration("project-1", {
+        projectId: "project-1",
+        matterId: "matter-1",
+      }),
+    ).toBe(false);
+    expect(
+      agentSessionNeedsHydration("project-2", {
+        projectId: "project-1",
+        matterId: "matter-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("gives an ungranted project a direct authorization action", () => {
+    expect(agentChatSource).toContain("选择并授权文件夹");
+    expect(agentChatSource).toContain('data-testid="agent-chat-authorize"');
   });
 
   it("fixture api: picker selection → connect; cancel path leaves no invent rootPath", async () => {

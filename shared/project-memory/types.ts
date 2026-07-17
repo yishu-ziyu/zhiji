@@ -413,8 +413,18 @@ export const DEFAULT_AGENT_RUN_BUDGET = {
 } as const satisfies AgentRunBudget;
 
 export type AgentRunReceipt = {
-  provider: "stepfun";
+  /** Active connector provider id (e.g. px_proxy, minimax_token_plan). */
+  provider: string;
+  /** proxy | official | legacy */
+  connectionKind?: string;
+  /** Wire protocol used for this run. */
+  protocol?: string;
+  /** Model id actually requested (alias as requested, never guessed). */
   model: string;
+  requestedModel?: string;
+  /** Hostname only of base URL (no path/query/secrets). */
+  baseHost?: string;
+  profileFingerprint?: string;
   effort: "high";
   calls: number;
   fallback:

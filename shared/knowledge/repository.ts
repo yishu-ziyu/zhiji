@@ -649,7 +649,7 @@ function workingProjects(): Map<string, Project> {
     const now = new Date().toISOString();
     projects.set(DEFAULT_PROJECT_ID, {
       id: DEFAULT_PROJECT_ID,
-      name: "【示例】fc-opc-ibot",
+      name: "【示例】zhiji",
       summary: "示例数据（SEED_DEMO=1），不是用户自建工作局面",
       status: "active",
       createdAt: now,

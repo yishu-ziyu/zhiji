@@ -67,7 +67,7 @@ it("A3=甲 then A1/A2/A4: create named project, attach file to that id, reload s
     project: { id: string; name: string };
   };
   expect(project.name).toBe("首用户项目");
-  expect(project.id).not.toBe("project-fc-opc-ibot");
+  expect(project.id).not.toBe("project-zhiji");
 
   const upload = await materialsPost(
     new NextRequest(
@@ -129,7 +129,7 @@ it("A3=甲 then A1/A2/A4: create named project, attach file to that id, reload s
   ).toBe(true);
 
   // B1: empty env still has no default seed project masquerading as user work.
-  expect(listProjects().every((p) => p.id !== "project-fc-opc-ibot" || p.name.includes("示例"))).toBe(
+  expect(listProjects().every((p) => p.id !== "project-zhiji" || p.name.includes("示例"))).toBe(
     true,
   );
   expect(listProjects()).toHaveLength(1);

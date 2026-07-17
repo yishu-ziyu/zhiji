@@ -183,4 +183,123 @@ describe("resolveClaimDecision (per-claim truth)", () => {
       "保留甲",
     ]);
   });
+
+  it("defer persists but does not finalize Accepted", async () => {
+    const candidate: UnderstandingRevision = {
+      id: "cand-defer",
+      projectId: "p1",
+      matterId: "m1",
+      kind: "candidate",
+      body: body([
+        { text: "命题甲", status: "unknown", evidence: [] },
+        { text: "命题乙", status: "unknown", evidence: [] },
+      ]),
+      basedOnEventIds: [],
+      proposedBy: "agent",
+      createdAt: NOW,
+    };
+    const reader: ProjectMemoryReader = {
+      async readRevision() {
+        return null;
+      },
+      async listEvents() {
+        return [];
+      },
+      async getMatterState() {
+        return {
+          matter: {
+            id: "m1",
+            projectId: "p1",
+            title: "m",
+            goal: "g",
+            status: "active",
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+          head: {
+            matterId: "m1",
+            reviewState: "review_needed",
+            reviewReasonEventIds: [],
+            updatedAt: NOW,
+          },
+          candidate,
+          recentEvents: [],
+        };
+      },
+    };
+    const rows = new Map<string, import("./types").PersistedClaimResolution>();
+    const decisionStore: ClaimDecisionStore = {
+      saveClaimResolutionRecord(row) {
+        rows.set(row.claimId, row);
+        return row;
+      },
+      listClaimResolutionRecords() {
+        return [...rows.values()];
+      },
+      linkClaimResolutionRecords() {},
+    };
+    const writer: OwnerDecisionWriter = {
+      async resolveCandidate(input) {
+        return {
+          resolution: input,
+          accepted: undefined,
+          head: {
+            matterId: "m1",
+            reviewState: "current",
+            reviewReasonEventIds: [],
+            updatedAt: input.createdAt,
+          },
+        };
+      },
+    };
+    const claims = hydrateClaimsFromCandidateBody({
+      projectId: "p1",
+      matterId: "m1",
+      candidateRevisionId: "cand-defer",
+      body: candidate.body,
+      revisionTexts: {},
+      now: NOW,
+    });
+
+    const deferred = await resolveClaimDecision({
+      projectId: "p1",
+      matterId: "m1",
+      candidateRevisionId: "cand-defer",
+      claimId: claims[0]!.id,
+      decision: "defer",
+      reader,
+      writer,
+      decisionStore,
+    });
+    expect(deferred.finalized).toBe(false);
+    expect(deferred.remaining).toBe(2); // defer does not finalize either claim for Accepted
+    expect(deferred.audit.decision).toBe("defer");
+    expect(rows.get(claims[0]!.id)?.decision).toBe("defer");
+
+    // accept both finalizing → then can finalize
+    await resolveClaimDecision({
+      projectId: "p1",
+      matterId: "m1",
+      candidateRevisionId: "cand-defer",
+      claimId: claims[0]!.id,
+      decision: "accept",
+      reader,
+      writer,
+      decisionStore,
+    });
+    const last = await resolveClaimDecision({
+      projectId: "p1",
+      matterId: "m1",
+      candidateRevisionId: "cand-defer",
+      claimId: claims[1]!.id,
+      decision: "accept_edited",
+      editedText: "改写后的命题乙",
+      reader,
+      writer,
+      decisionStore,
+    });
+    expect(last.finalized).toBe(true);
+    expect(last.audit.decision).toBe("accept_edited");
+    expect(last.audit.editedText).toBe("改写后的命题乙");
+  });
 });

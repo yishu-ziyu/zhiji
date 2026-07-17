@@ -125,4 +125,25 @@ describe("ProjectAgentRuntime multi-step tools", () => {
     const state = await store.getMatterState(projectId, matterId);
     expect(state.candidate).toBeTruthy();
   });
+
+  it("owner question produces a durable decision-view receipt for the canvas", async () => {
+    const runtime = createProjectAgentRuntime({
+      modelMode: "deterministic",
+      toolsEnabled: true,
+    });
+    const run = await runtime.start({
+      projectId,
+      matterId,
+      trigger: "owner_question",
+      ownerUtterance: "现在卡点在哪？只看我需要决定的路径。",
+    });
+
+    const view = await runtime.get(projectId, run.id);
+    const canvasReceipt = view?.toolReceipts.find(
+      (receipt) => receipt.tool === "set_canvas_view",
+    );
+    expect(canvasReceipt?.summary).toContain("画布已切换为「decision」");
+    expect(canvasReceipt?.summary).toContain('"view":"decision"');
+    expect(canvasReceipt?.summary).toContain(`"id":"${projectId}"`);
+  });
 });

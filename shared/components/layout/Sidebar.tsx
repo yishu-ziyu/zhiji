@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
+import Image from "next/image";
 import { BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,10 +19,21 @@ export function Sidebar() {
           onClick={goHome}
           className="text-left transition-opacity hover:opacity-80"
         >
-          <div className="font-hand text-[28px] leading-none text-foreground">
-            FC-OPC
+          <div className="flex items-center gap-3">
+            <Image
+              src="/brand/zhiji-mark.png"
+              alt="知几"
+              width={38}
+              height={38}
+              className="rounded-xl"
+            />
+            <div>
+              <div className="font-hand text-[28px] leading-none text-foreground">
+                知几
+              </div>
+              <div className="mono-label mt-1">Project Intelligence</div>
+            </div>
           </div>
-          <div className="mono-label mt-2">Knowledge work</div>
         </button>
       </div>
       <nav className="flex-1 px-3 py-4 overflow-y-auto">

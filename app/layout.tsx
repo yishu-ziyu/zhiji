@@ -11,8 +11,12 @@ import "./globals.css";
 const fontVariableClass = "font-desktop-shell";
 
 export const metadata: Metadata = {
-  title: "项目理解",
-  description: "授权本地文件夹，重建当前理解",
+  title: "知几 · 项目情报 Agent",
+  description: "在授权边界内持续理解项目变化，帮助你完成下一步决定",
+  icons: {
+    icon: "/brand/zhiji-mark.png",
+    apple: "/brand/zhiji-mark.png",
+  },
 };
 
 export default function RootLayout({

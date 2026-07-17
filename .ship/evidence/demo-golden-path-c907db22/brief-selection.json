@@ -1,0 +1,41 @@
+{
+  "status": "candidate",
+  "brief": {
+    "matterId": "matter-demo-reentry",
+    "currentJudgment": "FC-OPC iBot（比赛版 demo）是一个本地运行、基于证据的「项目情报 Agent」。Owner 重新进入已授权项目时，Agent 真读授权文件夹，产出最小项目情报简报，并帮助完成下一步决定。入口唯一 `/track/knowledge`。",
+    "whyNow": "新增 DESKTOP_ENV_SETUP.md",
+    "claimIds": [
+      "why:0",
+      "why:1",
+      "why:2",
+      "why:3",
+      "why:4"
+    ],
+    "contraryOrLimits": [],
+    "unknowns": [
+      "暂无可用的原文依据",
+      "比赛版只证明一件事：Owner 重入复杂项目时，Agent 在授权范围内恢复态势、给出有证据判断、帮助下一步决定",
+      "必须坚持「真读、真依据、真状态、真确认、真恢复」；任何失败不得伪装成功",
+      "产品不打包密钥，每个使用者自己配 BYOK；只读白名单字段",
+      "画布形态：左多项目 · 中关系画布 · 右摘要/动态 · 底时间线（Dagre 层次布局）"
+    ],
+    "decisionPrompt": "把「右栏 Agent 过程与理解」主线跑通：实现真实授权文件夹读取 → Tool Receipt 驱动右栏 → 失败态如实展示 → Claim 四态确认闭环。建议先把这一条最小闭环做完再考虑多 Agent / 抛光。",
+    "suggestion": {
+      "text": "把「右栏 Agent 过程与理解」主线跑通：实现真实授权文件夹读取 → Tool Receipt 驱动右栏 → 失败态如实展示 → Claim 四态确认闭环。建议先把这一条最小闭环做完再考虑多 Agent / 抛光。",
+      "status": "suggestion"
+    },
+    "sourceRevisionIds": [
+      "orev:98e6e535189e9add51d90e0480a2bb99bcf5927216d75d9c3a0c5b643c6986c3",
+      "orev:9a9538b25050d8690559ebfc36613d116c910775dd439fc28bdf0a4410616206",
+      "orev:8d97c7c0412b4b9191f8e57ecb1b8306f58f73e21ebd0a7c3090f33d7fbbae7d",
+      "orev:ab46db9eecbb85b26cd342dce5b1b228100797e6220dee96f8c7f0098cabe3ad",
+      "orev:df3fdf504dc2d1385e16fa98279940f1cad461aba1ebb2741b2805047a645c4a",
+      "orev:c3c3b55b23021d7d2d747e69b0503e830fe26fc98013ba6edf91caf2b4beef24",
+      "orev:7b9aff6e96441edeea0b34b61a3423a69b4dd639a97f013d58f1a89e75c92c8e"
+    ],
+    "generatedFromRunId": "c907db22-7755-4744-9467-fc6a8a409ea8",
+    "kind": "candidate",
+    "groundedInTools": true
+  },
+  "insufficient": null
+}

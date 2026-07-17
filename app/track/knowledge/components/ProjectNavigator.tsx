@@ -16,7 +16,6 @@ import {
   Plus,
   Search,
   Sparkles,
-  Star,
   Target,
   X,
 } from "lucide-react";
@@ -57,7 +56,7 @@ type Props = {
   onFocusAttention: () => void;
   /** Product AI Copilot — true folder-reading Agent presence. */
   onOpenAgentCopilot: () => void;
-  onCreateWork: () => void;
+  onCreateProject: () => void;
   onOpenMaterials: () => void;
   onFocus: (ref: CanvasNodeRef) => void;
   /** Lifted so workspace grid can widen the canvas. */
@@ -88,7 +87,7 @@ export function ProjectNavigator({
   onOpenSearch,
   onFocusAttention,
   onOpenAgentCopilot,
-  onCreateWork,
+  onCreateProject,
   onOpenMaterials,
   onFocus,
   collapsed,
@@ -214,9 +213,9 @@ export function ProjectNavigator({
         <button
           type="button"
           className={styles.navIconButton}
-          aria-label="新增工作项"
-          title="新增工作项"
-          onClick={onCreateWork}
+          aria-label="新增项目"
+          title="新增项目"
+          onClick={onCreateProject}
         >
           <Plus size={17} />
         </button>
@@ -390,12 +389,12 @@ export function ProjectNavigator({
       >
         <Search size={16} />
         <span>搜索本项目</span>
-        <kbd>⌘K</kbd>
+        <kbd>⌘F</kbd>
       </button>
 
       <div className={styles.sidebarSectionTitle}>
         <span>项目{projects.length > 0 ? ` · ${projects.length}` : ""}</span>
-        <button type="button" aria-label="新增工作项" onClick={onCreateWork}>
+        <button type="button" aria-label="新增项目" onClick={onCreateProject}>
           <Plus size={16} />
         </button>
       </div>
@@ -487,14 +486,6 @@ export function ProjectNavigator({
           <Clock3 size={17} />
           <span>知识使用记录</span>
           <b>{litCount}</b>
-        </button>
-        <button type="button" disabled title="尚未实现">
-          <Star size={17} />
-          <span>收藏</span>
-        </button>
-        <button type="button" disabled title="尚未实现">
-          <Layers3 size={17} />
-          <span>模板</span>
         </button>
       </nav>
 

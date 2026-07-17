@@ -221,7 +221,7 @@ test("a user can execute work, record progress, add materials, and create a rela
   await expect(page.getByText("材料关系已建立")).toBeVisible();
   await expect(page.getByTestId("project-canvas")).toContainText("支持");
 
-  const cardsResponse = await request.get("/api/knowledge/add?projectId=project-fc-opc-ibot");
+  const cardsResponse = await request.get("/api/knowledge/add?projectId=project-zhiji");
   const cardsData = await cardsResponse.json() as { cards: Array<{ id: string; title?: string }> };
   const cardA = cardsData.cards.find((card) => card.title === "e2e 关系材料甲")!;
   const cardB = cardsData.cards.find((card) => card.title === "e2e 关系材料乙")!;
@@ -260,8 +260,8 @@ test("project history navigation reloads the matching project evidence", async (
   });
   await page.getByLabel("搜索内容").fill("隔离依据");
   await page.getByRole("button", { name: "搜索当前项目" }).click();
-  await page.getByRole("button", { name: "fc-opc-ibot" }).click();
-  await expect(page).toHaveURL(/project-fc-opc-ibot/);
+  await page.getByRole("button", { name: "zhiji" }).click();
+  await expect(page).toHaveURL(/project-zhiji/);
   await page.waitForTimeout(600);
   await expect(page.locator('[class*="searchResults"]')).toHaveCount(0);
   await page.unroute("**/api/knowledge/search");
@@ -278,10 +278,10 @@ test("project history navigation reloads the matching project evidence", async (
     .getByTestId("project-canvas")
     .getByRole("button", { name: /只属于历史项目/ })
     .click();
-  await page.getByRole("button", { name: "fc-opc-ibot" }).click();
+  await page.getByRole("button", { name: "zhiji" }).click();
   await page.waitForTimeout(600);
-  await expect(page.getByTestId("project-inspector")).toContainText("fc-opc-ibot");
-  await expect(page).toHaveURL(/project-fc-opc-ibot/);
+  await expect(page.getByTestId("project-inspector")).toContainText("zhiji");
+  await expect(page).toHaveURL(/project-zhiji/);
   await page.unroute("**/api/knowledge/footprint");
 
   await page.goBack();

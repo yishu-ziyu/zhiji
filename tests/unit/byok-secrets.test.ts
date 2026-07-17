@@ -7,7 +7,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   applyByokToProcessEnv,
-  buildByokEnvFileBody,
   getByokStatus,
   parseByokEnvFile,
   resolveByokEnvFilePath,
@@ -110,36 +109,62 @@ describe("getByokStatus", () => {
   });
 });
 
-describe("buildByokEnvFileBody / saveByokSecrets", () => {
+describe("saveByokSecrets", () => {
   it("rejects incomplete input", () => {
+    const root = tmpDir();
+    const knowledge = path.join(root, "knowledge");
+    fs.mkdirSync(knowledge, { recursive: true });
+    const env: Record<string, string | undefined> = {
+      KNOWLEDGE_DATA_DIR: knowledge,
+    };
     expect(() =>
-      buildByokEnvFileBody({
-        llmBaseUrl: "",
-        llmApiKey: "k",
-        llmModel: "m",
-      }),
+      saveByokSecrets(
+        {
+          llmBaseUrl: "",
+          llmApiKey: "k",
+          llmModel: "m",
+        },
+        { processEnv: env },
+      ),
     ).toThrow(/网关|BASE_URL/i);
     expect(() =>
-      buildByokEnvFileBody({
-        llmBaseUrl: "https://x",
-        llmApiKey: "",
-        llmModel: "m",
-      }),
+      saveByokSecrets(
+        {
+          llmBaseUrl: "https://x",
+          llmApiKey: "",
+          llmModel: "m",
+        },
+        { processEnv: env },
+      ),
     ).toThrow(/密钥|API_KEY/i);
   });
 
   it("keeps existing api key when new input leaves it blank", () => {
-    const body = buildByokEnvFileBody(
+    const root = tmpDir();
+    const knowledge = path.join(root, "knowledge");
+    fs.mkdirSync(knowledge, { recursive: true });
+    const env: Record<string, string | undefined> = {
+      KNOWLEDGE_DATA_DIR: knowledge,
+    };
+    saveByokSecrets(
+      {
+        llmBaseUrl: "https://old.example/v1",
+        llmApiKey: "existing-key",
+        llmModel: "old",
+      },
+      { processEnv: env },
+    );
+    saveByokSecrets(
       {
         llmBaseUrl: "https://new.example/v1",
         llmApiKey: "",
         llmModel: "new-model",
       },
-      { LLM_API_KEY: "existing-key", LLM_MODEL: "old" },
+      { processEnv: env },
     );
-    expect(body).toContain("LLM_API_KEY=existing-key");
-    expect(body).toContain("LLM_BASE_URL=https://new.example/v1");
-    expect(body).toContain("LLM_MODEL=new-model");
+    expect(env.LLM_API_KEY).toBe("existing-key");
+    expect(env.LLM_BASE_URL).toBe("https://new.example/v1");
+    expect(env.LLM_MODEL).toBe("new-model");
   });
 
   it("writes 0600 file and applies process env without restart", () => {
@@ -164,7 +189,7 @@ describe("buildByokEnvFileBody / saveByokSecrets", () => {
 
     const written = fs.readFileSync(path.join(root, ".env.local"), "utf8");
     expect(written).toContain("LLM_API_KEY=user-typed-key");
-    expect(written).toMatch(/Bring Your Own Key|BYOK/i);
+    expect(written).toMatch(/BYOK/i);
 
     applyByokToProcessEnv(
       { LLM_API_KEY: "reapplied" },

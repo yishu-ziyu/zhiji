@@ -37,6 +37,12 @@ import {
   type AgentSession,
 } from "./AgentPresenceRail";
 import type { UnderstandingBody } from "../lib/folder-connection-api";
+import type {
+  Claim,
+  ClaimEvidenceLink,
+  OwnerResolution,
+  PreciseEvidenceAnchor,
+} from "@/shared/project-memory/claims/types";
 import styles from "../project-canvas.module.css";
 
 type InspectorTab = "overview" | "context" | "tasks" | "activity";
@@ -83,8 +89,20 @@ type Props = {
   onRerunAgent?: () => Promise<void>;
   /** Right-rail chat → dual memory + model loop. */
   onAgentChatSend?: (text: string) => Promise<void>;
+  /** Opens native folder authorization when this project has no grant. */
+  onAuthorizeFolder?: () => void;
   /** Bump to focus the always-visible chat (topbar AI Copilot). */
   agentChatFocusKey?: number;
+  /** Claim HITL for project intelligence brief (read model + resolutions). */
+  reviewClaims?: Claim[];
+  claimAnchors?: PreciseEvidenceAnchor[];
+  claimLinks?: ClaimEvidenceLink[];
+  claimResolutions?: OwnerResolution[];
+  onResolveClaim?: (
+    claim: Claim,
+    decision: "accept" | "accept_edited" | "reject" | "defer",
+    editedText?: string,
+  ) => void | Promise<void | OwnerResolution>;
 };
 
 const tabLabels: Array<{ id: InspectorTab; label: string }> = [
@@ -131,10 +149,15 @@ export function ProjectInspector({
   onResolveUnderstanding,
   onRerunAgent,
   onAgentChatSend,
+  onAuthorizeFolder,
   agentChatFocusKey = 0,
+  reviewClaims = [],
+  claimAnchors = [],
+  claimLinks = [],
+  claimResolutions = [],
+  onResolveClaim,
 }: Props) {
   const [tab, setTab] = useState<InspectorTab>("overview");
-
   // E7: when project has Agent activity, open 动态 so process + feed are visible.
   useEffect(() => {
     if (!snapshot) return;
@@ -340,8 +363,22 @@ export function ProjectInspector({
                 : undefined
             }
             onChatSend={onAgentChatSend}
+            onAuthorizeFolder={onAuthorizeFolder}
             busy={busy}
             chatFocusKey={agentChatFocusKey}
+            claims={
+              agentSession && agentSession.projectId === snapshot.project.id
+                ? reviewClaims
+                : []
+            }
+            claimAnchors={claimAnchors}
+            claimLinks={claimLinks}
+            claimResolutions={claimResolutions}
+            onResolveClaim={
+              agentSession && agentSession.projectId === snapshot.project.id
+                ? onResolveClaim
+                : undefined
+            }
           />
         ) : null}
         {tab === "overview" ? (

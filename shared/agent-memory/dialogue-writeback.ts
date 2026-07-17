@@ -1,32 +1,26 @@
 /**
  * Mirror meaningful dialogue milestones into knowledge work events (feed).
  * Does not touch Project Memory understanding heads.
+ *
+ * Competition contract: never auto-create formal Work Items (todo).
+ * Only appends events when an existing open work item is already present.
  */
-import { createHash } from "node:crypto";
 import {
-  addAction,
   addWorkEvent,
-  getAction,
   getProject,
+  listActions,
 } from "@/shared/knowledge/repository";
 import type { DialogueMessage } from "./types";
 
 export type DialogueWritebackResult = {
   workItemId: string;
   eventId: string;
+  createdWorkItem: false;
 };
 
-function dialogueWorkItemId(projectId: string): string {
-  const digest = createHash("sha256")
-    .update(`agent-dialogue\0${projectId}`)
-    .digest("hex")
-    .slice(0, 20);
-  return `agent-d-${digest}`;
-}
-
 /**
- * Write an agent milestone message into the knowledge feed.
- * No-op when project missing or message is not an agent milestone.
+ * Write an agent milestone message into an *existing* knowledge work item feed.
+ * Returns null when no suitable work item exists (does not create todos).
  */
 export function writeDialogueMilestoneToKnowledge(
   message: DialogueMessage,
@@ -36,34 +30,16 @@ export function writeDialogueMilestoneToKnowledge(
   const projectId = message.projectId?.trim();
   if (!projectId || !getProject(projectId)) return null;
 
-  const workItemId = dialogueWorkItemId(projectId);
   const body = message.content.trim().slice(0, 800);
   if (!body) return null;
 
-  if (!getAction(workItemId)) {
-    try {
-      addAction({
-        id: workItemId,
-        projectId,
-        title: "与 Agent 的对话纪要",
-        description: body.slice(0, 400),
-        nextStep: "继续在工作台对话或确认项目理解",
-        status: "todo",
-        assignee: "自己",
-        deadline: "进行中",
-        verificationCriteria: "对话要点出现在右侧 Agent 动态",
-        evidenceIds: [],
-      });
-    } catch {
-      // Only the fixed dialogue work item may receive feed events.
-      return null;
-    }
-  }
+  // Prefer any existing open work item — never addAction.
+  const open = listActions({ projectId }).find(
+    (a) => a.status !== "done" && a.status !== "cancelled",
+  );
+  if (!open) return null;
 
-  const target = getAction(workItemId);
-  if (!target || target.projectId !== projectId) return null;
-
-  const event = addWorkEvent(workItemId, {
+  const event = addWorkEvent(open.id, {
     type: "result",
     actor: "agent:dialogue",
     body,
@@ -71,8 +47,9 @@ export function writeDialogueMilestoneToKnowledge(
       dialogueMessageId: message.id,
       sessionId: message.sessionId,
       analysisRunId: message.analysisRunId,
+      suggestionOnly: true,
     },
   });
 
-  return { workItemId, eventId: event.id };
+  return { workItemId: open.id, eventId: event.id, createdWorkItem: false };
 }

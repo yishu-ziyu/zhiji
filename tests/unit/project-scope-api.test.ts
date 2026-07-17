@@ -135,7 +135,7 @@ function expectMissingProjectScope(status: number, body: unknown) {
   expect(status).toBe(400);
   const text = JSON.stringify(body);
   expect(text).toMatch(/projectId|项目|scope|范围/i);
-  expect(text).not.toMatch(/project-fc-opc-ibot/);
+  expect(text).not.toMatch(/project-zhiji/);
 }
 
 describe("T-19 project scope RED gates", () => {

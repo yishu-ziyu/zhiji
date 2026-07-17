@@ -1,17 +1,16 @@
 /**
- * Policy A: after folder authorize / materialize, seed draft work items
- * onto the knowledge canvas immediately (no Owner confirm gate).
+ * Material → work item seeding.
  *
- * Deterministic only — model loop can later replace/supplement the same schema.
+ * Competition contract (2026-07-17): do NOT auto-create formal Work Items
+ * (status=todo) on authorize or Agent run. Suggestions stay in Brief until
+ * Owner explicitly adopts. Existing user tasks are never deleted.
+ *
+ * This function remains for noise cleanup of historical seed-* todos only.
  */
-import type { ActionItem, KnowledgeCard } from "@/shared/types/knowledge";
-import { renumberOpenWorkTitles } from "@/shared/knowledge/agent-task-cards";
+import type { KnowledgeCard } from "@/shared/types/knowledge";
 import {
-  addAction,
-  getAction,
   getCard,
   listActions,
-  listCards,
   updateActionStatus,
 } from "@/shared/knowledge/repository";
 import { createHash } from "node:crypto";
@@ -208,8 +207,8 @@ function cancelNoiseSeedDrafts(projectId: string): number {
 }
 
 /**
- * Create draft work items from project material citation cards.
- * Idempotent by stable seed ids. Does not require Owner confirm (policy A).
+ * No longer auto-creates formal todos from materials (competition contract).
+ * Still cancels historical noise seed-* drafts; never deletes user tasks.
  */
 export function seedWorkItemsFromMaterials(
   projectId: string,
@@ -226,98 +225,17 @@ export function seedWorkItemsFromMaterials(
 
   const cancelledNoise = cancelNoiseSeedDrafts(projectId);
 
-  const cards = listCards({ projectId }).filter(isSeedableCard);
-  if (cards.length === 0) {
-    return {
-      created: 0,
-      skippedExisting: 0,
-      cancelledNoise,
-      itemIds: [],
-      emptyReason: "还没有可当作依据的材料，无法提出在跟的事",
-    };
-  }
-
-  const ranked = [...cards].sort(
-    (a, b) =>
-      rankMaterialCard(a) - rankMaterialCard(b) ||
-      b.timestamp.localeCompare(a.timestamp),
-  );
-
-  // Prefer distinct roles (readme/todo/notes/decisions) before generic md.
-  const picked: KnowledgeCard[] = [];
-  const seenRole = new Set<number>();
-  for (const card of ranked) {
-    if (picked.length >= MAX_SEED_ITEMS) break;
-    const role = rankMaterialCard(card);
-    if (role <= 3) {
-      if (seenRole.has(role)) continue;
-      seenRole.add(role);
-      picked.push(card);
-      continue;
-    }
-    // Generic md only after roles; already filtered by isSeedableCard.
-    picked.push(card);
-  }
-
-  let created = 0;
-  let skippedExisting = 0;
-  const itemIds: string[] = [];
-
-  for (const card of picked) {
-    const draft = draftForCard(projectId, card);
-    if (getAction(draft.id)) {
-      skippedExisting += 1;
-      itemIds.push(draft.id);
-      continue;
-    }
-    try {
-      const item = addAction({
-        id: draft.id,
-        projectId,
-        title: draft.title,
-        description: draft.description,
-        nextStep: draft.nextStep,
-        evidenceIds: draft.evidenceIds,
-        cardId: draft.cardId,
-        status: "todo",
-        assignee: "自己",
-        deadline: "待确认",
-        verificationCriteria: "打开依据材料后，能说出是否仍要推进",
-      });
-      created += 1;
-      itemIds.push(item.id);
-    } catch {
-      // Card/project race: skip rather than fail authorize.
-    }
-  }
-
-  // Canvasight-style 01/02 titles on all open work items.
-  if (created > 0 || skippedExisting > 0) {
-    try {
-      renumberOpenWorkTitles(projectId);
-    } catch {
-      /* renumber is best-effort */
-    }
-  }
-
-  // If project already has non-seed open work, still ok — seeds fill gaps only.
-  const openCount = listActions({ projectId }).filter(
-    (item: ActionItem) =>
-      item.status !== "done" && item.status !== "cancelled",
-  ).length;
+  // Count existing seed items for observability only — do not create new ones.
+  const existingSeedIds = listActions({ projectId })
+    .filter((item) => item.id.startsWith("seed-"))
+    .map((item) => item.id);
 
   return {
-    created,
-    skippedExisting,
+    created: 0,
+    skippedExisting: existingSeedIds.length,
     cancelledNoise,
-    itemIds,
+    itemIds: existingSeedIds,
     emptyReason:
-      created === 0 && skippedExisting === 0
-        ? "未能从材料提出在跟的事"
-        : created === 0 && openCount > 0
-          ? null
-          : created === 0
-            ? "在跟的事已存在或无法新建"
-            : null,
+      "材料不会自动变成正式任务；Agent 建议仅出现在项目情报简报中，需你明确采用后才创建任务",
   };
 }

@@ -1,4 +1,4 @@
-# AGENTS — fc-opc-ibot
+# AGENTS — zhiji
 
 Rules for agents in this repo.
 User-facing chat: Chinese by default. Durable rules in this file: English OK.
