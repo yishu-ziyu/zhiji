@@ -7,12 +7,20 @@
 ## 跑
 
 ```bash
-# 单独
+# 场景全绿
 npm run test:bench
 
-# 或
-npx vitest run tests/bench/project-intelligence/
+# Metric 闭环：测量 → 与基线比较
+npm run metrics:measure
+npm run metrics:compare
+
+# 确认进步后才更新基线（入仓）
+npm run metrics:baseline
 ```
+
+指标定义见 `docs/product/PROJECT_INTELLIGENCE_METRICS.md`。
+
+逻辑链：明确目标 → 定义指标 → 测量 → 比较版本 → 调整 → 再测。
 
 ## 范围（当前 v0.1.0）
 

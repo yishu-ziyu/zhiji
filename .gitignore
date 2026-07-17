@@ -51,6 +51,9 @@ data/skills/
 data/**/*.sqlite
 data/**/*.db
 
+# --- bench metric reports (keep baselines committed; reports local) ---
+tests/bench/project-intelligence/reports/
+
 # --- ship orchestration noise (keep fixtures + slim evidence only) ---
 .ship/config.yaml
 .ship/pm-state.yaml

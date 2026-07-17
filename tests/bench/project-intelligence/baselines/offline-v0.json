@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "name": "project-intelligence-metrics",
+  "suite": "offline-v0",
+  "ranAt": "2026-07-17T16:27:10.057Z",
+  "git": {
+    "commit": "71a91054f247f23aaf25d5fc5cc690cc690d0726",
+    "dirty": true
+  },
+  "goals": {
+    "product": "授权夹内用可审计轨迹给出可点开证据与一个拍板问题；做不到就明确失败",
+    "engineering": "输出契约、检索意图、诚实拒答、噪声/安全边界在固定题集上可重复测量"
+  },
+  "metrics": [
+    {
+      "id": "overall_pass_rate",
+      "name": "全量场景通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 54,
+      "denominator": 54
+    },
+    {
+      "id": "structure_pass_rate",
+      "name": "结构契约通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 13,
+      "denominator": 13
+    },
+    {
+      "id": "search_intent_pass_rate",
+      "name": "检索意图通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 23,
+      "denominator": 23
+    },
+    {
+      "id": "honesty_pass_rate",
+      "name": "诚实/安全通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 6,
+      "denominator": 6
+    },
+    {
+      "id": "noise_pass_rate",
+      "name": "噪声不升格通过率",
+      "value": 1,
+      "threshold": 1,
+      "pass": true,
+      "numerator": 3,
+      "denominator": 3
+    }
+  ],
+  "diagnostics": [
+    {
+      "kind": "body_has_now",
+      "numerator": 5,
+      "denominator": 5,
+      "value": 1
+    },
+    {
+      "kind": "body_next_decision_single",
+      "numerator": 6,
+      "denominator": 6,
+      "value": 1
+    },
+    {
+      "kind": "body_why_max",
+      "numerator": 2,
+      "denominator": 2,
+      "value": 1
+    },
+    {
+      "kind": "dialogue_candidate_footer",
+      "numerator": 14,
+      "denominator": 14,
+      "value": 1
+    },
+    {
+      "kind": "dialogue_evidence_path",
+      "numerator": 9,
+      "denominator": 9,
+      "value": 1
+    },
+    {
+      "kind": "dialogue_has_section",
+      "numerator": 23,
+      "denominator": 23,
+      "value": 1
+    },
+    {
+      "kind": "dialogue_no_fake_path",
+      "numerator": 9,
+      "denominator": 9,
+      "value": 1
+    },
+    {
+      "kind": "format_roundtrip_structured",
+      "numerator": 26,
+      "denominator": 26,
+      "value": 1
+    },
+    {
+      "kind": "search_queries_contain",
+      "numerator": 32,
+      "denominator": 32,
+      "value": 1
+    }
+  ],
+  "bench": {
+    "total": 54,
+    "passed": 54,
+    "failed": 0,
+    "byFamily": {
+      "structure": {
+        "total": 13,
+        "passed": 13
+      },
+      "search": {
+        "total": 20,
+        "passed": 20
+      },
+      "decision": {
+        "total": 3,
+        "passed": 3
+      },
+      "reentry": {
+        "total": 3,
+        "passed": 3
+      },
+      "conflict": {
+        "total": 3,
+        "passed": 3
+      },
+      "refuse": {
+        "total": 3,
+        "passed": 3
+      },
+      "noise": {
+        "total": 3,
+        "passed": 3
+      },
+      "quick": {
+        "total": 3,
+        "passed": 3
+      },
+      "safety": {
+        "total": 3,
+        "passed": 3
+      }
+    }
+  },
+  "failedScenarioIds": []
+}

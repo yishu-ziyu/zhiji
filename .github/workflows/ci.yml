@@ -33,6 +33,10 @@ jobs:
         run: npm run test:security
       - name: Project Intelligence Bench
         run: npm run test:bench
+      - name: Metrics measure + compare baseline
+        run: |
+          npm run metrics:measure
+          npm run metrics:compare
       - name: Build
         run: npm run build
       - name: Upload logs on failure
