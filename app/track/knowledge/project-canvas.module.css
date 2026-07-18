@@ -1480,7 +1480,11 @@
 .foldedList svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .foldedList small { margin-left: auto; color: #8a8d92; font-size: 9px; }
 
-/* ClaimReview gets its own right-column row; it never overlays the Inspector. */
+/*
+ * Legacy slot for external claim HITL under the right column.
+ * Not currently mounted in page.tsx. Prefer embedding review inside
+ * Inspector body so the right panel can always span rows 2–4.
+ */
 .claimReviewSlot {
   grid-column: 3;
   grid-row: 3;
@@ -1493,15 +1497,18 @@
   padding: 0;
 }
 
-.workspace[data-has-claim-review="true"] .inspector {
-  grid-row: 2;
-  margin-bottom: 10px;
-}
-
+/*
+ * Inspector always spans canvas + timeline rows (2 / 4).
+ * Previously data-has-claim-review=true forced grid-row:2 only, reserving
+ * row 3 for .claimReviewSlot — but that slot is not mounted in page.tsx,
+ * so the bottom ~268px under the right panel was empty dead space.
+ */
 .inspector {
   grid-column: 3;
   grid-row: 2 / 4;
+  align-self: stretch;
   min-width: 0;
+  min-height: 0;
   margin: 10px 18px 18px 4px;
   display: flex;
   flex-direction: column;
