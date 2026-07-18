@@ -280,6 +280,49 @@ describe("knowledge repository persistence", () => {
     expect(fs.readFileSync(file, "utf-8")).toBe("{not-json");
   });
 
+  it("caches cards.json reads and filters by project without full rescan cost", async () => {
+    delete process.env.SEED_DEMO;
+    const repo = await loadRepo();
+    repo.resetKnowledgeStoreForTests();
+    const a = repo.addProject({ name: "项目A" });
+    const b = repo.addProject({ name: "项目B" });
+    for (let i = 0; i < 40; i++) {
+      repo.addCard({
+        projectId: i % 2 === 0 ? a.id : b.id,
+        content: `卡片 ${i}`,
+      });
+    }
+
+    const first = repo.listCards({ projectId: a.id });
+    expect(first).toHaveLength(20);
+
+    const before = fs.readFileSync(path.join(tmpDir, "cards.json"), "utf-8");
+    // Second list must hit cache: external rewrite would only apply after mtime change.
+    const second = repo.listCards({ projectId: a.id });
+    expect(second).toHaveLength(20);
+    expect(second.map((c) => c.id).sort()).toEqual(
+      first.map((c) => c.id).sort(),
+    );
+    expect(fs.readFileSync(path.join(tmpDir, "cards.json"), "utf-8")).toBe(
+      before,
+    );
+
+    // External file change (mtime) invalidates cache.
+    const raw = JSON.parse(before) as Record<string, { content?: string }>;
+    const anyId = Object.keys(raw)[0];
+    raw[anyId] = { ...raw[anyId], content: "外部改写" };
+    // Ensure mtime advances on fast FS (sub-ms mtime resolution).
+    const older = path.join(tmpDir, "cards.json");
+    fs.writeFileSync(older, JSON.stringify(raw), "utf-8");
+    const past = new Date(Date.now() - 5000);
+    fs.utimesSync(older, past, past);
+    const now = new Date();
+    fs.utimesSync(older, now, now);
+
+    const afterExternal = repo.listCards();
+    expect(afterExternal.some((c) => c.content === "外部改写")).toBe(true);
+  });
+
   it("does not silently rehome legacy rows missing projectId (T-19)", async () => {
     fs.writeFileSync(
       path.join(tmpDir, "cards.json"),

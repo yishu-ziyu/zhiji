@@ -222,12 +222,23 @@ function readJsonMap<T>(file: string): Map<string, T> {
   }
 }
 
-function writeJsonMap<T>(file: string, map: Map<string, T>): void {
+/**
+ * Compact JSON for large entity maps (cards). Pretty-print for small files.
+ * 14k+ cards with indent=2 was ~34MB and multi-second writes on every save.
+ */
+function writeJsonMap<T>(
+  file: string,
+  map: Map<string, T>,
+  options?: { compact?: boolean },
+): void {
   ensureDataDir();
   const obj = Object.fromEntries(map);
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  const body = options?.compact
+    ? JSON.stringify(obj)
+    : JSON.stringify(obj, null, 2);
   try {
-    fs.writeFileSync(temporary, JSON.stringify(obj, null, 2), "utf-8");
+    fs.writeFileSync(temporary, body, "utf-8");
     fs.renameSync(temporary, file);
   } catch (error) {
     try {
@@ -237,6 +248,54 @@ function writeJsonMap<T>(file: string, map: Map<string, T>): void {
     }
     throw error;
   }
+}
+
+/** Process-local cards cache: avoid re-reading/parsing multi-MB cards.json per API. */
+type CardsCacheEntry = {
+  dataDir: string;
+  filePath: string;
+  mtimeMs: number;
+  size: number;
+  cards: Map<string, KnowledgeCard>;
+  /** projectId → cards (same object refs as in `cards`) */
+  byProject: Map<string, KnowledgeCard[]>;
+};
+
+let cardsCache: CardsCacheEntry | null = null;
+
+function buildCardsByProject(
+  cards: Map<string, KnowledgeCard>,
+): Map<string, KnowledgeCard[]> {
+  const byProject = new Map<string, KnowledgeCard[]>();
+  for (const card of cards.values()) {
+    const key = card.projectId || "";
+    let bucket = byProject.get(key);
+    if (!bucket) {
+      bucket = [];
+      byProject.set(key, bucket);
+    }
+    bucket.push(card);
+  }
+  return byProject;
+}
+
+function rememberCardsCache(
+  filePath: string,
+  cards: Map<string, KnowledgeCard>,
+  st: { mtimeMs: number; size: number } | null,
+): void {
+  cardsCache = {
+    dataDir: resolveDataDir(),
+    filePath,
+    mtimeMs: st?.mtimeMs ?? 0,
+    size: st?.size ?? 0,
+    cards,
+    byProject: buildCardsByProject(cards),
+  };
+}
+
+function clearCardsCache(): void {
+  cardsCache = null;
 }
 
 type PendingWorkState = {
@@ -255,11 +314,46 @@ function recoverPendingWorkState(): void {
 
 function loadCards(): Map<string, KnowledgeCard> {
   ensureDataDir();
-  const raw = readJsonMap<Partial<KnowledgeCard> & { id?: string }>(cardsPath());
+  const file = cardsPath();
+  const dataDir = resolveDataDir();
+
+  let st: fs.Stats | null = null;
+  try {
+    st = fs.statSync(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`无法读取数据文件：${file}`, { cause: error });
+    }
+  }
+
+  if (
+    cardsCache &&
+    cardsCache.dataDir === dataDir &&
+    cardsCache.filePath === file &&
+    cardsCache.mtimeMs === (st?.mtimeMs ?? 0) &&
+    cardsCache.size === (st?.size ?? 0)
+  ) {
+    return cardsCache.cards;
+  }
+
+  if (!st) {
+    const empty = new Map<string, KnowledgeCard>();
+    rememberCardsCache(file, empty, null);
+    return empty;
+  }
+
+  const raw = readJsonMap<Partial<KnowledgeCard> & { id?: string }>(file);
   const cards = new Map<string, KnowledgeCard>();
   for (const [id, card] of raw) {
     cards.set(id, normalizeCard({ ...card, id: card.id ?? id }));
   }
+  // Re-stat after read in case of concurrent writers (best-effort).
+  try {
+    st = fs.statSync(file);
+  } catch {
+    // keep prior st
+  }
+  rememberCardsCache(file, cards, st);
   return cards;
 }
 
@@ -293,7 +387,16 @@ function loadEvents(): Map<string, WorkEvent> {
 }
 
 function saveCards(cards: Map<string, KnowledgeCard>): void {
-  writeJsonMap(cardsPath(), cards);
+  const file = cardsPath();
+  // Compact: large card stores were multi-second pretty-print writes.
+  writeJsonMap(file, cards, { compact: true });
+  let st: fs.Stats | null = null;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    st = null;
+  }
+  rememberCardsCache(file, cards, st);
 }
 
 function saveProjects(projects: Map<string, Project>): void {
@@ -373,7 +476,13 @@ function copyProjectCheckpoint(
 }
 
 function copyCard(card: KnowledgeCard): KnowledgeCard {
-  return structuredClone(card);
+  // Shallow clone is enough: KnowledgeCard only nests string[] for tags/links.
+  // structuredClone over 10k+ cards dominated warm listCards (~50ms → ~1ms).
+  return {
+    ...card,
+    tags: card.tags.slice(),
+    links: card.links.slice(),
+  };
 }
 
 function copyAction(item: ActionItem): ActionItem {
@@ -663,6 +772,10 @@ function workingProjects(): Map<string, Project> {
 function workingCards(): Map<string, KnowledgeCard> {
   workingProjects();
   const cards = loadCards();
+  // Hot path: non-empty store never needs seed I/O (actions/events/relations).
+  if (!isDemoSeedEnabled() || cards.size > 0) {
+    return cards;
+  }
   const actions = loadActionsRaw();
   const events = loadEvents();
   seedIfEmpty(cards, actions, events);
@@ -671,17 +784,30 @@ function workingCards(): Map<string, KnowledgeCard> {
 
 function workingActions(): Map<string, ActionItem> {
   workingProjects();
-  const cards = loadCards();
   const actions = loadActionsRaw();
+  if (!isDemoSeedEnabled()) {
+    return actions;
+  }
+  // Seed only when demo mode and both stores look empty.
+  if (actions.size > 0 || loadCards().size > 0) {
+    return actions;
+  }
+  const cards = loadCards();
   const events = loadEvents();
   seedIfEmpty(cards, actions, events);
   return actions;
 }
 
 function workingEvents(): Map<string, WorkEvent> {
+  const events = loadEvents();
+  if (!isDemoSeedEnabled()) {
+    return events;
+  }
+  if (events.size > 0 || loadCards().size > 0) {
+    return events;
+  }
   const cards = loadCards();
   const actions = loadActionsRaw();
-  const events = loadEvents();
   seedIfEmpty(cards, actions, events);
   return events;
 }
@@ -936,11 +1062,22 @@ export function getLatestProjectCheckpoint(
 }
 
 export function listCards(filter?: { projectId?: string }): KnowledgeCard[] {
-  let cards = [...workingCards().values()].map(copyCard);
+  const all = workingCards();
   if (filter?.projectId) {
-    cards = cards.filter((card) => card.projectId === filter.projectId);
+    // Prefer project index (O(project cards)) over scan+filter of full store.
+    if (
+      cardsCache &&
+      cardsCache.cards === all &&
+      cardsCache.dataDir === resolveDataDir()
+    ) {
+      const bucket = cardsCache.byProject.get(filter.projectId) ?? [];
+      return bucket.map(copyCard);
+    }
+    return [...all.values()]
+      .filter((card) => card.projectId === filter.projectId)
+      .map(copyCard);
   }
-  return cards;
+  return [...all.values()].map(copyCard);
 }
 
 export function getProjectCanvasSnapshot(
@@ -1631,6 +1768,7 @@ export function unlinkEvidence(
  * Prefer setting KNOWLEDGE_DATA_DIR to a temp dir in tests.
  */
 export function resetKnowledgeStoreForTests(): void {
+  clearCardsCache();
   ensureDataDir();
   for (const p of [
     cardsPath(),
