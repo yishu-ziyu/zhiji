@@ -42,7 +42,7 @@ describe("server activate profile", () => {
     const result = await verifyAndActivate(
       {
         provider: "stepfun_step_plan",
-        model: "step-3.5-flash",
+        model: "step-3.7-flash",
         apiKey: "sk-super-secret-must-not-leak",
       },
       { processEnv: env, fetchImpl: fetchImpl as unknown as typeof fetch },

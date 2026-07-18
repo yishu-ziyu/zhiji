@@ -21,14 +21,14 @@ describe("anthropic_messages", () => {
   it("top-level system + user only", () => {
     const req = buildCompleteRequest({
       protocol: "anthropic_messages",
-      baseUrl: "https://api.minimax.io/anthropic",
+      baseUrl: "https://api.minimaxi.com/anthropic",
       apiKey: "k",
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       authMode: "x-api-key",
       prompt: "hi",
       systemPrompt: "sys",
     });
-    expect(req.url).toBe("https://api.minimax.io/anthropic/v1/messages");
+    expect(req.url).toBe("https://api.minimaxi.com/anthropic/v1/messages");
     const body = JSON.parse(req.body!);
     expect(body.system).toBe("sys");
     expect(body.messages).toEqual([{ role: "user", content: "hi" }]);

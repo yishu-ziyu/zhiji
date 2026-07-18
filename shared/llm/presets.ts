@@ -45,13 +45,14 @@ export const LLM_PRESETS: readonly LlmPreset[] = Object.freeze([
     connectionKind: "official",
     protocol: "anthropic_messages",
     authMode: "x-api-key",
-    baseUrl: "https://api.minimax.io/anthropic",
+    // China Token Plan endpoint verified 2026-07-18 (api.minimaxi.com rejects this key class).
+    baseUrl: "https://api.minimaxi.com/anthropic",
     logoSrc: "/llm-logos/minimax.svg",
     competitionPrimary: true,
     models: [
       {
-        id: "MiniMax-M2.7",
-        label: "MiniMax M2.7",
+        id: "MiniMax-M3",
+        label: "MiniMax M3",
         logoSrc: "/llm-logos/minimax.svg",
         badge: "official",
         badgeLabel: "官方",
@@ -70,8 +71,8 @@ export const LLM_PRESETS: readonly LlmPreset[] = Object.freeze([
     competitionPrimary: true,
     models: [
       {
-        id: "step-3.5-flash",
-        label: "Step 3.5 Flash",
+        id: "step-3.7-flash",
+        label: "Step 3.7 Flash",
         logoSrc: "/llm-logos/stepfun.svg",
         badge: "official",
         badgeLabel: "官方",

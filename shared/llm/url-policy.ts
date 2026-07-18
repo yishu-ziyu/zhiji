@@ -127,8 +127,8 @@ export function validateCompetitionUrl(
     if (url.protocol !== "https:") {
       return fail("protocol_mismatch", "MiniMax Token Plan 必须使用 https:");
     }
-    if (url.hostname !== "api.minimax.io") {
-      return fail("host_mismatch", "MiniMax 主机必须精确为 api.minimax.io");
+    if (url.hostname !== "api.minimaxi.com") {
+      return fail("host_mismatch", "MiniMax 主机必须精确为 api.minimaxi.com");
     }
     const path = url.pathname.replace(/\/+$/, "") || "";
     if (path !== "/anthropic") {
@@ -139,8 +139,8 @@ export function validateCompetitionUrl(
     }
     return {
       ok: true,
-      normalized: "https://api.minimax.io/anthropic",
-      url: new URL("https://api.minimax.io/anthropic"),
+      normalized: "https://api.minimaxi.com/anthropic",
+      url: new URL("https://api.minimaxi.com/anthropic"),
     };
   }
 

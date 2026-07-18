@@ -350,7 +350,7 @@ describe("product model fail-closed (no Candidate on LLM failure)", () => {
     // Poison process.env as if Owner switched model after Run ended
     process.env.LLM_MODEL = "grok-4.5";
     process.env.LLM_PROVIDER = "minimax_token_plan";
-    process.env.LLM_BASE_URL = "https://api.minimax.io/anthropic";
+    process.env.LLM_BASE_URL = "https://api.minimaxi.com/anthropic";
     process.env.LLM_API_KEY = "switched-key";
 
     // Tail path re-entry: same failed run shape — must not re-call complete

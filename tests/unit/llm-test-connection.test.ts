@@ -37,9 +37,9 @@ describe("testLlmConnection", () => {
     const r = await testLlmConnection({
       provider: "minimax_token_plan",
       protocol: "anthropic_messages",
-      baseUrl: "https://api.minimax.io/anthropic",
+      baseUrl: "https://api.minimaxi.com/anthropic",
       apiKey: "k",
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       authMode: "x-api-key",
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });

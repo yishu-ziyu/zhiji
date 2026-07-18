@@ -34,6 +34,8 @@ export type ModelConnectorStatus = {
   profileFingerprint?: string | null;
   legacyLabel?: string;
   envFileHint?: string;
+  /** Competition providers with a saved local key (no secrets). */
+  vaultedProviders?: string[];
 };
 
 export type ModelOptionView = {
@@ -93,10 +95,10 @@ const FALLBACK_PRESETS: ModelPresetView[] = [
     connectionKind: "official",
     protocol: "anthropic_messages",
     authMode: "x-api-key",
-    baseUrl: "https://api.minimax.io/anthropic",
+    baseUrl: "https://api.minimaxi.com/anthropic",
     logoSrc: "/llm-logos/minimax.svg",
     models: [
-      { id: "MiniMax-M2.7", label: "MiniMax M2.7", logoSrc: "/llm-logos/minimax.svg", badge: "official", badgeLabel: "官方" },
+      { id: "MiniMax-M3", label: "MiniMax M3", logoSrc: "/llm-logos/minimax.svg", badge: "official", badgeLabel: "官方" },
     ],
   },
   {
@@ -109,7 +111,7 @@ const FALLBACK_PRESETS: ModelPresetView[] = [
     baseUrl: "https://api.stepfun.com/step_plan",
     logoSrc: "/llm-logos/stepfun.svg",
     models: [
-      { id: "step-3.5-flash", label: "Step 3.5 Flash", logoSrc: "/llm-logos/stepfun.svg", badge: "official", badgeLabel: "官方" },
+      { id: "step-3.7-flash", label: "Step 3.7 Flash", logoSrc: "/llm-logos/stepfun.svg", badge: "official", badgeLabel: "官方" },
     ],
   },
 ];
@@ -324,6 +326,7 @@ export function ModelConnector({
     setFormError(null);
     try {
       // Never send verifiedAt — server probes again.
+      // Empty apiKey → server reuses same-provider key or local provider vault.
       const data = await requestJson<{
         status: ModelConnectorStatus;
         message?: string;
@@ -332,7 +335,7 @@ export function ModelConnector({
         body: JSON.stringify({
           provider: draftProvider,
           llmModel: draftModel,
-          llmApiKey: apiKey.trim(),
+          llmApiKey: apiKey.trim() || undefined,
         }),
       });
       onStatusChange?.(data.status);
@@ -341,6 +344,36 @@ export function ModelConnector({
       setApiKey("");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+
+  /**
+   * One-click switch when this machine already has a vaulted key for the provider.
+   */
+  async function quickActivate(provider: LlmProvider, modelId: string) {
+    setSaveBusy(true);
+    setPendingSwitchHint("正在切换并验证连接…");
+    setOpen(false);
+    try {
+      const data = await requestJson<{
+        status: ModelConnectorStatus;
+        message?: string;
+      }>("/api/llm/byok", {
+        method: "PUT",
+        body: JSON.stringify({
+          provider,
+          llmModel: modelId,
+        }),
+      });
+      onStatusChange?.(data.status);
+      setPendingSwitchHint("已切换。将在下一次分析中使用此模型。");
+    } catch (err) {
+      setPendingSwitchHint(
+        err instanceof Error ? err.message : "切换失败，请打开管理连接重试",
+      );
+      openConnect(provider, modelId);
     } finally {
       setSaveBusy(false);
     }
@@ -356,7 +389,10 @@ export function ModelConnector({
     } else if (e.key === "Enter") {
       e.preventDefault();
       const row = flatRows[activeIndex];
-      if (row) openConnect(row.provider, row.model.id);
+      if (!row) return;
+      const vaulted = status?.vaultedProviders?.includes(row.provider);
+      if (vaulted) void quickActivate(row.provider, row.model.id);
+      else openConnect(row.provider, row.model.id);
     } else if (e.key === "Escape") {
       e.preventDefault();
       closePanel();
@@ -442,11 +478,21 @@ export function ModelConnector({
                   connected &&
                   status?.provider === row.provider &&
                   status?.model === row.model.id;
+                const vaulted = Boolean(
+                  status?.vaultedProviders?.includes(row.provider),
+                );
                 let statusText = "需配置";
                 let statusKind: "connected" | "current" | "need" = "need";
                 if (isExactConnected) {
                   statusText = "当前";
                   statusKind = "current";
+                } else if (vaulted) {
+                  // Same provider different model, or another vaulted provider.
+                  statusText =
+                    connected && status?.provider === row.provider
+                      ? "一键切换"
+                      : "可切换";
+                  statusKind = "connected";
                 } else if (
                   connected &&
                   status?.provider === row.provider &&
@@ -466,7 +512,13 @@ export function ModelConnector({
                       data-selected={isExactConnected ? "true" : "false"}
                       data-testid={`model-row-${row.provider}-${row.model.id}`}
                       onMouseEnter={() => setActiveIndex(index)}
-                      onClick={() => openConnect(row.provider, row.model.id)}
+                      onClick={() => {
+                        if (vaulted) {
+                          void quickActivate(row.provider, row.model.id);
+                        } else {
+                          openConnect(row.provider, row.model.id);
+                        }
+                      }}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img

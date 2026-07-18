@@ -369,7 +369,7 @@ describe("P1 snapshot freeze after env change", () => {
       // Poison env mid-run
       process.env.LLM_MODEL = "grok-4.5";
       process.env.LLM_PROVIDER = "minimax_token_plan";
-      process.env.LLM_BASE_URL = "https://api.minimax.io/anthropic";
+      process.env.LLM_BASE_URL = "https://api.minimaxi.com/anthropic";
       process.env.LLM_API_KEY = "other-key";
 
       await complete("ping", undefined, {
@@ -405,6 +405,6 @@ describe("P2 competition list minimal", () => {
     const step = competitionPresets().find(
       (p) => p.provider === "stepfun_step_plan",
     );
-    expect(step?.models.map((m) => m.id)).toEqual(["step-3.5-flash"]);
+    expect(step?.models.map((m) => m.id)).toEqual(["step-3.7-flash"]);
   });
 });

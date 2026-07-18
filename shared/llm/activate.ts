@@ -54,11 +54,12 @@ export type ActivateResult =
     };
 
 /**
- * Resolve API key: empty only reuses when same provider as stored.
+ * Resolve API key: typed → active same-provider → per-provider vault.
  */
 export function resolveApiKeyForActivate(
   input: ActivateInput,
   existing: Record<string, string>,
+  processEnv?: ByokProcessEnv,
 ): { apiKey: string; error?: string } {
   const typed = (input.apiKey ?? "").trim();
   if (typed) return { apiKey: typed };
@@ -72,6 +73,17 @@ export function resolveApiKeyForActivate(
   ) {
     return { apiKey: storedKey };
   }
+
+  // Per-provider vault: switch without re-typing (Owner machine only).
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getVaultApiKey } = require("./provider-vault") as typeof import("./provider-vault");
+    const vaultKey = getVaultApiKey(input.provider, processEnv);
+    if (vaultKey) return { apiKey: vaultKey };
+  } catch {
+    /* vault optional */
+  }
+
   if (storedKey && storedProvider !== input.provider) {
     return {
       apiKey: "",
@@ -118,7 +130,7 @@ export async function verifyAndActivate(
     LLM_PROFILE_FINGERPRINT: processEnv.LLM_PROFILE_FINGERPRINT,
   };
 
-  const keyRes = resolveApiKeyForActivate(input, existing);
+  const keyRes = resolveApiKeyForActivate(input, existing, processEnv);
   if (!keyRes.apiKey) {
     return {
       ok: false,
@@ -216,6 +228,19 @@ export async function verifyAndActivate(
       },
       { processEnv, envFilePath },
     );
+
+    // Remember key per competition provider for one-click switch later.
+    if (isCompetitionProvider(input.provider)) {
+      try {
+        const { upsertProviderVaultKey } = await import("./provider-vault");
+        upsertProviderVaultKey(input.provider, keyRes.apiKey, {
+          processEnv,
+          lastModel: model,
+        });
+      } catch {
+        /* vault best-effort */
+      }
+    }
 
     if (!status.connected) {
       // Roll back process env if write somehow didn't produce connected.

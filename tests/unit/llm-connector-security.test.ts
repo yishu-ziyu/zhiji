@@ -121,7 +121,7 @@ describe("2. PUT-style activate requires server probe", () => {
     const result = await verifyAndActivate(
       {
         provider: "minimax_token_plan",
-        model: "MiniMax-M2.7",
+        model: "MiniMax-M3",
         apiKey: "mm-token-plan-key",
       },
       { processEnv: env, fetchImpl: fetchImpl as unknown as typeof fetch },
@@ -142,7 +142,7 @@ describe("3. official domain suffix spoofing", () => {
     expect(
       validateCompetitionUrl(
         "minimax_token_plan",
-        "https://api.minimax.io.evil.example/anthropic",
+        "https://api.minimaxi.com.evil.example/anthropic",
       ).ok,
     ).toBe(false);
     expect(
@@ -161,7 +161,7 @@ describe("3. official domain suffix spoofing", () => {
       parseStrictBaseUrl("https://user:secret@api.stepfun.com/step_plan").ok,
     ).toBe(false);
     expect(
-      validateCompetitionUrl("minimax_token_plan", "http://api.minimax.io/anthropic")
+      validateCompetitionUrl("minimax_token_plan", "http://api.minimaxi.com/anthropic")
         .ok,
     ).toBe(false);
     expect(parseStrictBaseUrl("http://169.254.169.254").ok).toBe(true); // parses
@@ -203,7 +203,7 @@ describe("4. cross-provider key reuse", () => {
     const result = await verifyAndActivate(
       {
         provider: "minimax_token_plan",
-        model: "MiniMax-M2.7",
+        model: "MiniMax-M3",
         apiKey: "",
       },
       { processEnv: env, fetchImpl: fetchOk as unknown as typeof fetch },
@@ -228,7 +228,7 @@ describe("5. plain-string key redaction when vendor echoes", () => {
       protocol: "anthropic_messages",
       baseUrl: "https://api.stepfun.com/step_plan",
       apiKey: secret,
-      model: "step-3.5-flash",
+      model: "step-3.7-flash",
       authMode: "bearer",
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
@@ -275,13 +275,13 @@ describe("6. Anthropic system is top-level not message role", () => {
   it("MiniMax path joins to /anthropic/v1/messages", () => {
     const req = buildCompleteRequest({
       protocol: "anthropic_messages",
-      baseUrl: "https://api.minimax.io/anthropic",
+      baseUrl: "https://api.minimaxi.com/anthropic",
       apiKey: "k",
-      model: "MiniMax-M2.7",
+      model: "MiniMax-M3",
       authMode: "x-api-key",
       prompt: "p",
     });
-    expect(req.url).toBe("https://api.minimax.io/anthropic/v1/messages");
+    expect(req.url).toBe("https://api.minimaxi.com/anthropic/v1/messages");
   });
 
   it("Step Plan path joins to /step_plan/v1/messages", () => {
@@ -289,7 +289,7 @@ describe("6. Anthropic system is top-level not message role", () => {
       protocol: "anthropic_messages",
       baseUrl: "https://api.stepfun.com/step_plan",
       apiKey: "k",
-      model: "step-3.5-flash",
+      model: "step-3.7-flash",
       authMode: "bearer",
       prompt: "p",
     });
@@ -367,8 +367,8 @@ describe("8. Run freezes snapshot — mid-switch does not drift", () => {
     const prev: Record<string, string | undefined> = {};
     for (const k of keys) prev[k] = process.env[k];
     process.env.LLM_PROVIDER = "minimax_token_plan";
-    process.env.LLM_MODEL = "MiniMax-M2.7";
-    process.env.LLM_BASE_URL = "https://api.minimax.io/anthropic";
+    process.env.LLM_MODEL = "MiniMax-M3";
+    process.env.LLM_BASE_URL = "https://api.minimaxi.com/anthropic";
     process.env.LLM_API_KEY = "mm-key-B";
     process.env.LLM_PROTOCOL = "anthropic_messages";
     process.env.LLM_AUTH_MODE = "x-api-key";
@@ -501,7 +501,7 @@ describe("activate fail preserves previous connected profile", () => {
     const second = await verifyAndActivate(
       {
         provider: "stepfun_step_plan",
-        model: "step-3.5-flash",
+        model: "step-3.7-flash",
         apiKey: "key-two",
       },
       { processEnv: env, fetchImpl: fetchImpl as unknown as typeof fetch },

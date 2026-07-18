@@ -61,9 +61,17 @@ export async function POST(req: NextRequest) {
     let apiKey = String(body.apiKey ?? "").trim();
     if (!apiKey) {
       const existing = readByokEnvFile(resolveByokEnvFilePath());
-      // Same-provider only.
+      // Same-provider active key first.
       if (existing.LLM_PROVIDER === provider && existing.LLM_API_KEY) {
         apiKey = existing.LLM_API_KEY;
+      }
+    }
+    if (!apiKey) {
+      try {
+        const { getVaultApiKey } = await import("@/shared/llm/provider-vault");
+        apiKey = getVaultApiKey(provider) ?? "";
+      } catch {
+        /* vault optional */
       }
     }
     if (!apiKey) {

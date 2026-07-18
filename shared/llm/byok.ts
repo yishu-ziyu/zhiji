@@ -493,6 +493,15 @@ export function saveByokSecrets(
 }
 
 export function toPublicByokStatus(status: ByokStatus) {
+  let vaultedProviders: string[] = [];
+  try {
+    // Lazy: vault is optional and must not break status when file missing.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { listVaultedProviders } = require("./provider-vault") as typeof import("./provider-vault");
+    vaultedProviders = listVaultedProviders();
+  } catch {
+    vaultedProviders = [];
+  }
   return {
     configured: status.configured,
     connected: status.connected,
@@ -510,6 +519,8 @@ export function toPublicByokStatus(status: ByokStatus) {
     profileFingerprint: status.profileFingerprint,
     profile: status.profile,
     legacyLabel: status.legacyLabel,
+    /** Competition providers with a saved key on this machine (no secrets). */
+    vaultedProviders,
     envFileHint: status.envFilePath.includes("Application Support")
       ? "~/Library/Application Support/知几/.env.local"
       : pathBasenameHint(status.envFilePath),
