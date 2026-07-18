@@ -57,6 +57,11 @@ type Props = {
   onAuthorizeFolder?: () => void;
   busy?: boolean;
   chatFocusKey?: number;
+  /**
+   * When true, chat column fills remaining inspector height and pins composer
+   * to the bottom (no dead white band under the dialogue).
+   */
+  fillChat?: boolean;
   claims?: Claim[];
   claimAnchors?: PreciseEvidenceAnchor[];
   claimLinks?: ClaimEvidenceLink[];
@@ -84,6 +89,7 @@ export function AgentPresenceRail({
   onAuthorizeFolder,
   busy = false,
   chatFocusKey = 0,
+  fillChat = false,
   claims = [],
   claimAnchors = [],
   claimLinks = [],
@@ -165,6 +171,7 @@ export function AgentPresenceRail({
       data-testid="inspector-agent-process"
       data-has-session={hasSession ? "true" : "false"}
       data-brief-status={briefSelection.status}
+      data-fill-chat={fillChat ? "true" : "false"}
       aria-label="Agent 对话与工作状态"
     >
       {onChatSend ? (

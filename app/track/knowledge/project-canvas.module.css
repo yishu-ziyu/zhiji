@@ -1524,7 +1524,33 @@
 .inspectorTabs button[data-active="true"] { color: var(--pc-accent); font-weight: 600; }
 .inspectorTabs button[data-active="true"]::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; background: var(--pc-accent); }
 .inspectorTabs button span { margin-left: 4px; padding: 1px 5px; border-radius: 8px; background: #f0f0ed; font-size: 9px; }
-.inspectorBody { flex: 1; min-height: 0; overflow: auto; padding: 18px 18px 14px; }
+.inspectorBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 18px 14px;
+}
+/* 动态 tab: fill height so chat composer sits above footer (no dead white band). */
+.inspectorBody[data-chat-fill="true"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 10px;
+}
+.inspectorBody[data-chat-fill="true"] .agentPresenceRail {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-bottom: 10px;
+}
+.inspectorBody[data-chat-fill="true"] .activityFeed {
+  flex: 0 1 auto;
+  max-height: 34%;
+  min-height: 0;
+  overflow: auto;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #efeee9;
+}
 .sectionEyebrow { color: #8a8d92; font-size: 9px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; }
 .focusSummary h3,
 .planCard h3 { margin: 5px 0 6px; font-size: 14px; }
@@ -1826,6 +1852,37 @@
   padding: 0;
   min-width: 0;
 }
+.agentPresenceRail[data-fill-chat="true"] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.agentPresenceRail[data-fill-chat="true"] .agentChatPanel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.agentPresenceRail[data-fill-chat="true"] .agentChatLog {
+  flex: 1 1 auto;
+  min-height: 72px;
+  max-height: none;
+  align-content: start;
+}
+.agentPresenceRail[data-fill-chat="true"] .agentChatHeader,
+.agentPresenceRail[data-fill-chat="true"] .agentChatQuickRow,
+.agentPresenceRail[data-fill-chat="true"] .agentChatComposer,
+.agentPresenceRail[data-fill-chat="true"] .agentChatAuthorize,
+.agentPresenceRail[data-fill-chat="true"] .agentChatError {
+  flex: 0 0 auto;
+}
+/* Brief / process cards under chat: compact, scroll if needed */
+.agentPresenceRail[data-fill-chat="true"] > :not(.agentChatPanel) {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 28%;
+  overflow: auto;
+}
 .agentPresenceActions {
   display: flex;
   gap: 8px;
@@ -1939,8 +1996,10 @@
 .agentChatLog {
   display: grid;
   gap: 12px;
-  min-height: 120px;
-  max-height: min(42vh, 360px);
+  align-content: start;
+  /* Auto height with content; cap only when long so composer stays in view */
+  min-height: 0;
+  max-height: min(28vh, 240px);
   overflow: auto;
   padding: 2px 0 4px;
   scrollbar-width: thin;
@@ -2149,8 +2208,8 @@
   width: 100%;
   box-sizing: border-box;
   resize: none;
-  min-height: 64px;
-  max-height: 140px;
+  min-height: 48px;
+  max-height: 120px;
   padding: 10px 12px 4px;
   border: 0;
   border-radius: 0;

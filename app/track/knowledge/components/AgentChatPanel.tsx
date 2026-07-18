@@ -393,7 +393,7 @@ export function AgentChatPanel({
               ? "问项目里的事，例如「只看决策」…"
               : "先授权文件夹后即可发送…"
           }
-          rows={3}
+          rows={2}
           disabled={busy || loading}
           data-testid="agent-chat-input"
           onKeyDown={(e) => {

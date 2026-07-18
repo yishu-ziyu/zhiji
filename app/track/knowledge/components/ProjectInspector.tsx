@@ -341,7 +341,11 @@ export function ProjectInspector({
         ))}
       </nav>
 
-      <div className={styles.inspectorBody}>
+      <div
+        className={styles.inspectorBody}
+        data-tab={tab}
+        data-chat-fill={tab === "activity" && onAgentChatSend ? "true" : "false"}
+      >
         {/* Always-visible Agent chat for open project (§2b); process only when session. */}
         {onAgentChatSend ? (
           <AgentPresenceRail
@@ -366,6 +370,7 @@ export function ProjectInspector({
             onAuthorizeFolder={onAuthorizeFolder}
             busy={busy}
             chatFocusKey={agentChatFocusKey}
+            fillChat={tab === "activity"}
             claims={
               agentSession && agentSession.projectId === snapshot.project.id
                 ? reviewClaims
