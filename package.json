@@ -26,7 +26,9 @@
     "desktop:prepare": "npm run build && node scripts/prepare-desktop-bundle.mjs",
     "desktop:ensure-electron": "node scripts/ensure-electron-zip.mjs",
     "desktop:install-env": "node scripts/install-desktop-env.mjs",
-    "desktop:package": "npm run desktop:prepare && node scripts/ensure-electron-zip.mjs && node scripts/package-desktop.mjs"
+    "desktop:install-local": "node scripts/install-desktop-local.mjs",
+    "desktop:package": "npm run desktop:prepare && node scripts/ensure-electron-zip.mjs && node scripts/package-desktop.mjs",
+    "desktop:package-local": "npm run desktop:package && node scripts/install-desktop-local.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",

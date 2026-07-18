@@ -158,6 +158,18 @@ async function main() {
     assertMainSandbox(resourcesApp);
     assertMatchesStaging(resourcesApp);
     console.log("[desktop:package] app:", appPath);
+
+    // Owner machine: keep /Applications/知几.app as the only install, always latest.
+    // Skip in CI or when DESKTOP_INSTALL_LOCAL=0. Explicit: npm run desktop:package-local
+    const wantLocal =
+      process.platform === "darwin" &&
+      process.env.CI !== "true" &&
+      process.env.DESKTOP_INSTALL_LOCAL !== "0";
+    if (wantLocal) {
+      process.env.DESKTOP_APP_SRC = appPath;
+      const { installDesktopLocal } = await import("./install-desktop-local.mjs");
+      installDesktopLocal();
+    }
   }
 }
 
