@@ -5,6 +5,7 @@ import {
 } from "../../app/track/knowledge/lib/agent-chat-format";
 import fs from "node:fs";
 import path from "node:path";
+import { planSetCanvasViewFromUtterance } from "../../shared/knowledge/set-canvas-view";
 
 describe("parseAgentMessage", () => {
   it("returns plain for free-form agent text", () => {
@@ -42,15 +43,24 @@ describe("parseAgentMessage", () => {
     });
     expect(parsed.evidence?.[1]?.path).toContain("会议纪要");
     expect(parsed.decision).toContain("按量计费");
+    expect(parsed.decision).not.toContain("候选判断");
     expect(parsed.showCandidateFooter).toBe(true);
   });
 
-  it("exposes the three quick prompts from the mock", () => {
+  it("exposes canvas-driving quick prompts", () => {
     expect(AGENT_CHAT_QUICK_PROMPTS.map((q) => q.label)).toEqual([
+      "现在怎样",
       "只看决策",
-      "冲突在哪",
-      "重进后变化",
+      "证据链",
+      "关系类型",
+      "阻塞在哪",
     ]);
+    expect(AGENT_CHAT_QUICK_PROMPTS.every((q) => q.canvasHint)).toBe(true);
+    for (const q of AGENT_CHAT_QUICK_PROMPTS) {
+      const plan = planSetCanvasViewFromUtterance(q.text);
+      expect(plan.shouldCall, q.text).toBe(true);
+      expect(plan.command?.view, q.text).toBeTruthy();
+    }
   });
 });
 
@@ -63,11 +73,15 @@ describe("AgentChatPanel presentation contract", () => {
     "utf8",
   );
 
-  it("keeps authorize + status + quick chips + ink send affordances", () => {
+  it("keeps authorize + status + quick chips + canvas NL affordances", () => {
     expect(src).toContain('data-testid="agent-chat-authorize"');
     expect(src).toContain('data-testid="agent-chat-status"');
     expect(src).toContain('data-testid="agent-chat-quick-prompts"');
-    expect(src).toContain("用自然语言问项目态势，不闲聊");
+    expect(src).toContain('data-testid="agent-chat-canvas-strip"');
+    expect(src).toContain("自然语言指挥中央画布");
     expect(src).toContain("知几");
+    expect(src).toContain("agent-chat-canvas-notice");
+    // Canvas morphology must not require folder grant in the panel.
+    expect(src).toContain("Canvas control does not require folder grant");
   });
 });

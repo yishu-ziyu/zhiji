@@ -36,6 +36,7 @@ import {
   AgentPresenceRail,
   type AgentSession,
 } from "./AgentPresenceRail";
+import type { AgentCanvasActionNotice } from "./AgentChatPanel";
 import type { UnderstandingBody } from "../lib/folder-connection-api";
 import type {
   Claim,
@@ -93,6 +94,10 @@ type Props = {
   onAuthorizeFolder?: () => void;
   /** Bump to focus the always-visible chat (topbar AI Copilot). */
   agentChatFocusKey?: number;
+  /** Last canvas morphology change from Agent NL (right-rail notice). */
+  canvasAction?: AgentCanvasActionNotice | null;
+  /** Live center canvas view id. */
+  canvasView?: string | null;
   /** Claim HITL for project intelligence brief (read model + resolutions). */
   reviewClaims?: Claim[];
   claimAnchors?: PreciseEvidenceAnchor[];
@@ -151,6 +156,8 @@ export function ProjectInspector({
   onAgentChatSend,
   onAuthorizeFolder,
   agentChatFocusKey = 0,
+  canvasAction = null,
+  canvasView = null,
   reviewClaims = [],
   claimAnchors = [],
   claimLinks = [],
@@ -371,6 +378,8 @@ export function ProjectInspector({
             busy={busy}
             chatFocusKey={agentChatFocusKey}
             fillChat={tab === "activity"}
+            canvasAction={canvasAction}
+            canvasView={canvasView}
             claims={
               agentSession && agentSession.projectId === snapshot.project.id
                 ? reviewClaims

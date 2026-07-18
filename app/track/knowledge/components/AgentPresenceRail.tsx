@@ -2,7 +2,10 @@
 
 import { useMemo } from "react";
 import { AgentProcessPanel } from "./AgentProcessPanel";
-import { AgentChatPanel } from "./AgentChatPanel";
+import {
+  AgentChatPanel,
+  type AgentCanvasActionNotice,
+} from "./AgentChatPanel";
 import { UnderstandingReviewCard } from "./UnderstandingReviewCard";
 import { ProjectIntelligenceBriefCard } from "./ProjectIntelligenceBriefCard";
 import {
@@ -62,6 +65,10 @@ type Props = {
    * to the bottom (no dead white band under the dialogue).
    */
   fillChat?: boolean;
+  /** Last NL-driven canvas morphology change (center workbench). */
+  canvasAction?: AgentCanvasActionNotice | null;
+  /** Live center canvas view id. */
+  canvasView?: string | null;
   claims?: Claim[];
   claimAnchors?: PreciseEvidenceAnchor[];
   claimLinks?: ClaimEvidenceLink[];
@@ -90,6 +97,8 @@ export function AgentPresenceRail({
   busy = false,
   chatFocusKey = 0,
   fillChat = false,
+  canvasAction = null,
+  canvasView = null,
   claims = [],
   claimAnchors = [],
   claimLinks = [],
@@ -185,10 +194,12 @@ export function AgentPresenceRail({
           blockedHint={
             hasSession
               ? null
-              : "当前项目还没有授权文件夹。授权后即可发送，Agent 会在夹里查依据。"
+              : "当前项目还没有授权文件夹。授权后即可发送，Agent 会在夹里查依据并改画布。"
           }
           onAuthorize={onAuthorizeFolder}
           focusKey={chatFocusKey}
+          canvasAction={canvasAction}
+          canvasView={canvasView}
         />
       ) : null}
 

@@ -80,7 +80,8 @@ export function parseAgentMessage(content: string): ParsedAgentMessage {
     } else if (key === "依据") {
       evidence = parseEvidenceBody(body);
     } else if (key === "你现在只要决定" || key === "你现在只需决定") {
-      decision = body || undefined;
+      // Strip footer line if model stuffed it into the decision body.
+      decision = stripCandidateFooterLine(body) || undefined;
     }
   }
 
@@ -99,6 +100,31 @@ export function parseAgentMessage(content: string): ParsedAgentMessage {
   };
 }
 
+const CANDIDATE_FOOTER_RE =
+  /候选判断\s*[·•．.]\s*未自动写入项目事实/;
+
+function stripCandidateFooterLine(body: string): string {
+  return body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !CANDIDATE_FOOTER_RE.test(l))
+    .join("\n")
+    .trim();
+}
+
+/** Prefer human-readable evidence; demote tooling/test path noise in the rail. */
+function isWeakEvidencePath(pathStr: string): boolean {
+  const p = pathStr.toLowerCase();
+  return (
+    /\.(test|spec)\.[a-z0-9]+$/.test(p) ||
+    p.includes("node_modules/") ||
+    p.includes("__pycache__") ||
+    p.includes("/.git/") ||
+    p.startsWith("未知/") ||
+    p.includes("未知/限制")
+  );
+}
+
 function parseEvidenceBody(body: string): AgentEvidenceChip[] {
   if (!body) return [];
   const lines = body
@@ -108,6 +134,7 @@ function parseEvidenceBody(body: string): AgentEvidenceChip[] {
   const chips: AgentEvidenceChip[] = [];
   for (const line of lines) {
     const cleaned = line.replace(/^[\[\(]|[\]\)]$/g, "").trim();
+    if (CANDIDATE_FOOTER_RE.test(cleaned)) continue;
     const em = cleaned.match(EVIDENCE_LINE);
     if (em) {
       chips.push({
@@ -131,15 +158,63 @@ function parseEvidenceBody(body: string): AgentEvidenceChip[] {
     }
     chips.push({ raw: cleaned, path: cleaned });
   }
-  return chips;
+  // Strong paths first; keep weak ones only if nothing else (honesty).
+  const strong = chips.filter((c) => !isWeakEvidencePath(c.path));
+  return strong.length > 0 ? strong : chips.slice(0, 3);
 }
 
+/** Short label for chip face; full path stays on title. */
+export function evidenceChipLabel(pathStr: string): string {
+  const base = pathStr.split(/[/\\]/).filter(Boolean).pop() ?? pathStr;
+  return base.length > 28 ? `${base.slice(0, 26)}…` : base;
+}
+
+export const CANVAS_VIEW_LABELS: Record<string, string> = {
+  now: "现在怎样",
+  by_kind: "关系类型",
+  decision: "决策通路",
+  evidence: "证据链",
+};
+
+/**
+ * Quick actions that also drive the center canvas (NL → set_canvas_view).
+ * Labels are short; text is the exact utterance sent to Agent.
+ */
 export const AGENT_CHAT_QUICK_PROMPTS: ReadonlyArray<{
   id: string;
   label: string;
   text: string;
+  /** Optional hint shown under the chip row */
+  canvasHint?: string;
 }> = [
-  { id: "decisions", label: "只看决策", text: "只看决策" },
-  { id: "conflicts", label: "冲突在哪", text: "冲突在哪" },
-  { id: "reentry", label: "重进后变化", text: "重进后变化" },
+  {
+    id: "now",
+    label: "现在怎样",
+    text: "项目现在怎样",
+    canvasHint: "画布 → 现在怎样",
+  },
+  {
+    id: "decisions",
+    label: "只看决策",
+    text: "只看决策",
+    canvasHint: "画布 → 决策通路",
+  },
+  {
+    id: "evidence",
+    label: "证据链",
+    text: "结论的依据是什么",
+    canvasHint: "画布 → 证据链",
+  },
+  {
+    id: "kinds",
+    label: "关系类型",
+    text: "按关系类型看画布",
+    canvasHint: "画布 → 关系类型",
+  },
+  {
+    id: "blocked",
+    label: "阻塞在哪",
+    text: "卡点在哪",
+    canvasHint: "画布 → 决策通路",
+  },
 ];

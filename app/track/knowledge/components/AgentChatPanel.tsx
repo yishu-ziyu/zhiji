@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AGENT_CHAT_QUICK_PROMPTS,
+  CANVAS_VIEW_LABELS,
+  evidenceChipLabel,
   parseAgentMessage,
   type ParsedAgentMessage,
 } from "../lib/agent-chat-format";
@@ -15,17 +17,23 @@ export type AgentChatTurn = {
   createdAt: string;
 };
 
+export type AgentCanvasActionNotice = {
+  view: string;
+  reason?: string;
+  at: number;
+};
+
 type Props = {
   projectId: string;
   matterId?: string | null;
   busy?: boolean;
-  /** Send Owner question through dual-memory chat path. */
+  /** Send Owner question through dual-memory chat path (and canvas NL). */
   onSend: (text: string) => Promise<void>;
   /** Optional external refresh token (e.g. after analysis). */
   refreshKey?: string | number;
   /**
-   * When false, composer stays visible but send is blocked
-   * (e.g. no folder grant yet).
+   * When false, full Agent answer needs folder grant.
+   * Canvas morphology via NL still works.
    */
   canSend?: boolean;
   /** Shown under header / empty state when canSend is false. */
@@ -34,6 +42,10 @@ type Props = {
   onAuthorize?: () => void;
   /** Bump to scroll this panel into view and focus the input. */
   focusKey?: number;
+  /** Last canvas morphology change driven by NL (center canvas). */
+  canvasAction?: AgentCanvasActionNotice | null;
+  /** Live center canvas view id (now | by_kind | decision | evidence). */
+  canvasView?: string | null;
 };
 
 async function fetchSessions(projectId: string): Promise<
@@ -90,50 +102,51 @@ function AgentStructuredBody({ parsed }: { parsed: ParsedAgentMessage }) {
         <p className={styles.agentChatLead}>{parsed.lead}</p>
       ) : null}
 
-      {parsed.judgment ||
-      (parsed.evidence && parsed.evidence.length > 0) ||
-      parsed.decision ? (
-        <div className={styles.agentChatStructCard}>
-          {parsed.judgment ? (
-            <section className={styles.agentChatStructSection}>
-              <h4>当前判断</h4>
-              <p>{parsed.judgment}</p>
-            </section>
-          ) : null}
+      {parsed.judgment ? (
+        <section className={styles.agentChatJudgmentBlock}>
+          <h4>当前判断</h4>
+          <p>{parsed.judgment}</p>
+        </section>
+      ) : null}
 
-          {parsed.evidence && parsed.evidence.length > 0 ? (
-            <section className={styles.agentChatStructSection}>
-              <h4>依据</h4>
-              <ul className={styles.agentChatEvidenceList}>
-                {parsed.evidence.map((chip, i) => (
-                  <li key={`${chip.path}-${i}`}>
-                    <span className={styles.agentChatEvidenceChip}>
-                      <span className={styles.agentChatEvidenceIcon} aria-hidden>
-                        📄
-                      </span>
-                      <span className={styles.agentChatEvidencePath}>
-                        {chip.path}
-                        {chip.rev ? ` @ ${chip.rev}` : ""}
-                      </span>
+      {parsed.evidence && parsed.evidence.length > 0 ? (
+        <section className={styles.agentChatEvidenceBlock}>
+          <h4>依据</h4>
+          <ul className={styles.agentChatEvidenceList}>
+            {parsed.evidence.map((chip, i) => (
+              <li key={`${chip.path}-${i}`}>
+                <span
+                  className={styles.agentChatEvidenceChip}
+                  title={chip.raw}
+                >
+                  <span className={styles.agentChatEvidenceIcon} aria-hidden>
+                    ▣
+                  </span>
+                  <span className={styles.agentChatEvidencePath}>
+                    {evidenceChipLabel(chip.path)}
+                  </span>
+                  {chip.rev ? (
+                    <span className={styles.agentChatEvidenceRev}>
+                      {chip.rev}
                     </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
-          {parsed.decision ? (
-            <section className={styles.agentChatStructSection}>
-              <h4>你现在只要决定</h4>
-              <p className={styles.agentChatDecision}>{parsed.decision}</p>
-            </section>
-          ) : null}
-        </div>
+      {parsed.decision ? (
+        <section className={styles.agentChatDecisionBlock}>
+          <h4>你现在只要决定</h4>
+          <p className={styles.agentChatDecision}>{parsed.decision}</p>
+        </section>
       ) : null}
 
       {parsed.showCandidateFooter ? (
         <p className={styles.agentChatCandidateNote}>
-          候选判断 · 未自动写入项目事实
+          候选判断 · 未写入项目事实
         </p>
       ) : null}
     </div>
@@ -141,8 +154,8 @@ function AgentStructuredBody({ parsed }: { parsed: ParsedAgentMessage }) {
 }
 
 /**
- * Right-rail chat entry: always visible when a project is open.
- * Loads Dialogue Memory when available; sends via parent onSend.
+ * Right-rail chat entry: Owner NL → Agent answer + center canvas morphology.
+ * Canvas control does not require folder grant; full Agent answers do.
  */
 export function AgentChatPanel({
   projectId,
@@ -154,11 +167,14 @@ export function AgentChatPanel({
   blockedHint = null,
   onAuthorize,
   focusKey,
+  canvasAction = null,
+  canvasView = null,
 }: Props) {
   const [turns, setTurns] = useState<AgentChatTurn[]>([]);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [localHint, setLocalHint] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
@@ -199,17 +215,14 @@ export function AgentChatPanel({
     const el = logRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [turns, loading]);
+  }, [turns, loading, canvasAction?.at, localHint]);
 
   const sendText = async (raw: string) => {
     const text = raw.trim();
     if (!text || busy || loading) return;
-    if (!canSend) {
-      setError(blockedHint || "先授权项目文件夹，再和 Agent 对话。");
-      return;
-    }
     setLoading(true);
     setError(null);
+    setLocalHint(null);
     try {
       await onSend(text);
       setDraft("");
@@ -226,7 +239,7 @@ export function AgentChatPanel({
   };
 
   const handleQuick = (text: string) => {
-    if (!canSend || busy || loading) {
+    if (busy || loading) {
       setDraft(text);
       inputRef.current?.focus();
       return;
@@ -234,14 +247,14 @@ export function AgentChatPanel({
     void sendText(text);
   };
 
-  const emptyCopy = canSend
-    ? "还没有对话。直接问「这个项目现在最该决定什么」或「凭什么这么判断」。"
-    : blockedHint ||
-      "对话入口在这里。先授权项目文件夹，Agent 才能在夹里查依据。";
+  const liveViewId = canvasAction?.view ?? canvasView ?? null;
+  const liveViewLabel = liveViewId
+    ? CANVAS_VIEW_LABELS[liveViewId] ?? liveViewId
+    : null;
 
   const statusLabel = canSend
-    ? "在线 · 已授权本地文件夹"
-    : "待授权 · 文件夹未连接";
+    ? "已授权 · 可查材料并改画布"
+    : "可改画布 · 查材料需授权文件夹";
 
   return (
     <section
@@ -254,29 +267,66 @@ export function AgentChatPanel({
       <header className={styles.agentChatHeader}>
         <div className={styles.agentChatHeaderMain}>
           <div className={styles.agentChatTitleRow}>
-            <h3>问 Agent</h3>
-            {!canSend ? (
+            <div className={styles.agentChatMark} aria-hidden>
+              <span className={styles.agentChatMarkDot} />
+            </div>
+            <div className={styles.agentChatTitleBlock}>
+              <h3>问 Agent</h3>
+              <p
+                className={styles.agentChatStatus}
+                data-online={canSend ? "true" : "false"}
+                data-testid="agent-chat-status"
+              >
+                <span className={styles.agentChatStatusDot} aria-hidden />
+                {statusLabel}
+              </p>
+            </div>
+            {canSend ? (
+              <span className={styles.agentChatBadgeLive}>画布可控</span>
+            ) : (
               <span
                 className={styles.agentChatBadge}
                 data-testid="agent-chat-blocked-badge"
               >
-                待授权
+                待授权材料
               </span>
-            ) : null}
+            )}
           </div>
-          <p
-            className={styles.agentChatStatus}
-            data-online={canSend ? "true" : "false"}
-            data-testid="agent-chat-status"
-          >
-            <span className={styles.agentChatStatusDot} aria-hidden />
-            {statusLabel}
-          </p>
           <p className={styles.agentChatSubtitle}>
-            用自然语言问项目态势，不闲聊
+            用自然语言指挥中央画布形态，并追问项目态势
           </p>
         </div>
       </header>
+
+      <div
+        className={styles.agentChatCanvasStrip}
+        data-testid="agent-chat-canvas-strip"
+        data-active={liveViewLabel ? "true" : "false"}
+      >
+        <span className={styles.agentChatCanvasStripKey}>中央画布</span>
+        <span className={styles.agentChatCanvasStripValue}>
+          {liveViewLabel ? liveViewLabel : "未切换 · 说「只看决策」即可改形态"}
+        </span>
+        {canvasAction?.reason ? (
+          <span className={styles.agentChatCanvasStripReason}>
+            {canvasAction.reason}
+          </span>
+        ) : null}
+      </div>
+
+      {canvasAction && liveViewLabel ? (
+        <div
+          className={styles.agentChatCanvasNotice}
+          data-testid="agent-chat-canvas-notice"
+          role="status"
+        >
+          <span className={styles.agentChatCanvasNoticeLabel}>已切换</span>
+          <span>
+            画布形态 →「{liveViewLabel}」
+            {canvasAction.reason ? ` · ${canvasAction.reason}` : ""}
+          </span>
+        </div>
+      ) : null}
 
       <div
         ref={logRef}
@@ -284,7 +334,33 @@ export function AgentChatPanel({
         data-testid="agent-chat-log"
       >
         {turns.length === 0 ? (
-          <p className={styles.agentChatEmpty}>{emptyCopy}</p>
+          <div className={styles.agentChatEmpty} data-testid="agent-chat-empty">
+            <p className={styles.agentChatEmptyLead}>
+              {canSend
+                ? "直接说局面，或点下方动作。Agent 会查授权夹依据，并立刻改中央画布。"
+                : blockedHint ||
+                  "先点下方动作改画布形态。授权文件夹后，Agent 才能结合材料回答。"}
+            </p>
+            <ul className={styles.agentChatEmptyExamples}>
+              {AGENT_CHAT_QUICK_PROMPTS.slice(0, 4).map((q) => (
+                <li key={`ex-${q.id}`}>
+                  <button
+                    type="button"
+                    className={styles.agentChatEmptyExample}
+                    disabled={busy || loading}
+                    onClick={() => handleQuick(q.text)}
+                  >
+                    <span className={styles.agentChatEmptyExampleText}>
+                      「{q.text}」
+                    </span>
+                    <span className={styles.agentChatEmptyExampleHint}>
+                      {q.canvasHint ?? "改画布"}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : (
           turns.map((t) => {
             if (t.role === "user") {
@@ -321,29 +397,39 @@ export function AgentChatPanel({
                 className={styles.agentChatTurn}
                 data-role="agent"
                 data-testid="agent-chat-turn-agent"
-                data-structured={parsed.kind === "structured" ? "true" : "false"}
+                data-structured={
+                  parsed.kind === "structured" ? "true" : "false"
+                }
               >
-                <span className={styles.agentChatRole}>知几</span>
-                {parsed.kind === "structured" ? (
-                  <AgentStructuredBody parsed={parsed} />
-                ) : (
-                  <div className={styles.agentChatStructured}>
-                    <p className={styles.agentChatLead}>{parsed.lead}</p>
-                    {parsed.showCandidateFooter ? (
-                      <p className={styles.agentChatCandidateNote}>
-                        候选判断 · 未自动写入项目事实
-                      </p>
-                    ) : null}
-                  </div>
-                )}
+                <div className={styles.agentChatAgentCard}>
+                  <span className={styles.agentChatRole}>知几</span>
+                  {parsed.kind === "structured" ? (
+                    <AgentStructuredBody parsed={parsed} />
+                  ) : (
+                    <div className={styles.agentChatStructured}>
+                      <p className={styles.agentChatLead}>{parsed.lead}</p>
+                      {parsed.showCandidateFooter ? (
+                        <p className={styles.agentChatCandidateNote}>
+                          候选判断 · 未写入项目事实
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })
         )}
         {loading || busy ? (
-          <p className={styles.agentChatThinking} data-testid="agent-chat-thinking">
-            检索证据中…
+          <p
+            className={styles.agentChatThinking}
+            data-testid="agent-chat-thinking"
+          >
+            {canSend ? "检索证据 · 调整画布…" : "调整画布形态…"}
           </p>
+        ) : null}
+        {localHint ? (
+          <p className={styles.agentChatSystemLine}>{localHint}</p>
         ) : null}
       </div>
 
@@ -355,7 +441,7 @@ export function AgentChatPanel({
           onClick={onAuthorize}
           disabled={busy || loading}
         >
-          选择并授权文件夹
+          授权文件夹以查材料
         </button>
       ) : null}
 
@@ -365,22 +451,34 @@ export function AgentChatPanel({
         </p>
       ) : null}
 
-      <div
-        className={styles.agentChatQuickRow}
-        data-testid="agent-chat-quick-prompts"
-      >
-        {AGENT_CHAT_QUICK_PROMPTS.map((q) => (
-          <button
-            key={q.id}
-            type="button"
-            className={styles.agentChatQuickChip}
-            disabled={busy || loading}
-            data-testid={`agent-chat-quick-${q.id}`}
-            onClick={() => handleQuick(q.text)}
-          >
-            {q.label}
-          </button>
-        ))}
+      <div className={styles.agentChatQuickSection}>
+        <p className={styles.agentChatQuickLabel}>快捷 · 立即改中央画布</p>
+        <div
+          className={styles.agentChatQuickRow}
+          data-testid="agent-chat-quick-prompts"
+        >
+          {AGENT_CHAT_QUICK_PROMPTS.map((q) => (
+            <button
+              key={q.id}
+              type="button"
+              className={styles.agentChatQuickChip}
+              disabled={busy || loading}
+              title={q.canvasHint ?? q.text}
+              data-testid={`agent-chat-quick-${q.id}`}
+              data-active={
+                liveViewId &&
+                q.canvasHint?.includes(
+                  CANVAS_VIEW_LABELS[liveViewId] ?? "",
+                )
+                  ? "true"
+                  : "false"
+              }
+              onClick={() => handleQuick(q.text)}
+            >
+              {q.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className={styles.agentChatComposer}>
@@ -388,11 +486,7 @@ export function AgentChatPanel({
           ref={inputRef}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={
-            canSend
-              ? "问项目里的事，例如「只看决策」…"
-              : "先授权文件夹后即可发送…"
-          }
+          placeholder="例如：只看决策 / 证据链 / 把画布切到关系类型…"
           rows={2}
           disabled={busy || loading}
           data-testid="agent-chat-input"
@@ -405,16 +499,16 @@ export function AgentChatPanel({
         />
         <div className={styles.agentChatComposerBar}>
           <span className={styles.agentChatComposerHint}>
-            Enter 发送 · Shift+Enter 换行
+            Enter 发送 · 自然语言改画布
           </span>
           <button
             type="button"
             className={styles.agentChatSend}
-            disabled={busy || loading || !draft.trim() || !canSend}
+            disabled={busy || loading || !draft.trim()}
             data-testid="agent-chat-send"
             onClick={() => void handleSubmit()}
           >
-            {loading || busy ? "思考中…" : "发送"}
+            {loading || busy ? "…" : "发送"}
           </button>
         </div>
       </div>

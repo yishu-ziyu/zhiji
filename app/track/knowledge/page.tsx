@@ -80,6 +80,7 @@ import {
   selectNewIncrementalChanges,
 } from "./lib/project-intelligence-timeline";
 import { canvasCommandFromReceipt } from "./lib/canvas-view-receipt";
+import { planSetCanvasViewFromUtterance } from "@/shared/knowledge/set-canvas-view";
 import { readDataTransferItems } from "./read-drop-entries";
 import {
   candidateClaimsFromBody,
@@ -225,6 +226,11 @@ export default function KnowledgePage() {
   >(null);
   /** Bump to focus always-visible right-rail chat (AI Copilot / §2b). */
   const [agentChatFocusKey, setAgentChatFocusKey] = useState(0);
+  const [canvasActionNotice, setCanvasActionNotice] = useState<{
+    view: string;
+    reason?: string;
+    at: number;
+  } | null>(null);
   /**
    * Server-hydrated claims (revisionTexts from CAS). Client rebuild is fallback
    * only when GET has not returned claims yet — without texts it demotes supports.
@@ -1512,13 +1518,49 @@ export default function KnowledgePage() {
     const command = canvasCommandFromReceipt(last);
     if (!command) return;
     setCanvasView(command.view);
+    setCanvasActionNotice({
+      view: command.view,
+      reason: command.reason,
+      at: Date.now(),
+    });
     if (command.highlightNodeKeys?.length) {
       setCanvasHighlightOverride(command.highlightNodeKeys);
+    } else {
+      setCanvasHighlightOverride(null);
     }
     if (command.focus) {
       void handleFocus(command.focus);
     }
   }, [agentSession?.toolReceipts]);
+
+  /**
+   * Owner NL → center canvas morphology (client force path).
+   * Complements server set_canvas_view so UI never "only talks, never switches".
+   * Synchronous so send path can know whether morphology applied without folder grant.
+   */
+  function applyCanvasFromOwnerUtterance(utterance: string): boolean {
+    const text = utterance.trim();
+    if (!text || !projectId) return false;
+    const plan = planSetCanvasViewFromUtterance(text, {
+      projectFocus: { kind: "project", id: projectId },
+    });
+    if (!plan.command) return false;
+    setCanvasView(plan.command.view);
+    setCanvasActionNotice({
+      view: plan.command.view,
+      reason: plan.command.reason,
+      at: Date.now(),
+    });
+    if (plan.command.highlightNodeKeys?.length) {
+      setCanvasHighlightOverride(plan.command.highlightNodeKeys);
+    } else {
+      setCanvasHighlightOverride(null);
+    }
+    if (plan.command.focus) {
+      void handleFocus(plan.command.focus);
+    }
+    return true;
+  }
 
   /**
    * Sidebar "当前重点" — canvas attention only (work first).
@@ -2665,18 +2707,27 @@ export default function KnowledgePage() {
               }
             }}
             agentChatFocusKey={agentChatFocusKey}
+            canvasAction={canvasActionNotice}
+            canvasView={canvasView}
             onAgentChatSend={async (text) => {
               if (!projectId) {
                 throw new Error("先选一个项目，再和 Agent 对话。");
               }
+              // Immediate canvas morphology from NL (before/alongside model).
+              // Does not require folder grant — central canvas is always NL-drivable.
+              const canvasApplied = applyCanvasFromOwnerUtterance(text);
               let session =
                 agentSession?.projectId === projectId ? agentSession : null;
               if (!session?.matterId) {
                 session = await hydrateFolderAgentSession(projectId);
               }
               if (!session?.matterId) {
+                if (canvasApplied) {
+                  // Morphology done; full evidence answer still needs folder.
+                  return;
+                }
                 throw new Error(
-                  "先授权项目文件夹，Agent 才能在夹里查依据后回答。",
+                  "先授权项目文件夹，Agent 才能在夹里查依据后回答。也可先说「只看决策」改画布。",
                 );
               }
               setBusy(true);
@@ -2707,7 +2758,7 @@ export default function KnowledgePage() {
                   run: analysis.run ?? null,
                 });
                 setAgentResolutionMessage(null);
-                setNotice("Agent 已根据你的问题更新理解");
+                setNotice("Agent 已回答；如有画布切换会同步中央区域");
                 await loadSnapshot(session.projectId, {
                   kind: "project",
                   id: session.projectId,
