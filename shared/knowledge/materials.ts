@@ -360,24 +360,82 @@ export function sanitizeMaterialFileName(name: string): string {
   return base;
 }
 
+/**
+ * Never descend into dependency / VCS / build trees when listing materials.
+ * Mirrors grant observer policy — a full repo import must not re-read node_modules.
+ */
+export const MATERIAL_SKIP_DIR_NAMES = new Set([
+  "node_modules",
+  ".git",
+  ".next",
+  "dist",
+  "build",
+  "coverage",
+  ".turbo",
+  ".cache",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".pytest_cache",
+  "playwright-report",
+  ".playwright-mcp",
+  ".omx",
+  ".ship",
+  "site-packages",
+]);
+
+/** Soft cap so one bad import cannot freeze the workbench open path. */
+export const MATERIAL_LIST_MAX_FILES = 2500;
+
+/** List path only hashes small files; large binaries hash on read/detail. */
+export const MATERIAL_LIST_HASH_MAX_BYTES = 512 * 1024;
+
+type WalkState = { truncated: boolean };
+
 function walkMaterials(
   projectId: string,
   root: string,
   current: string,
   out: MaterialFile[],
+  state: WalkState,
 ): void {
-  if (!fs.existsSync(current)) return;
-  for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+  if (!fs.existsSync(current) || state.truncated) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(current, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (state.truncated) return;
     if (entry.name.startsWith(".")) continue;
     const full = path.join(current, entry.name);
     if (entry.isDirectory()) {
-      walkMaterials(projectId, root, full, out);
+      if (MATERIAL_SKIP_DIR_NAMES.has(entry.name)) continue;
+      walkMaterials(projectId, root, full, out, state);
       continue;
     }
     if (!entry.isFile()) continue;
+    if (out.length >= MATERIAL_LIST_MAX_FILES) {
+      state.truncated = true;
+      return;
+    }
     const relativePath = path.relative(root, full).split(path.sep).join("/");
-    const stat = fs.statSync(full);
-    const bytes = fs.readFileSync(full);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    let contentHash: string | undefined;
+    // Hot path: listing used to read every byte (14k files → multi-second freezes).
+    if (stat.size <= MATERIAL_LIST_HASH_MAX_BYTES) {
+      try {
+        contentHash = materialContentHash(fs.readFileSync(full));
+      } catch {
+        contentHash = undefined;
+      }
+    }
     out.push({
       id: relativePath,
       projectId,
@@ -386,17 +444,18 @@ function walkMaterials(
       kind: kindFromName(entry.name),
       updatedAt: stat.mtime.toISOString(),
       sizeBytes: stat.size,
-      contentHash: materialContentHash(bytes),
+      contentHash,
     });
   }
 }
 
-/** Newest first (M2 recency). */
+/** Newest first (M2 recency). Skips heavy dirs; may omit hash for large files. */
 export function listProjectMaterials(projectId: string): MaterialFile[] {
   const dir = projectMaterialsDir(projectId);
   if (!fs.existsSync(dir)) return [];
   const files: MaterialFile[] = [];
-  walkMaterials(projectId, dir, dir, files);
+  const state: WalkState = { truncated: false };
+  walkMaterials(projectId, dir, dir, files, state);
   return files.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 

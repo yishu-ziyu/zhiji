@@ -196,6 +196,27 @@ describe("materials", () => {
     expect(listed.map((f) => f.id)).toEqual(["new.md", "old.md"]);
   });
 
+  it("list skips dependency trees (node_modules/.venv) so huge folders do not freeze open", () => {
+    const projectId = "p-skip-heavy";
+    writeProjectMaterial(projectId, "README.md", "root ok");
+    const base = path.join(tmpDir, "files", projectId);
+    fs.mkdirSync(path.join(base, "node_modules", "left-pad"), { recursive: true });
+    fs.writeFileSync(
+      path.join(base, "node_modules", "left-pad", "index.js"),
+      "module.exports=1",
+    );
+    fs.mkdirSync(path.join(base, ".venv", "lib"), { recursive: true });
+    fs.writeFileSync(path.join(base, ".venv", "lib", "x.py"), "print(1)");
+    fs.mkdirSync(path.join(base, "src"), { recursive: true });
+    fs.writeFileSync(path.join(base, "src", "app.ts"), "export {}");
+
+    const listed = listProjectMaterials(projectId);
+    const ids = listed.map((f) => f.id).sort();
+    expect(ids).toEqual(["README.md", "src/app.ts"]);
+    expect(ids.some((id) => id.includes("node_modules"))).toBe(false);
+    expect(ids.some((id) => id.includes(".venv"))).toBe(false);
+  });
+
   it("A7: materialCardSummary never returns binary dump for images", () => {
     const dump = `${"\uFFFD".repeat(20)}PNG\r\n${"x".repeat(500)}`;
     expect(looksLikeBinaryText(dump)).toBe(true);
