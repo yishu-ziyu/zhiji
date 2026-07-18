@@ -14,7 +14,7 @@ describe("ModelConnector competition UI", () => {
   );
 
   it("shows PX proxy badge and official badges", () => {
-    expect(src).toMatch(/PX 代理/);
+    expect(src).toMatch(/本机代理/);
     expect(src).toMatch(/官方/);
     expect(src).toMatch(/px_proxy/);
     expect(src).toMatch(/minimax_token_plan/);

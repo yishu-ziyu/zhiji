@@ -101,20 +101,20 @@ export function validateCompetitionUrl(
 
   if (provider === "px_proxy") {
     if (url.protocol !== "http:") {
-      return fail("protocol_mismatch", "PX Proxy 必须使用 http:");
+      return fail("protocol_mismatch", "本机代理必须使用 http:");
     }
     if (url.hostname !== "127.0.0.1") {
       return fail(
         "host_mismatch",
-        "PX Proxy 主机必须精确为 127.0.0.1（不接受 localhost 或其他地址）",
+        "本机代理主机必须精确为 127.0.0.1（不接受 localhost 或其他地址）",
       );
     }
     if (url.port !== "8317") {
-      return fail("port_mismatch", "PX Proxy 端口必须精确为 8317");
+      return fail("port_mismatch", "本机代理端口必须精确为 8317");
     }
     // path must be empty or /
     if (url.pathname && url.pathname !== "/") {
-      return fail("path_mismatch", "PX Proxy Base URL 不得带额外路径");
+      return fail("path_mismatch", "本机代理 Base URL 不得带额外路径");
     }
     return {
       ok: true,

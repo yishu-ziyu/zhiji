@@ -75,17 +75,17 @@ type TestState =
 const FALLBACK_PRESETS: ModelPresetView[] = [
   {
     provider: "px_proxy",
-    displayName: "PX Proxy",
-    shortName: "PX Proxy",
+    displayName: "本机代理",
+    shortName: "本机代理",
     connectionKind: "proxy",
     protocol: "anthropic_messages",
     authMode: "bearer",
     baseUrl: "http://127.0.0.1:8317",
     logoSrc: "/llm-logos/px-proxy.svg",
     models: [
-      { id: "gpt-5.6-sol", label: "GPT 5.6 Sol", logoSrc: "/llm-logos/openai.svg", badge: "proxy", badgeLabel: "PX 代理" },
-      { id: "grok-4.5", label: "Grok 4.5", logoSrc: "/llm-logos/grok.svg", badge: "proxy", badgeLabel: "PX 代理" },
-      { id: "gemini-pro-agent", label: "Gemini Pro Agent", logoSrc: "/llm-logos/gemini.svg", badge: "proxy", badgeLabel: "PX 代理" },
+      { id: "gpt-5.6-sol", label: "GPT 5.6 Sol", logoSrc: "/llm-logos/openai.svg", badge: "proxy", badgeLabel: "本机代理" },
+      { id: "grok-4.5", label: "Grok 4.5", logoSrc: "/llm-logos/grok.svg", badge: "proxy", badgeLabel: "本机代理" },
+      { id: "gemini-pro-agent", label: "Gemini Pro Agent", logoSrc: "/llm-logos/gemini.svg", badge: "proxy", badgeLabel: "本机代理" },
     ],
   },
   {
@@ -529,7 +529,7 @@ export function ModelConnector({
                         height={20}
                       />
                       <span className={styles.providerName}>
-                        {row.preset.displayName === "PX Proxy"
+                        {row.preset.displayName === "本机代理"
                           ? row.model.label
                           : `${row.preset.shortName} · ${row.model.label}`}
                         <span
@@ -787,7 +787,7 @@ export function ModelConnectorMissingBanner({
     >
       <span>
         <strong>还没有可用的模型连接。</strong>{" "}
-        选择 PX Proxy / MiniMax Token Plan / 阶跃星辰 Step Plan，测试并保存后才能真读项目。
+        选择 本机代理 / MiniMax Token Plan / 阶跃星辰 Step Plan，测试并保存后才能真读项目。
       </span>
       <button
         type="button"

@@ -94,7 +94,7 @@ flowchart LR
     D --> E["项目情报简报"]
     E --> F["Owner Resolution<br/>接受 · 修改 · 拒绝 · 暂缓"]
     F --> G["本地 Project Memory"]
-    C --> H["用户自备模型<br/>PX Proxy · MiniMax · StepFun"]
+    C --> H["用户自备模型<br/>本机代理 · MiniMax · StepFun"]
 
     I["比赛 MCP 服务"] --> J["调用者主动提交文本"]
     J --> K["无状态证据分析<br/>不访问本地文件夹"]
@@ -108,7 +108,7 @@ flowchart LR
 | 本地能力层 | 文件夹授权、watch、project map、search、read、Revision 与 Receipt |
 | Agent Runtime | 多步工具调用、Run 状态、幂等与恢复；失败时 fail-closed |
 | 项目记忆 | JSON / SQLite 存储、Candidate、Claim、Owner Resolution 与 Accepted Understanding |
-| 模型连接 | BYOK；支持 PX Proxy（GPT-5.6 Sol）、MiniMax Token Plan、StepFun Token Plan 与自定义网关 |
+| 模型连接 | BYOK；支持 本机代理（GPT-5.6 Sol）、MiniMax Token Plan、StepFun Token Plan 与自定义网关 |
 | 质量门禁 | Vitest、Playwright、TypeScript、桌面打包与真实黄金路径证据 |
 
 网页只负责呈现画布、过程和确认；读取用户硬盘的能力留在本机进程，不交给云端网页。
@@ -209,7 +209,7 @@ npm run metrics:publish   # 生成 docs/metrics/runs/<slug>/ 并应提交到 Git
 
 ## AI 使用与开源披露
 
-- 产品运行模型：用户自备模型连接；比赛演示可使用 PX Proxy / GPT-5.6 Sol、MiniMax Token Plan 或 StepFun Token Plan；
+- 产品运行模型：用户自备模型连接；比赛演示可使用 本机代理 / GPT-5.6 Sol、MiniMax Token Plan 或 StepFun Token Plan；
 - AI Coding：OpenAI Codex、Grok 多窗口协作，所有产品边界与最终判断由人类 Owner 审核；
 - 开源组件：Next.js、React、Electron、React Flow、Dagre、Model Context Protocol SDK、Vitest、Playwright 等；
 - 产品界面展示真实运行状态，不使用测试数据或假进度冒充 Demo 成功。

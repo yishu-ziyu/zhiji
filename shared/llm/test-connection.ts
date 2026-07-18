@@ -81,7 +81,7 @@ function mapHttpError(
   if (provider === "px_proxy" && (status === 0 || status >= 500)) {
     return {
       errorCode: "proxy_unreachable",
-      error: "PX Proxy 未启动或 127.0.0.1:8317 不可达",
+      error: "本机代理未启动或 127.0.0.1:8317 不可达",
     };
   }
   return {
@@ -151,7 +151,7 @@ export async function testLlmConnection(
       ) {
         return {
           ok: false,
-          error: "PX Proxy 未启动或 127.0.0.1:8317 不可达",
+          error: "本机代理未启动或 127.0.0.1:8317 不可达",
           errorCode: "proxy_unreachable",
           status: res.status,
           diagnostic: `HTTP ${res.status}: ${safeBody}`,
@@ -226,7 +226,7 @@ export async function testLlmConnection(
         if (input.provider === "px_proxy") {
           return {
             ok: false,
-            error: "PX Proxy 未启动或 127.0.0.1:8317 不可达",
+            error: "本机代理未启动或 127.0.0.1:8317 不可达",
             errorCode: "proxy_unreachable",
             diagnostic: "timeout",
             recommendedModels: recommended,
@@ -243,7 +243,7 @@ export async function testLlmConnection(
       if (input.provider === "px_proxy") {
         return {
           ok: false,
-          error: "PX Proxy 未启动或 127.0.0.1:8317 不可达",
+          error: "本机代理未启动或 127.0.0.1:8317 不可达",
           errorCode: "proxy_unreachable",
           diagnostic: redactSecrets(err.message, redact),
           recommendedModels: recommended,

@@ -185,6 +185,8 @@ export const GOLDEN_CANVAS_UTTERANCES: readonly GoldenCanvasUtterance[] = [
   g("pl10", "show me the business logic", "present_logic", "now"),
   g("pl11", "how does this project work", "present_logic", "now"),
   g("pl12", "画布上讲业务逻辑", "present_logic", "now"),
+  g("pl13", "我们为什么改了方向", "present_logic", "now"),
+  g("pl14", "为何改方向", "present_logic", "now"),
 
   // —— open_entity → now ——
   g("oe01", "打开 CONTEXT.md", "open_entity", "now"),

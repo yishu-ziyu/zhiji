@@ -2784,11 +2784,97 @@ export default function KnowledgePage() {
                   run: analysis.run ?? null,
                 });
                 setAgentResolutionMessage(null);
-                setNotice("Agent 已回答；如有画布切换会同步中央区域");
-                await loadSnapshot(session.projectId, {
-                  kind: "project",
-                  id: session.projectId,
-                });
+                // If set_canvas_view already applied highlights (receipt effect), keep them.
+                // Else pin cards resolved from files the Agent actually read — frame① 发散依据.
+                const receipts = analysis.toolReceipts ?? [];
+                const hasCanvasHighlight = receipts.some(
+                  (r) =>
+                    r.tool === "set_canvas_view" &&
+                    typeof r.summary === "string" &&
+                    r.summary.includes("highlightNodeKeys"),
+                );
+                if (!hasCanvasHighlight && projectId) {
+                  try {
+                    const {
+                      planLogicCanvasFromPaths,
+                      rankPathsForLogicPresentation,
+                    } = await import("@/shared/knowledge/logic-canvas");
+                    const paths: string[] = [];
+                    for (const r of receipts) {
+                      const m = String(r.summary || "").match(
+                        /已读\s+([^\s]+)/,
+                      );
+                      if (m?.[1]) paths.push(m[1]);
+                    }
+                    const ranked = rankPathsForLogicPresentation(paths);
+                    if (ranked.length > 0) {
+                      const cards = projectCards
+                        .filter((c) => c.projectId === projectId)
+                        .map((c) => ({
+                          id: c.id,
+                          sourceFileId: c.sourceFileId,
+                          title: c.title,
+                        }));
+                      const cmd = planLogicCanvasFromPaths({
+                        projectId,
+                        relativePaths: ranked,
+                        materials: cards,
+                        keepProjectFocus: true,
+                        reason: "根据本轮已读材料在画布上展开候选依据",
+                      });
+                      if (cmd.highlightNodeKeys?.length) {
+                        setCanvasView(cmd.view);
+                        setCanvasHighlightOverride(cmd.highlightNodeKeys);
+                        setCanvasActionNotice({
+                          view: cmd.view,
+                          reason: cmd.reason,
+                          at: Date.now(),
+                        });
+                        const pinIds = cmd.highlightNodeKeys
+                          .filter((k) => k.startsWith("card:"))
+                          .map((k) => k.slice("card:".length));
+                        await loadSnapshot(
+                          projectId,
+                          { kind: "project", id: projectId },
+                          { pinCardIds: pinIds },
+                        );
+                        setNotice(
+                          "Agent 已回答；中央画布已用本轮读过的材料展开候选依据。点节点可换焦点。",
+                        );
+                      } else {
+                        setNotice(
+                          "Agent 已回答。点右栏简报审候选判断；点中央节点可换焦点。",
+                        );
+                        await loadSnapshot(session.projectId, {
+                          kind: "project",
+                          id: session.projectId,
+                        });
+                      }
+                    } else {
+                      setNotice(
+                        "Agent 已回答。点右栏简报审候选判断；点中央节点可换焦点。",
+                      );
+                      await loadSnapshot(session.projectId, {
+                        kind: "project",
+                        id: session.projectId,
+                      });
+                    }
+                  } catch {
+                    setNotice("Agent 已回答；如有画布切换会同步中央区域");
+                    await loadSnapshot(session.projectId, {
+                      kind: "project",
+                      id: session.projectId,
+                    });
+                  }
+                } else {
+                  setNotice(
+                    "Agent 已回答；画布形态已按本轮判断更新。点节点可深入依据。",
+                  );
+                  await loadSnapshot(session.projectId, {
+                    kind: "project",
+                    id: session.projectId,
+                  });
+                }
               } catch (nextError) {
                 const msg =
                   nextError instanceof Error

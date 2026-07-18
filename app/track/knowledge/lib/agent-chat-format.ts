@@ -200,6 +200,12 @@ export const AGENT_CHAT_QUICK_PROMPTS: ReadonlyArray<{
     canvasHint: "读材料 → 串联 → 画布呈现",
   },
   {
+    id: "why-direction",
+    label: "为何改方向",
+    text: "我们为什么改了方向",
+    canvasHint: "发散候选判断 · 画布钉依据",
+  },
+  {
     id: "decisions",
     label: "只看决策",
     text: "只看决策",

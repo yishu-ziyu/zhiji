@@ -81,7 +81,7 @@ export type LlmModelOption = {
   label: string;
   /** Logo asset under /llm-logos */
   logoSrc: string;
-  /** e.g. "PX 代理" | "官方" */
+  /** e.g. "本机代理" | "官方" */
   badge: "proxy" | "official" | "preset";
   badgeLabel: string;
 };
