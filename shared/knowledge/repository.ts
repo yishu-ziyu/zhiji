@@ -92,6 +92,7 @@ import {
   RelationValidationError,
 } from "@/shared/knowledge/relations";
 import { buildProjectCanvasSnapshot } from "@/shared/knowledge/project-canvas";
+import { isUsefulCanvasCard } from "@/shared/knowledge/canvas-material-rank";
 import { rankProjectsByActivity } from "@/shared/knowledge/recent-project";
 
 type NewCardInput = {
@@ -259,14 +260,22 @@ type CardsCacheEntry = {
   cards: Map<string, KnowledgeCard>;
   /** projectId → cards (same object refs as in `cards`) */
   byProject: Map<string, KnowledgeCard[]>;
+  /** `${projectId}\0${sourceFileId}` → card for material citation lookup */
+  bySourceFile: Map<string, KnowledgeCard>;
 };
 
 let cardsCache: CardsCacheEntry | null = null;
 
-function buildCardsByProject(
-  cards: Map<string, KnowledgeCard>,
-): Map<string, KnowledgeCard[]> {
+function sourceFileKey(projectId: string, sourceFileId: string): string {
+  return `${projectId}\0${sourceFileId}`;
+}
+
+function buildCardsIndexes(cards: Map<string, KnowledgeCard>): {
+  byProject: Map<string, KnowledgeCard[]>;
+  bySourceFile: Map<string, KnowledgeCard>;
+} {
   const byProject = new Map<string, KnowledgeCard[]>();
+  const bySourceFile = new Map<string, KnowledgeCard>();
   for (const card of cards.values()) {
     const key = card.projectId || "";
     let bucket = byProject.get(key);
@@ -275,8 +284,12 @@ function buildCardsByProject(
       byProject.set(key, bucket);
     }
     bucket.push(card);
+    const fileId = card.sourceFileId?.trim();
+    if (fileId) {
+      bySourceFile.set(sourceFileKey(key, fileId), card);
+    }
   }
-  return byProject;
+  return { byProject, bySourceFile };
 }
 
 function rememberCardsCache(
@@ -284,13 +297,15 @@ function rememberCardsCache(
   cards: Map<string, KnowledgeCard>,
   st: { mtimeMs: number; size: number } | null,
 ): void {
+  const indexes = buildCardsIndexes(cards);
   cardsCache = {
     dataDir: resolveDataDir(),
     filePath,
     mtimeMs: st?.mtimeMs ?? 0,
     size: st?.size ?? 0,
     cards,
-    byProject: buildCardsByProject(cards),
+    byProject: indexes.byProject,
+    bySourceFile: indexes.bySourceFile,
   };
 }
 
@@ -1088,28 +1103,68 @@ export function getProjectCanvasSnapshot(
   const project = getProject(projectId);
   if (!project) throw new Error("项目不存在");
 
-  // Policy A: old projects that already have materials still get draft work items
-  // when the canvas opens (idempotent). Avoids "materials only, work items 0".
+  // Only cancel noise seed drafts when some still exist — skip list/materials I/O otherwise.
   try {
-    const { seedWorkItemsFromMaterials } = require(
-      "@/shared/knowledge/seed-work-items-from-materials",
-    ) as {
-      seedWorkItemsFromMaterials: (projectId: string) => unknown;
-    };
-    seedWorkItemsFromMaterials(projectId);
+    const maybeNoise = listActions({ projectId }).some((item) =>
+      item.id.startsWith("seed-"),
+    );
+    if (maybeNoise) {
+      const { seedWorkItemsFromMaterials } = require(
+        "@/shared/knowledge/seed-work-items-from-materials",
+      ) as {
+        seedWorkItemsFromMaterials: (projectId: string) => unknown;
+      };
+      seedWorkItemsFromMaterials(projectId);
+    }
   } catch {
     // Seed is best-effort; never block canvas read.
   }
 
-  const cards = listCards({ projectId });
+  const allCards = listCards({ projectId });
+  // Graph only needs useful materials + focus/evidence anchors — not thousands of noise files.
+  const focusCardId = focus.kind === "card" ? focus.id : null;
+  let cards = allCards.filter(
+    (card) => isUsefulCanvasCard(card) || card.id === focusCardId,
+  );
+  // Hard cap keeps layout/layout-rank responsive on oversized imports.
+  const CANVAS_CARD_CAP = 120;
+  if (cards.length > CANVAS_CARD_CAP) {
+    cards = cards
+      .slice()
+      .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""))
+      .slice(0, CANVAS_CARD_CAP);
+    if (focusCardId && !cards.some((c) => c.id === focusCardId)) {
+      const focused = allCards.find((c) => c.id === focusCardId);
+      if (focused) cards = [focused, ...cards.slice(0, CANVAS_CARD_CAP - 1)];
+    }
+  }
+
   let workItems = listActions({ projectId });
   const cardIds = new Set(cards.map((card) => card.id));
+  // Evidence on open work must stay addressable even if noise-ranked.
+  for (const item of workItems) {
+    for (const eid of item.evidenceIds ?? []) {
+      if (cardIds.has(eid)) continue;
+      const extra = allCards.find((c) => c.id === eid);
+      if (extra) {
+        cards.push(extra);
+        cardIds.add(extra.id);
+      }
+    }
+    if (item.cardId && !cardIds.has(item.cardId)) {
+      const extra = allCards.find((c) => c.id === item.cardId);
+      if (extra) {
+        cards.push(extra);
+        cardIds.add(extra.id);
+      }
+    }
+  }
   let workItemIds = new Set(workItems.map((item) => item.id));
   const events = [...workingEvents().values()]
     .filter((event) => workItemIds.has(event.workItemId))
     .map(copyEvent);
   const eventIds = new Set(events.map((event) => event.id));
-  const relations = listRelations().filter(
+  const relations = listRelations({ projectId }).filter(
     (relation) =>
       cardIds.has(relation.fromCardId) && cardIds.has(relation.toCardId),
   );
@@ -1193,7 +1248,18 @@ export function getCardBySourceFileId(
 ): KnowledgeCard | null {
   const fileId = sourceFileId.trim();
   if (!fileId) return null;
-  for (const card of listCards({ projectId })) {
+  const scope = requireProjectId(projectId);
+  // Ensure cache is warm, then O(1) lookup by source file.
+  workingCards();
+  if (
+    cardsCache &&
+    cardsCache.dataDir === resolveDataDir() &&
+    cardsCache.bySourceFile
+  ) {
+    const hit = cardsCache.bySourceFile.get(sourceFileKey(scope, fileId));
+    return hit ? copyCard(hit) : null;
+  }
+  for (const card of listCards({ projectId: scope })) {
     if (card.sourceFileId === fileId) return card;
   }
   return null;

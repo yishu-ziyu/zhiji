@@ -11,6 +11,7 @@ import {
 import {
   assertMaterialCitationFresh,
   ensureMaterialCitationCard,
+  getCardBySourceFileId,
   getProject,
 } from "@/shared/knowledge/repository";
 
@@ -76,10 +77,23 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       citationTitle: cited.citationTitle,
     });
   }
-  // M2 newest-first; B-1 each material is a citable object (card linked).
-  const materials = listProjectMaterials(id).map((material) =>
-    citeMaterial(id, material),
-  );
+  // M2 newest-first. List path must NOT ensure-citation for every file
+  // (was freezing open on large imports). Attach existing cards only;
+  // ensure on file open / POST.
+  const materials = listProjectMaterials(id).map((material) => {
+    const existing = getCardBySourceFileId(id, material.id);
+    if (!existing) {
+      return {
+        ...material,
+        citationTitle: material.name,
+      };
+    }
+    return {
+      ...material,
+      citationCardId: existing.id,
+      citationTitle: existing.title || material.name,
+    };
+  });
   return NextResponse.json({ materials });
 }
 

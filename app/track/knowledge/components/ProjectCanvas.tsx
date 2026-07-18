@@ -922,8 +922,17 @@ export function ProjectCanvas({
   if (!snapshot) {
     return (
       <section className={styles.canvasArea} data-testid="project-canvas">
-        <div className={styles.canvasLoading}>
-          {loading ? "正在恢复项目…" : "暂无项目数据"}
+        <div className={styles.canvasLoading} data-testid="project-canvas-loading">
+          {loading ? (
+            <>
+              <span className={styles.canvasLoadingTitle}>打开项目</span>
+              <span className={styles.canvasLoadingHint}>
+                先画出结构，材料与时间线随后补上
+              </span>
+            </>
+          ) : (
+            "暂无项目数据"
+          )}
         </div>
       </section>
     );

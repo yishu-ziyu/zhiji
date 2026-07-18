@@ -149,6 +149,11 @@ export default function KnowledgePage() {
   const [footprintMode, setFootprintMode] = useState<FootprintViewMode>("window");
   const [footprintRevision, setFootprintRevision] = useState(0);
   const [loading, setLoading] = useState(true);
+  /**
+   * Secondary project data (cards / materials / work / footprint) finished at least once
+   * for the current projectId. Gates empty-materials guide so canvas can paint first.
+   */
+  const [secondaryReady, setSecondaryReady] = useState(false);
   const [busy, setBusy] = useState(false);
   /** Visible progress while busy — never leave user staring at a frozen shell. */
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
@@ -397,6 +402,46 @@ export default function KnowledgePage() {
     }
   }, []);
 
+  /**
+   * Open path: paint canvas first, then hydrate side panels.
+   * Never block the graph on materials list / card list / footprint.
+   */
+  const loadProjectSurface = useCallback(
+    async (
+      nextProjectId: string,
+      focus?: CanvasNodeRef,
+      options?: { awaitSecondary?: boolean },
+    ) => {
+      setSecondaryReady(false);
+      await loadSnapshot(nextProjectId, focus);
+      if (activeProjectIdRef.current !== nextProjectId) return;
+
+      const secondary = Promise.all([
+        loadProjectCards(nextProjectId),
+        loadProjectMaterials(nextProjectId),
+        loadMyOpenWork(nextProjectId),
+        loadFootprint({ projectId: nextProjectId }),
+      ]).then(() => {
+        if (activeProjectIdRef.current === nextProjectId) {
+          setSecondaryReady(true);
+        }
+      });
+
+      if (options?.awaitSecondary) {
+        await secondary;
+      } else {
+        void secondary;
+      }
+    },
+    [
+      loadFootprint,
+      loadMyOpenWork,
+      loadProjectCards,
+      loadProjectMaterials,
+      loadSnapshot,
+    ],
+  );
+
   useEffect(() => {
     setNavCollapsed(readNavCollapsedPreference());
   }, []);
@@ -506,19 +551,14 @@ export default function KnowledgePage() {
           void apiJson(`/api/knowledge/projects/${selected.id}/open`, {
             method: "POST",
           }).catch(() => undefined);
-          await Promise.all([
-            loadSnapshot(selected.id, focus),
-            loadProjectCards(selected.id),
-            loadProjectMaterials(selected.id),
-            loadMyOpenWork(selected.id),
-            loadFootprint({ projectId: selected.id }),
-          ]);
+          await loadProjectSurface(selected.id, focus);
         } else {
           // Honest empty: no seed project masquerading as user work.
           activeProjectIdRef.current = "";
           setProjectId("");
           setSnapshot(null);
           setMaterials([]);
+          setSecondaryReady(true);
           setLoading(false);
           // Unified entry: authorize folder / drag — do not force create-project modal.
         }
@@ -530,7 +570,7 @@ export default function KnowledgePage() {
     return () => {
       active = false;
     };
-  }, [loadFootprint, loadMyOpenWork, loadProjectCards, loadProjectMaterials, loadSnapshot]);
+  }, [loadProjectSurface]);
 
   // Cold start, refresh and project switch must restore the persisted grant.
   // Project summary/materials are not the authorization source of truth.
@@ -707,17 +747,11 @@ export default function KnowledgePage() {
       navigationRequestRef.current += 1;
       searchRequestRef.current += 1;
       if (selected.id !== requestedId) updateUrl(selected.id, focus, true);
-      void Promise.all([
-        loadSnapshot(selected.id, focus),
-        loadProjectCards(selected.id),
-        loadProjectMaterials(selected.id),
-        loadMyOpenWork(selected.id),
-        loadFootprint({ projectId: selected.id }),
-      ]);
+      void loadProjectSurface(selected.id, focus);
     }
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [loadFootprint, loadMyOpenWork, loadProjectCards, loadProjectMaterials, loadSnapshot, projects]);
+  }, [loadProjectSurface, projects]);
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
@@ -878,15 +912,8 @@ export default function KnowledgePage() {
       () => undefined,
     );
 
-    // Must load materials: otherwise isEmptyProjectMaterials stays true and
-    // the real project canvas is replaced by the "放进资料" guide after ingest.
-    await Promise.all([
-      loadSnapshot(id, focus),
-      loadProjectCards(id),
-      loadProjectMaterials(id),
-      loadMyOpenWork(id),
-      loadFootprint({ projectId: id }),
-    ]);
+    // Await secondary so empty-materials guide does not flash after ingest.
+    await loadProjectSurface(id, focus, { awaitSecondary: true });
     if (
       navToken !== navigationRequestRef.current ||
       activeProjectIdRef.current !== id
@@ -1654,6 +1681,7 @@ export default function KnowledgePage() {
     const focus = { kind: "project", id } as const;
     setProjectId(id);
     setSnapshot(null);
+    setSecondaryReady(false);
     setProjectCards([]);
     setMaterials([]);
     setMyOpenWork([]);
@@ -1666,13 +1694,7 @@ export default function KnowledgePage() {
     void apiJson(`/api/knowledge/projects/${id}/open`, { method: "POST" }).catch(
       () => undefined,
     );
-    await Promise.all([
-      loadSnapshot(id, focus),
-      loadProjectCards(id),
-      loadProjectMaterials(id),
-      loadMyOpenWork(id),
-      loadFootprint({ projectId: id }),
-    ]);
+    await loadProjectSurface(id, focus);
   }
 
   async function handleSearch(event: FormEvent) {
@@ -2114,6 +2136,7 @@ export default function KnowledgePage() {
   const isEmptyProjectMaterials =
     Boolean(projectId) &&
     !loading &&
+    secondaryReady &&
     !isEmptyWorkspace &&
     materials.length === 0 &&
     projectCards.length === 0;
