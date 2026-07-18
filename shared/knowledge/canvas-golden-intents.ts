@@ -172,6 +172,20 @@ export const GOLDEN_CANVAS_UTTERANCES: readonly GoldenCanvasUtterance[] = [
   g("st15", "按 kind 看", "survey_types", "by_kind"),
   g("st16", "关系色怎么读", "survey_types", "by_kind"),
 
+  // —— present_logic → now (read materials → chain on canvas) ——
+  g("pl01", "展示业务逻辑", "present_logic", "now"),
+  g("pl02", "业务逻辑是怎样的", "present_logic", "now"),
+  g("pl03", "把业务逻辑串起来", "present_logic", "now"),
+  g("pl04", "用画布呈现业务流程", "present_logic", "now"),
+  g("pl05", "这个项目在做什么", "present_logic", "now"),
+  g("pl06", "整体架构是什么", "present_logic", "now"),
+  g("pl07", "核心流程走一遍", "present_logic", "now"),
+  g("pl08", "模块怎么串起来的", "present_logic", "now"),
+  g("pl09", "端到端流程", "present_logic", "now"),
+  g("pl10", "show me the business logic", "present_logic", "now"),
+  g("pl11", "how does this project work", "present_logic", "now"),
+  g("pl12", "画布上讲业务逻辑", "present_logic", "now"),
+
   // —— open_entity → now ——
   g("oe01", "打开 CONTEXT.md", "open_entity", "now"),
   g("oe02", "点开 README.md", "open_entity", "now"),

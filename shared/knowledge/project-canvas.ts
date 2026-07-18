@@ -44,6 +44,12 @@ export type ProjectCanvasInput = ProjectFacts & {
   focus: CanvasNodeRef;
   now: string;
   recentCardIds?: string[];
+  /**
+   * Agent / Owner presented business-logic chain: force these cards onto the
+   * project hub as neighbors and draw sequential presentation edges.
+   * Session presentation only — not durable invented relations.
+   */
+  pinCardIds?: string[];
 };
 
 const DAY = 86_400_000;
@@ -410,6 +416,8 @@ const EDGE_LABEL_RANK: Record<string, number> = {
   处理过: 50,
   执行记录: 48,
   项目材料: 40,
+  业务逻辑: 88,
+  逻辑串联: 86,
   最近打开: 10,
   Agent: 85,
 };
@@ -457,6 +465,20 @@ export function classifyEdgeLabel(label: string): {
         kind: "relation",
         strength: "medium",
         why: "材料已进入关系结构（被其它材料或工作引用）。",
+        rank,
+      };
+    case "业务逻辑":
+      return {
+        kind: "evidence",
+        strength: "strong",
+        why: "Agent 根据已读项目材料将其纳入业务逻辑呈现。",
+        rank,
+      };
+    case "逻辑串联":
+      return {
+        kind: "relation",
+        strength: "strong",
+        why: "Agent 根据已读材料将两处业务节点串联（呈现边，非持久关系库写入）。",
         rank,
       };
     case "所属项目":
@@ -646,7 +668,14 @@ function projectNeighborTargets(
     }
   };
 
-  // 0) E8: Agent actors that have written into this project.
+  // 0) Agent-presented business-logic chain (must appear on hub).
+  for (const id of input.pinCardIds ?? []) {
+    const card = cards.get(id);
+    if (!card) continue;
+    push({ kind: "card", id }, "业务逻辑");
+  }
+
+  // 0b) E8: Agent actors that have written into this project.
   for (const actor of listAgentActors(input.events)) {
     push({ kind: "agent", id: actor }, "Agent");
   }
@@ -825,16 +854,19 @@ function buildGraph(
           edgeLabel === "理解依据" ||
           edgeLabel === "当前重点" ||
           edgeLabel === "工作依据" ||
-          edgeLabel === "阻塞";
+          edgeLabel === "阻塞" ||
+          edgeLabel === "业务逻辑";
         add(
           makeNode(
             target,
             card.title || card.content.slice(0, 24),
             edgeLabel === "理解依据"
               ? "理解依据"
-              : edgeLabel === "最近打开"
-                ? "最近打开"
-                : card.source,
+              : edgeLabel === "业务逻辑"
+                ? "业务逻辑"
+                : edgeLabel === "最近打开"
+                  ? "最近打开"
+                  : card.source,
             1,
             strong ? "active" : "neutral",
           ),
@@ -855,6 +887,21 @@ function buildGraph(
         );
         edges.push(makeEdge(center, target, edgeLabel));
       }
+    }
+
+    // Sequential presentation edges for business-logic chain (not durable relations).
+    const pinIds = (input.pinCardIds ?? []).filter((id) => cards.has(id));
+    for (let i = 0; i < pinIds.length - 1; i++) {
+      const from = { kind: "card" as const, id: pinIds[i]! };
+      const to = { kind: "card" as const, id: pinIds[i + 1]! };
+      if (!nodes.has(refKey(from)) || !nodes.has(refKey(to))) continue;
+      edges.push(
+        makeEdge(from, to, "逻辑串联", {
+          status: "suggested",
+          direction: "out",
+          why: "Agent 根据已读材料将业务步骤串联呈现。",
+        }),
+      );
     }
   }
 

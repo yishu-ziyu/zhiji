@@ -194,6 +194,12 @@ export const AGENT_CHAT_QUICK_PROMPTS: ReadonlyArray<{
     canvasHint: "画布 → 现在怎样",
   },
   {
+    id: "logic",
+    label: "业务逻辑",
+    text: "展示业务逻辑",
+    canvasHint: "读材料 → 串联 → 画布呈现",
+  },
+  {
     id: "decisions",
     label: "只看决策",
     text: "只看决策",

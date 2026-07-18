@@ -19,6 +19,8 @@ export type CanvasIntentId =
   | "survey_types"
   | "open_entity"
   | "decision_path"
+  /** Read project materials then present a business-logic chain on canvas. */
+  | "present_logic"
   | "unknown";
 
 export type CanvasCommand = {
@@ -64,6 +66,7 @@ export function isCanvasIntentId(value: unknown): value is CanvasIntentId {
       "survey_types",
       "open_entity",
       "decision_path",
+      "present_logic",
       "unknown",
     ].includes(value)
   );

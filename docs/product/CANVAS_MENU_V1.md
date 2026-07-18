@@ -66,7 +66,10 @@
 | `survey_types` | 关系都有啥类型 | `by_kind` | 保持当前焦点 |
 | `open_entity` | 打开某某文件/任务 | `now` | 解析到的 card/work_item |
 | `decision_path` | 决策链路 / 该动哪条 | `decision` | attention 主项 |
+| `present_logic` | 展示业务逻辑 / 项目在做什么 / 核心流程 | `now` | 项目中心；`highlightNodeKeys` 为 Agent 已读材料对应 card；`fold=path`；构图侧 pin 这些节点并画「逻辑串联」呈现边（非持久关系库） |
 | `unknown` | 无法归类 | （不发 command） | — |
+
+**present_logic 语义（产品）：** 不是只换视图预设。Agent 须先理解授权夹（map/search/read），把真实文件映射为材料节点，再在中央画布上串联呈现。无材料时只切 `now` 并说明原因。
 
 ## 6. 工具契约 `set_canvas_view`
 

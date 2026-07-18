@@ -38,6 +38,32 @@ const RULES: Array<{
   patterns: RegExp[];
 }> = [
   {
+    intentId: "present_logic",
+    view: "now",
+    reason: "用户要看项目业务逻辑如何被材料串联",
+    patterns: [
+      /业务逻辑/,
+      /业务(流程|链路|链条|怎么串|如何串)/,
+      /展示(一下)?业务/,
+      /串(起|联).*(逻辑|流程|业务)/,
+      /把.*(逻辑|流程|业务).*(画|展|串|呈现)/,
+      /逻辑(怎么|如何)?(串|走|流|呈现|展示)/,
+      /模块(怎么|如何)?(串|连|关联)/,
+      /项目(在|是)?做(什么|啥)/,
+      /这个项目(在|是)?做(什么|啥)/,
+      /整体(架构|结构|流程)/,
+      /系统(架构|结构|怎么跑)/,
+      /核心流程/,
+      /端到端/,
+      /e2e\s*flow/i,
+      /business\s*logic/i,
+      /show\s*(me\s*)?(the\s*)?(business|domain)\s*logic/i,
+      /how\s*(does|do)\s*(this|the)\s*(project|system)\s*work/i,
+      /画布.*(业务|逻辑|流程)/,
+      /用画布.*(讲|说|呈现|展示).*(逻辑|流程|业务)/,
+    ],
+  },
+  {
     intentId: "why_evidence",
     view: "evidence",
     reason: "用户在要结论的依据/证据链",

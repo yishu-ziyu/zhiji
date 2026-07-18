@@ -299,13 +299,20 @@ export default function KnowledgePage() {
   const autoChangeRunInFlightRef = useRef(false);
 
   const loadSnapshot = useCallback(
-    async (nextProjectId: string, focus?: CanvasNodeRef) => {
+    async (
+      nextProjectId: string,
+      focus?: CanvasNodeRef,
+      options?: { pinCardIds?: string[] },
+    ) => {
       const requestId = ++snapshotRequestRef.current;
       setLoading(true);
       setError(null);
       try {
         const ref = focus ?? focusFromUrl(nextProjectId);
         const params = new URLSearchParams({ focus: focusValue(ref) });
+        if (options?.pinCardIds?.length) {
+          params.set("pin", options.pinCardIds.join(","));
+        }
         const data = await apiJson<{ snapshot: ProjectCanvasSnapshot }>(
           `/api/knowledge/projects/${nextProjectId}/canvas?${params}`,
         );
@@ -1505,6 +1512,7 @@ export default function KnowledgePage() {
 
   /**
    * Apply canvas-menu-v1 command from the actual set_canvas_view receipt.
+   * present_logic: pin highlighted material cards onto the project hub graph.
    */
   useEffect(() => {
     const receipts = agentSession?.toolReceipts;
@@ -1525,13 +1533,24 @@ export default function KnowledgePage() {
     });
     if (command.highlightNodeKeys?.length) {
       setCanvasHighlightOverride(command.highlightNodeKeys);
+      const pinIds = command.highlightNodeKeys
+        .filter((k) => k.startsWith("card:"))
+        .map((k) => k.slice("card:".length));
+      if (projectId && pinIds.length > 0) {
+        void loadSnapshot(
+          projectId,
+          command.focus ?? { kind: "project", id: projectId },
+          { pinCardIds: pinIds },
+        );
+        return;
+      }
     } else {
       setCanvasHighlightOverride(null);
     }
     if (command.focus) {
       void handleFocus(command.focus);
     }
-  }, [agentSession?.toolReceipts]);
+  }, [agentSession?.toolReceipts, projectId, loadSnapshot]);
 
   /**
    * Owner NL → center canvas morphology (client force path).
@@ -1545,18 +1564,25 @@ export default function KnowledgePage() {
       projectFocus: { kind: "project", id: projectId },
     });
     if (!plan.command) return false;
+    // present_logic needs Agent to read materials before highlights exist.
+    // Switch to now immediately with an honest provisional reason.
+    const isLogic =
+      plan.command.intentId === "present_logic" ||
+      plan.command.reason?.includes("业务逻辑");
     setCanvasView(plan.command.view);
     setCanvasActionNotice({
       view: plan.command.view,
-      reason: plan.command.reason,
+      reason: isLogic
+        ? "正在读项目材料并串联业务逻辑…"
+        : plan.command.reason,
       at: Date.now(),
     });
     if (plan.command.highlightNodeKeys?.length) {
       setCanvasHighlightOverride(plan.command.highlightNodeKeys);
-    } else {
+    } else if (!isLogic) {
       setCanvasHighlightOverride(null);
     }
-    if (plan.command.focus) {
+    if (plan.command.focus && !isLogic) {
       void handleFocus(plan.command.focus);
     }
     return true;

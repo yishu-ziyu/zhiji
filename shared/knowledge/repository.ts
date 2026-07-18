@@ -1099,9 +1099,13 @@ export function getProjectCanvasSnapshot(
   projectId: string,
   focus: CanvasNodeRef = { kind: "project", id: projectId },
   now: string = new Date().toISOString(),
+  options?: { pinCardIds?: string[] },
 ): ProjectCanvasSnapshot {
   const project = getProject(projectId);
   if (!project) throw new Error("项目不存在");
+  const pinCardIds = (options?.pinCardIds ?? [])
+    .map((id) => id.trim())
+    .filter(Boolean);
 
   // Only cancel noise seed drafts when some still exist — skip list/materials I/O otherwise.
   try {
@@ -1123,8 +1127,12 @@ export function getProjectCanvasSnapshot(
   const allCards = listCards({ projectId });
   // Graph only needs useful materials + focus/evidence anchors — not thousands of noise files.
   const focusCardId = focus.kind === "card" ? focus.id : null;
+  const pinSet = new Set(pinCardIds);
   let cards = allCards.filter(
-    (card) => isUsefulCanvasCard(card) || card.id === focusCardId,
+    (card) =>
+      isUsefulCanvasCard(card) ||
+      card.id === focusCardId ||
+      pinSet.has(card.id),
   );
   // Hard cap keeps layout/layout-rank responsive on oversized imports.
   const CANVAS_CARD_CAP = 120;
@@ -1136,6 +1144,11 @@ export function getProjectCanvasSnapshot(
     if (focusCardId && !cards.some((c) => c.id === focusCardId)) {
       const focused = allCards.find((c) => c.id === focusCardId);
       if (focused) cards = [focused, ...cards.slice(0, CANVAS_CARD_CAP - 1)];
+    }
+    for (const pinId of pinCardIds) {
+      if (cards.some((c) => c.id === pinId)) continue;
+      const pinned = allCards.find((c) => c.id === pinId);
+      if (pinned) cards = [pinned, ...cards.slice(0, CANVAS_CARD_CAP - 1)];
     }
   }
 
@@ -1211,6 +1224,7 @@ export function getProjectCanvasSnapshot(
     focus: resolvedFocus,
     now,
     recentCardIds,
+    pinCardIds: pinCardIds.filter((id) => cardIds.has(id)),
   });
 }
 

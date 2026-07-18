@@ -204,7 +204,8 @@ export function createProjectAgentModelLoop(options?: {
         "why 最多 3 条，每条只保留会改变负责人判断的事实；不要把整段 README、数据集介绍、测试指标或内部实现名当成项目结论。",
         "nextDecision 只能有一个具体问题，写清动作和取舍；不要重复 now.text，也不要使用 Owner、Candidate、Claim、Revision、DAG 等内部词。",
         "若材料表明工程已完成但仍缺真人演示/验收，应明确区分“工程可用”和“已经验收”，并把完成真实闭环放在继续加功能之前。",
-        "画布：若 Owner 在问「现在怎样/证据/阻塞/关系类型/昨天项目」，必须先 tools 调用 set_canvas_view（view=now|by_kind|decision|evidence，可选 focus/highlightNodeKeys/reason/intentId）；禁止只口述图不调工具。",
+        "画布：若 Owner 在问「现在怎样/证据/阻塞/关系类型/昨天项目/业务逻辑」，必须先 tools 调用 set_canvas_view（view=now|by_kind|decision|evidence，可选 focus/highlightNodeKeys/reason/intentId）；禁止只口述图不调工具。",
+        "业务逻辑呈现：当 Owner 要「展示业务逻辑/项目在做什么/核心流程」时，必须 project_map + search_text（架构/流程/入口/README）+ 精读 2–6 个关键文件，再 set_canvas_view：view=now、fold=path、highlightNodeKeys 填真实 card:材料id（来自已读路径对应材料）、reason 用中文说明串联依据；禁止空 highlight 只换视图装懂。",
         "若有 ownerUtterance 或 recentDialogue，优先回答其中的问题，仍须用工具证据。",
         "若有 ownerStatements：那是人对项目的说法，必须进入 now/depends；与文件冲突写 conflicts，禁止当没听见。",
         "能力：优先 project_map → search_text（用问题关键词）→ read_revision/read_path；必要时 query_project_memory / git_log；禁止空转 tools。",
@@ -913,17 +914,112 @@ export function createProjectAgentRuntime(
         }
 
         // Canvas-menu-v1: Owner utterance → force set_canvas_view (UI applies).
+        // present_logic: enrich with real material card keys from files already read.
         const utterance = input.ownerUtterance?.trim();
         if (utterance && toolCalls < budget.maxToolCalls) {
           const { planSetCanvasViewFromUtterance } = await import(
             "@/shared/knowledge/set-canvas-view"
           );
-          const plan = planSetCanvasViewFromUtterance(utterance, {
+          const { matchCanvasIntent } = await import(
+            "@/shared/knowledge/canvas-intent"
+          );
+          const intent = matchCanvasIntent(utterance);
+
+          // Extra search/read for business-logic presentation before canvas command.
+          if (
+            intent.intentId === "present_logic" &&
+            toolCalls < budget.maxToolCalls &&
+            filesRead < budget.maxFilesRead
+          ) {
+            const logicSearchCall: ProjectAgentToolCall = {
+              id: `logic-search-${Date.now()}`,
+              name: "search_text",
+              input: {
+                query: "架构 流程 入口 业务 模块 README PRODUCT ARCHITECTURE",
+                limit: 12,
+              },
+            };
+            const logicSearch = await executeProjectAgentTool(
+              logicSearchCall,
+              toolCtx,
+              { matterId: input.matterId },
+            );
+            await appendReceipt(logicSearchCall, logicSearch);
+            const logicFollow = planReadFollowupsFromSearch({
+              searchRelativePaths: [
+                ...searchHitPaths,
+                ...(logicSearch.relativePaths ?? []),
+              ],
+              pathByRevisionId: pathByRev,
+              alreadyReadRevisionIds,
+              alreadyReadPaths,
+              maxReads: Math.min(
+                6,
+                Math.max(0, budget.maxFilesRead - filesRead),
+              ),
+            });
+            for (const call of logicFollow) {
+              if (toolCalls >= budget.maxToolCalls) break;
+              if (filesRead >= budget.maxFilesRead) break;
+              if (Date.now() - startedWall > budget.maxWallMs) break;
+              const result = await executeProjectAgentTool(call, toolCtx, {
+                matterId: input.matterId,
+              });
+              await appendReceipt(call, result);
+            }
+          }
+
+          let plan = planSetCanvasViewFromUtterance(utterance, {
             projectFocus: {
               kind: "project",
               id: input.projectId,
             },
           });
+
+          if (intent.intentId === "present_logic") {
+            try {
+              const { listCards } = await import(
+                "@/shared/knowledge/repository"
+              );
+              const {
+                planLogicCanvasFromPaths,
+                rankPathsForLogicPresentation,
+              } = await import("@/shared/knowledge/logic-canvas");
+              const paths = rankPathsForLogicPresentation([
+                ...alreadyReadPaths,
+                ...searchHitPaths,
+              ]);
+              const materials = listCards({ projectId: input.projectId }).map(
+                (c) => ({
+                  id: c.id,
+                  sourceFileId: c.sourceFileId,
+                  title: c.title,
+                }),
+              );
+              const logicCmd = planLogicCanvasFromPaths({
+                projectId: input.projectId,
+                relativePaths: paths,
+                materials,
+                keepProjectFocus: true,
+                reason:
+                  paths.length > 0
+                    ? "根据已读项目文件串联业务逻辑并呈现到画布"
+                    : "已切入业务逻辑呈现；继续精读材料后会补全节点链",
+              });
+              plan = {
+                shouldCall: true,
+                toolCall: {
+                  id: `canvas-logic-${Date.now()}`,
+                  name: "set_canvas_view",
+                  input: logicCmd,
+                },
+                command: logicCmd,
+              };
+            } catch {
+              /* fall through to plain plan */
+            }
+          }
+
           if (plan.toolCall) {
             const result = await executeProjectAgentTool(
               plan.toolCall,

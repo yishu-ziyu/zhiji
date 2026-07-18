@@ -50,6 +50,7 @@ describe("parseAgentMessage", () => {
   it("exposes canvas-driving quick prompts", () => {
     expect(AGENT_CHAT_QUICK_PROMPTS.map((q) => q.label)).toEqual([
       "现在怎样",
+      "业务逻辑",
       "只看决策",
       "证据链",
       "关系类型",

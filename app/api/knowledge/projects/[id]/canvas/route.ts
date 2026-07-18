@@ -26,8 +26,19 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   try {
     const { id } = await ctx.params;
     const focus = parseFocus(req.nextUrl.searchParams.get("focus"), id);
+    // pin=cardId,cardId2 — Agent business-logic chain nodes forced onto hub.
+    const pinRaw = req.nextUrl.searchParams.get("pin") ?? "";
+    const pinCardIds = pinRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => (s.startsWith("card:") ? s.slice("card:".length) : s))
+      .filter(Boolean)
+      .slice(0, 12);
     return NextResponse.json({
-      snapshot: getProjectCanvasSnapshot(id, focus),
+      snapshot: getProjectCanvasSnapshot(id, focus, undefined, {
+        pinCardIds,
+      }),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "读取画布失败";
