@@ -86,3 +86,6 @@ docs/product/*-alignment.md
 # --- generated next types path can flip between builds ---
 # next-env.d.ts stays tracked; ignore only local route type dumps
 .next/dev/
+
+# Owner-only manual fixture; never track as an unresolved gitlink.
+.ship/fixtures/mvp-v0-g6-owner-project/

@@ -1,0 +1,120 @@
+{
+  "sourceCommit": "40d1ec13825bbf0c477abc26450ff26531fc460a",
+  "issue": "https://github.com/yishu-ziyu/zhiji/issues/8",
+  "owner": "yishu-ziyu",
+  "targetDate": "2026-10-16",
+  "errors": [
+    {
+      "key": "[\"app/track/knowledge/components/AgentChatPanel.tsx\",\"react-hooks/set-state-in-effect\",2,202,10,\"81243fe22f1b828795b592729223b2eb56219137cb7dee4777ea26dbfee4cee2\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/components/ByokSettingsPanel.tsx\",\"react-hooks/set-state-in-effect\",2,98,10,\"667a407dcae8dee5d2ec1dce21a5fc2f87ac90574880d0a3267be457c267ff0f\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/components/ClaimReviewPanel.tsx\",\"react-hooks/set-state-in-effect\",2,116,5,\"6d17cd4db0e5c50be04831a909edf78c2f6a6670f96b8a642e44beb9cd8f56e3\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/components/MarkdownBody.tsx\",\"react-hooks/set-state-in-effect\",2,38,5,\"8e8917c75b018c9cd74a6802dfdedfd6208adac17924d5457150bb240b234317\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/components/ModelConnector.tsx\",\"react-hooks/preserve-manual-memoization\",2,402,23,\"cdf0921ed59ee5419f034f25f28ce32abaef7f0e8b3d23e3bcf2a92159171071\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/components/ProjectCanvas.tsx\",\"prefer-const\",2,380,7,\"f64812278aecfadb359ee9950a700b1fa6ff0744bdf0c9b29f3d20431dc20809\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/components/ProjectCanvas.tsx\",\"react-hooks/set-state-in-effect\",2,919,5,\"4aa74d9f54c81cb0949d64ab58d81a1f57c6f6a240c86acc88f856d64f04d277\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/components/ProjectInspector.tsx\",\"react-hooks/set-state-in-effect\",2,175,7,\"6bc6089961aed32ade289cd8fe270d6ac1268cf2cb37a33e0c7561de30710b06\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/components/ProjectNavigator.tsx\",\"react-hooks/set-state-in-effect\",2,112,5,\"a896b9953a992a1f3efeb55e78fdbd6fc128662cbab5e72cd8e6a00b43ce0dff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/page.tsx\",\"react-hooks/set-state-in-effect\",2,1528,5,\"e5c6981c60f3a64c8a1d10f49d5d7a783aca5b60ceb75f5ab2b1a828913c4f28\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/page.tsx\",\"react-hooks/set-state-in-effect\",2,459,5,\"c2918dacb4b2b4fd781df66e4276752ba80f129160f57499478cb682c12910df\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/page.tsx\",\"react-hooks/set-state-in-effect\",2,467,7,\"b15ff102808f980374eaa9f10cdb10bc909bb5909e16d056dc938bb9aa28736f\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"app/track/knowledge/page.tsx\",\"react-hooks/set-state-in-effect\",2,592,7,\"5ebffaacf2e8b5b8009a76643d2d19fe31e2f7b963798e556962d49fa1a7ae05\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"desktop/main.cjs\",\"@typescript-eslint/no-require-imports\",2,10,17,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"desktop/main.cjs\",\"@typescript-eslint/no-require-imports\",2,7,12,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"desktop/main.cjs\",\"@typescript-eslint/no-require-imports\",2,8,14,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"desktop/main.cjs\",\"@typescript-eslint/no-require-imports\",2,9,56,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"desktop/runtime.cjs\",\"@typescript-eslint/no-require-imports\",2,10,14,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"desktop/runtime.cjs\",\"@typescript-eslint/no-require-imports\",2,7,12,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"desktop/runtime.cjs\",\"@typescript-eslint/no-require-imports\",2,8,14,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"desktop/runtime.cjs\",\"@typescript-eslint/no-require-imports\",2,9,13,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"scripts/generate-hackathon-deck.cjs\",\"@typescript-eslint/no-require-imports\",2,1,12,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"scripts/generate-hackathon-deck.cjs\",\"@typescript-eslint/no-require-imports\",2,2,14,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"scripts/generate-hackathon-deck.cjs\",\"@typescript-eslint/no-require-imports\",2,3,19,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"shared/knowledge/repository.ts\",\"@typescript-eslint/no-require-imports\",2,1116,46,\"ae4a2efa65f6a1b1fe38f3cf1320ff0c3c33611165497de9bdb00618dbc006ff\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"shared/project-memory/sqlite-store.ts\",\"@typescript-eslint/no-this-alias\",2,2292,11,\"b6e4a4a552ac8804a2f985e3274138e61feb8ee92f75357aa983300a96839002\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"shared/project-memory/sqlite-store.ts\",\"@typescript-eslint/no-this-alias\",2,2309,11,\"b6e4a4a552ac8804a2f985e3274138e61feb8ee92f75357aa983300a96839002\"]",
+      "count": 1
+    },
+    {
+      "key": "[\"shared/project-memory/sqlite-store.ts\",\"@typescript-eslint/no-this-alias\",2,266,11,\"b6e4a4a552ac8804a2f985e3274138e61feb8ee92f75357aa983300a96839002\"]",
+      "count": 1
+    }
+  ]
+}
