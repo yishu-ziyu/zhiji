@@ -9,3 +9,5 @@ PR 和 main push 的默认门禁不需要模型密钥：typecheck、lint 增量�
 `npm run test:live` 使用独立配置，只选择真实模型 acceptance 文件，默认 unit 继续排除 live。GitHub 手动运行时必须选择 main、设置仓库变量 `RUN_LIVE_LLM=true`，并配置 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL` secrets；缺任何字段会明确失败。PR 不运行凭据任务。
 
 `node scripts/scan-build.mjs` 扫描 `.next/standalone`、`.next/static` 和 `public` 中所有文件，拒绝 `.env*` 文件、常见 OpenAI key 模式及引用的 API key 字面量，只输出计数。扫描覆盖构建 runtime，不能证明任意格式密钥绝不存在，也不代表 macOS 安装包已签名或验证。macOS Electron 安装包仍须单独按发布门禁验收。
+
+CI checkout 也要求没有缺少 `.gitmodules` 的 gitlink。历史 Owner 手动夹具 `.ship/fixtures/mvp-v0-g6-owner-project` 仅在本机维护，已从索引移除并忽略；它不是产品依赖，CI 使用仓库内自动化测试夹具。
