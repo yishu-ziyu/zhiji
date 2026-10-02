@@ -112,7 +112,9 @@ describe("D-50 onboarding folder choice contract", () => {
   });
 
   it("gives an ungranted project a direct authorization action", () => {
-    expect(agentChatSource).toContain("选择并授权文件夹");
+    expect(agentChatSource).toContain("授权文件夹以查材料");
+    expect(agentChatSource).toContain("!canSend && onAuthorize");
+    expect(agentChatSource).toContain("onClick={onAuthorize}");
     expect(agentChatSource).toContain('data-testid="agent-chat-authorize"');
   });
 

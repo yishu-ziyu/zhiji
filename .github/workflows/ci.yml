@@ -1,10 +1,14 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -16,8 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -26,7 +32,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
       - name: Lint
-        run: npm run lint
+        run: npm run lint:ci
       - name: Unit (no live LLM)
         run: npm run test:unit
       - name: Security tests
@@ -39,9 +45,11 @@ jobs:
           npm run metrics:compare
       - name: Build
         run: npm run build
+      - name: Scan distributable build for secrets
+        run: node scripts/scan-build.mjs
       - name: Upload logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ci-logs
           path: |
@@ -52,16 +60,31 @@ jobs:
 
   live-llm:
     name: live-llm (manual/secret)
-    if: ${{ github.event_name == 'workflow_dispatch' || secrets.LLM_API_KEY != '' && vars.RUN_LIVE_LLM == 'true' }}
+    # Credentials are only available to manually dispatched code on the default branch.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && vars.RUN_LIVE_LLM == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: ".nvmrc"
           cache: npm
       - run: npm ci
+      - name: Require live LLM configuration
+        env:
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+        run: |
+          for name in LLM_BASE_URL LLM_API_KEY LLM_MODEL; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name must be configured for live acceptance"
+              exit 1
+            fi
+          done
       - name: Live LLM acceptance
         env:
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}

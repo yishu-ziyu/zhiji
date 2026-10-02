@@ -10,6 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "lint:ci": "node --test scripts/lint-ci.test.mjs && node scripts/lint-ci.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --exclude '**/*live*.test.ts' --exclude '**/*.live.test.ts'",
     "test:unit": "vitest run --exclude '**/*live*.test.ts' --exclude '**/*.live.test.ts'",
@@ -19,7 +20,7 @@
     "metrics:compare": "node scripts/bench-metrics.mjs compare",
     "metrics:baseline": "node scripts/bench-metrics.mjs baseline",
     "metrics:publish": "node scripts/bench-metrics.mjs publish",
-    "test:live": "vitest run '**/*live*.test.ts' '**/*.live.test.ts'",
+    "test:live": "vitest run --config vitest.live.config.ts",
     "test:integration": "vitest run tests/integration --exclude '**/*live*'",
     "test:e2e": "playwright test",
     "desktop:dev": "node scripts/desktop-dev.mjs",
@@ -63,6 +64,7 @@
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
     "typescript": "^5",
+    "vite-node": "6.0.0",
     "vitest": "^4.1.10"
   }
 }
